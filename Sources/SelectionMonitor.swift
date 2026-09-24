@@ -10,6 +10,7 @@ final class SelectionMonitor {
     private var didDrag = false
     private var clickState: Int64 = 0
     private var downInsideBar = false
+    private var downInsidePanel = false
 
     func start() {
         let mask: CGEventMask =
@@ -56,12 +57,17 @@ final class SelectionMonitor {
         switch type {
         case .leftMouseDown:
             let cocoaLoc = Screen.cocoaPoint(from: event.location)
+            let translation = TranslationPanelController.shared
+            let insideTranslation = translation.isVisible && translation.frame.contains(cocoaLoc)
+            if translation.isVisible && !insideTranslation && !translation.isPinned { translation.close() }
+            // 翻译面板、设置窗口里的拖选/点击都属于 PopBar 自己,不触发取词
+            downInsidePanel = insideTranslation || Self.insideSettings(cocoaLoc)
             downInsideBar = FloatingBarController.shared.isVisible
                 && FloatingBarController.shared.frame.contains(cocoaLoc)
             downPoint = event.location
             didDrag = false
             clickState = event.getIntegerValueField(.mouseEventClickState)
-            if !downInsideBar && FloatingBarController.shared.isVisible {
+            if !downInsideBar && !downInsidePanel && FloatingBarController.shared.isVisible {
                 FloatingBarController.shared.hide()
             }
 
@@ -72,6 +78,10 @@ final class SelectionMonitor {
             }
 
         case .leftMouseUp:
+            if downInsidePanel {        // 在翻译面板内选择文字/点按钮:不触发取词
+                downInsidePanel = false
+                return
+            }
             if downInsideBar {          // 点在浮动条上:交给按钮处理,不再触发取词
                 downInsideBar = false
                 return
@@ -87,7 +97,29 @@ final class SelectionMonitor {
                 }
             }
 
-        case .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown:
+        case .rightMouseDown, .otherMouseDown:
+            let translation = TranslationPanelController.shared
+            if translation.isVisible {
+                if translation.frame.contains(Screen.cocoaPoint(from: event.location)) { return }
+                if !translation.isPinned { translation.close() }
+            }
+            if FloatingBarController.shared.isVisible {
+                FloatingBarController.shared.hide()
+            }
+
+        case .scrollWheel:
+            // 面板内的滚动交给面板自己处理
+            let translation = TranslationPanelController.shared
+            let point = Screen.cocoaPoint(from: event.location)
+            if translation.isVisible, translation.frame.contains(point) { return }
+            if Self.insideSettings(point) { return }
+            if FloatingBarController.shared.isVisible {
+                FloatingBarController.shared.hide()
+            }
+
+        case .keyDown:
+            // 面板是 key window,按键(含 Esc 关闭、Cmd+C 复制)由它处理,不要隐藏
+            if TranslationPanelController.shared.isVisible { return }
             if FloatingBarController.shared.isVisible {
                 FloatingBarController.shared.hide()
             }
@@ -95,5 +127,10 @@ final class SelectionMonitor {
         default:
             break
         }
+    }
+
+    private static func insideSettings(_ point: CGPoint) -> Bool {
+        let settings = SettingsWindowController.shared
+        return settings.isVisible && settings.frame.contains(point)
     }
 }

@@ -55,6 +55,7 @@ final class FloatingBarController: NSObject {
             Item(symbol: "pawprint.fill",         tip: "百度搜索",    color: NSColor(srgbRed: 0.16, green: 0.39, blue: 0.88, alpha: 1), action: #selector(searchBaidu)),
             Item(symbol: "globe",                 tip: "翻译",        color: .systemIndigo, action: #selector(translate)),
             Item(symbol: "b.circle.fill",         tip: "Bob 翻译",    color: NSColor(srgbRed: 0.0, green: 0.60, blue: 0.95, alpha: 1), action: #selector(bobTranslate)),
+            Item(symbol: "text.bubble.fill",      tip: "AI 翻译(多模型对比)", color: NSColor(srgbRed: 0.45, green: 0.30, blue: 0.95, alpha: 1), action: #selector(aiTranslate)),
             Item(symbol: "character.book.closed", tip: "词典",        color: .systemBrown,  action: #selector(lookupDict)),
             Item(symbol: "speaker.wave.2.fill",   tip: "朗读/停止",   color: .systemPink,   action: #selector(speak)),
             Item(symbol: "number",                tip: "字数统计",    color: .systemGray,   action: #selector(showStats)),
@@ -171,6 +172,17 @@ final class FloatingBarController: NSObject {
             // ⌥D —— Bob 的"划词翻译"快捷键,需与 Bob 偏好设置一致
             Actions.postHotkey(key: 2, modifierKey: 58, flags: .maskAlternate)
         }
+    }
+
+    /// 打开多 provider 的 AI 翻译面板;未配置任何 provider 时给出提示
+    @objc private func aiTranslate() {
+        let text = currentText
+        hide()
+        guard !ConfigStore.shared.config.activeProviders.isEmpty else {
+            AppDelegate.openTranslateConfig()
+            return
+        }
+        TranslationPanelController.shared.show(text: text)
     }
 
     /// Bob 未运行时先拉起,等它注册好全局热键再发 ⌥D

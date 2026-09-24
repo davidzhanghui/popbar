@@ -3,3 +3,4 @@ build.noindex/
 PopBar.app
 icon/PopBar.iconset/
 .DS_Store
+.commandcode/
