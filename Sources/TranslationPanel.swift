@@ -25,6 +25,10 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
     private var inputMode = false
     private var inputPlaceholder: NSTextField?
     private var badgeBox: NSView?
+    /// #10 追问输入框与目标 provider 选择
+    private var followupField: NSTextField?
+    private var followupPopup: NSPopUpButton?
+    private var followupTargets: [LLMProvider] = []
 
     private let panelSize = NSSize(width: 480, height: 580)
 
@@ -42,6 +46,12 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
     func show(text: String) {
         inputMode = false
         open(text: text)
+    }
+
+    /// 划词来源
+    func show(ctx: SourceContext) {
+        inputMode = false
+        open(text: ctx.text)
     }
 
     /// 输入翻译:原文区可编辑,Enter 提交翻译
@@ -62,7 +72,7 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
         startAllRequests()
         updatePanelHeight()
         if !isPinned { positionPanel() }   // 钉住时保留用户拖过的位置
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activateForUI()
         panel?.makeKeyAndOrderFront(nil)
         if inputMode { panel?.makeFirstResponder(sourceTextView) }
     }
@@ -165,8 +175,9 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
                                               accessibilityDescription: nil) ?? NSImage())
         logo.contentTintColor = theme.brandText
         logo.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
-        let title = NSTextField(labelWithString: inputMode ? L10n.t("输入翻译", "Input Translate")
-                                                         : L10n.t("AI 翻译", "AI Translate"))
+        let panelTitle = inputMode ? L10n.t("输入翻译", "Input Translate")
+                                   : L10n.t("AI 翻译", "AI Translate")
+        let title = NSTextField(labelWithString: panelTitle)
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = theme.brandText
         header.addArrangedSubview(logo)
@@ -217,6 +228,7 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
             d.selectItem(at: self.index(of: sv))
             self.languageChanged()
         }
+        // AI 动作模式:语言由动作自身的提示词决定,隐藏语言行
         langRow.addArrangedSubview(src)
         langRow.addArrangedSubview(swap)
         langRow.addArrangedSubview(dst)
@@ -268,6 +280,33 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
         heightConstraint.isActive = true
         providersHeight = heightConstraint
         contentColumn = column
+
+        // 追问行(#10):目标 provider 下拉 + 输入框 + 发送
+        let followRow = NSStackView()
+        followRow.orientation = .horizontal
+        followRow.alignment = .centerY
+        followRow.spacing = 6
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.font = .systemFont(ofSize: 10)
+        popup.controlSize = .small
+        (popup.cell as? NSPopUpButtonCell)?.controlSize = .small
+        popup.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        followupPopup = popup
+        let field = NSTextField()
+        field.placeholderString = L10n.t("对结果继续追问,Enter 发送…", "Ask a follow-up, Enter to send…")
+        field.font = .systemFont(ofSize: 11)
+        field.controlSize = .small
+        field.target = self
+        field.action = #selector(followup)
+        followupField = field
+        let send = makeIconButton("arrow.up.circle", L10n.t("发送追问", "Send")) { [weak self] in
+            self?.followup()
+        }
+        followRow.addArrangedSubview(popup)
+        followRow.addArrangedSubview(field)
+        followRow.addArrangedSubview(send)
+        column.addArrangedSubview(followRow)
+        followRow.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
 
         // 底部隐私提示 + 打开配置
         let footer = NSStackView()
@@ -376,6 +415,10 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
         cards.removeAll()
 
         let providers = config.activeProviders
+        // 追问目标列表
+        followupTargets = providers
+        followupPopup?.removeAllItems()
+        followupPopup?.addItems(withTitles: providers.map { $0.name })
         guard !providers.isEmpty else {
             let empty = emptyStateCard()
             stack.addArrangedSubview(empty)
@@ -412,11 +455,91 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
         let target = TranslatePrompt.resolveTarget(
             targetPopup.map { code(at: $0.indexOfSelectedItem) } ?? config.targetLanguage,
             text: sourceText)
-        let msg = TranslatePrompt.messages(source: source, target: target,
-                                           text: sourceText, provider: provider)
+        let m = TranslatePrompt.messages(source: source, target: target,
+                                         text: sourceText, provider: provider)
+        let msg = (system: m.system, user: m.user)
+        let temperature = config.temperature
 
-        let task = LLMClient.stream(text: msg.user, systemPrompt: msg.system,
+        // #16 敏感信息检查:远端 provider 且文本含敏感信息时先拦截
+        switch SensitiveGuard.check(text: msg.user, provider: provider) {
+        case .clean:
+            startStream(provider: provider, card: card,
+                        systemPrompt: msg.system, userText: msg.user,
+                        temperature: temperature, restore: nil)
+        case .send(let text, let restore):
+            startStream(provider: provider, card: card,
+                        systemPrompt: msg.system, userText: text,
+                        temperature: temperature, restore: restore)
+        case .ask(let hits, let sendText, let map):
+            let kinds = Array(Set(hits.map { $0.kind }))
+            let names = kinds.map { $0.displayName }.joined(separator: "、")
+            card.showSensitiveDecision(
+                summary: L10n.t("检测到 \(hits.count) 处敏感信息:\(names)",
+                                "\(hits.count) sensitive item(s): \(names)")) { [weak self] decision in
+                guard let self else { return }
+                switch decision {
+                case .masked:
+                    self.startStream(provider: provider, card: card, systemPrompt: msg.system,
+                                     userText: sendText, temperature: temperature,
+                                     restore: { SensitiveDetector.restore($0, map: map).0 })
+                case .sendAnyway:
+                    self.startStream(provider: provider, card: card, systemPrompt: msg.system,
+                                     userText: msg.user, temperature: temperature, restore: nil)
+                case .cancel:
+                    card.fail(L10n.t("已取消发送", "Cancelled"))
+                }
+            }
+        }
+    }
+
+    /// 发起一次流式请求;restore 用于把占位符换回原文再显示。
+    /// 记录实际发出的 system/user 到卡片历史,作为追问的第一轮。
+    private func startStream(provider: LLMProvider, card: ProviderCardView,
+                             systemPrompt: String?, userText: String,
+                             temperature: Double,
+                             restore: ((String) -> String)?) {
+        card.restore = restore
+        card.beginLoading()
+        card.beginConversation(system: systemPrompt, user: userText)
+        let task = LLMClient.stream(text: userText, systemPrompt: systemPrompt,
                                     provider: provider, timeout: config.timeout,
+                                    temperature: temperature) { [weak self] event in
+            DispatchQueue.main.async {
+                guard let self, self.isVisible else { return }
+                switch event {
+                case .delta(let piece): card.append(piece)
+                case .done:
+                    card.finish()
+                    card.completeTurn()
+                    self.updatePanelHeight()      // 结果变长后重新量高度
+                case .failure(let message):
+                    card.fail(message)
+                    self.updatePanelHeight()
+                }
+            }
+        }
+        card.task = task
+    }
+
+    // MARK: - 追问(#10)
+
+    /// 底部追问输入:Enter 或按钮发送,只请求目标卡片对应 provider
+    @objc private func followup() {
+        let q = followupField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let idx = followupPopup?.indexOfSelectedItem ?? -1
+        guard !q.isEmpty, followupTargets.indices.contains(idx),
+              cards.indices.contains(idx) else { NSSound.beep(); return }
+        let provider = followupTargets[idx]
+        let card = cards[idx]
+        followupField?.stringValue = ""
+        card.beginFollowup(q)
+        updatePanelHeight()
+        if !isPinned { togglePin() }   // 追问时自动钉住,避免误点外部丢失对话
+
+        let messages = card.followupMessages(question: q,
+                                             maxChars: config.maxCharacters * 3)
+        let task = LLMClient.stream(messages: messages, provider: provider,
+                                    timeout: config.timeout,
                                     temperature: config.temperature) { [weak self] event in
             DispatchQueue.main.async {
                 guard let self, self.isVisible else { return }
@@ -424,7 +547,8 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
                 case .delta(let piece): card.append(piece)
                 case .done:
                     card.finish()
-                    self.updatePanelHeight()      // 结果变长后重新量高度
+                    card.completeTurn()
+                    self.updatePanelHeight()
                 case .failure(let message):
                     card.fail(message)
                     self.updatePanelHeight()
@@ -713,6 +837,8 @@ final class ProviderCardView: NSView {
     var onRetry: (() -> Void)?
     var onCopy: ((String) -> Void)?
     var onSpeak: ((String) -> Void)?
+    /// #16 脱敏发送时,把占位符换回原文的还原函数
+    var restore: ((String) -> String)?
     var task: Task<Void, Never>?
 
     private let nameLabel = NSTextField(labelWithString: "")
@@ -721,11 +847,19 @@ final class ProviderCardView: NSView {
     private let spinner = NSProgressIndicator()
     private let retryButton: NSButton
     private let dot = NSView()
+    private var decisionBox: NSView?
 
     private(set) var text = ""
+    /// 显示用的文本(脱敏模式还原后);复制/朗读用这份
+    var displayed: String { restore?(text) ?? text }
+    /// #10 对话历史(实际发出的消息)与转写文本(前序轮次的展示累积)
+    private(set) var history: [[String: String]] = []
+    private var transcript = ""
     private var finished = false
+    private let provider: LLMProvider
 
     init(provider: LLMProvider, accent: NSColor, theme: PanelTheme) {
+        self.provider = provider
         retryButton = ClosureButton(title: "") { }
         super.init(frame: .zero)
 
@@ -795,7 +929,7 @@ final class ProviderCardView: NSView {
 
         let copyButton = ClosureButton(title: "") { [weak self] in
             guard let self else { return }
-            self.onCopy?(self.text)
+            self.onCopy?(self.displayed)
         }
         copyButton.image = NSImage(systemSymbolName: "doc.on.doc",
                                    accessibilityDescription: L10n.t("复制译文", "Copy result"))
@@ -808,7 +942,7 @@ final class ProviderCardView: NSView {
 
         let speakButton = ClosureButton(title: "") { [weak self] in
             guard let self else { return }
-            self.onSpeak?(self.text)
+            self.onSpeak?(self.displayed)
         }
         speakButton.image = NSImage(systemSymbolName: "speaker.wave.2",
                                     accessibilityDescription: L10n.t("朗读译文", "Speak result"))
@@ -861,6 +995,8 @@ final class ProviderCardView: NSView {
     func beginLoading() {
         text = ""
         finished = false
+        decisionBox?.removeFromSuperview()
+        decisionBox = nil
         bodyField.stringValue = ""
         bodyField.textColor = .labelColor
         statusLabel.textColor = .tertiaryLabelColor
@@ -868,9 +1004,90 @@ final class ProviderCardView: NSView {
         spinner.startAnimation(nil)
     }
 
+    /// #16 ask 模式:正文显示提示,下面给出三个选择按钮
+    func showSensitiveDecision(summary: String,
+                               onChoice: @escaping (SensitiveDecision) -> Void) {
+        finished = true
+        spinner.stopAnimation(nil)
+        statusLabel.stringValue = L10n.t("等待确认", "Needs confirmation")
+        statusLabel.textColor = .systemOrange
+        bodyField.textColor = .secondaryLabelColor
+        bodyField.stringValue = "🔒 " + summary
+
+        let mask = ClosureButton(title: L10n.t("脱敏后发送", "Mask & send")) {
+            onChoice(.masked)
+        }
+        mask.bezelStyle = .rounded
+        mask.controlSize = .small
+        mask.bezelColor = PanelTheme.brand
+        let send = ClosureButton(title: L10n.t("仍然发送", "Send anyway")) {
+            onChoice(.sendAnyway)
+        }
+        send.bezelStyle = .rounded
+        send.controlSize = .small
+        let cancel = ClosureButton(title: L10n.t("取消", "Cancel")) {
+            onChoice(.cancel)
+        }
+        cancel.bezelStyle = .rounded
+        cancel.controlSize = .small
+        let row = NSStackView(views: [mask, send, cancel])
+        row.orientation = .horizontal
+        row.spacing = 8
+        (subviews.compactMap { $0 as? NSStackView }.last)?.addArrangedSubview(row)
+        decisionBox = row
+    }
+
     func append(_ piece: String) {
         text += piece
-        bodyField.stringValue = text
+        bodyField.stringValue = transcript + displayed
+    }
+
+    // MARK: - 追问/历史(#10)
+
+    /// 记录实际发出的首轮消息
+    func beginConversation(system: String?, user: String) {
+        history = []
+        transcript = ""
+        if let s = system, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            history.append(["role": "system", "content": s])
+        }
+        history.append(["role": "user", "content": user])
+    }
+
+    /// 开始一轮追问:上一轮回答并入转写,再追加提问行
+    func beginFollowup(_ question: String) {
+        let answer = displayed
+        if !answer.isEmpty { transcript += answer + "\n\n" }
+        transcript += "↳ \(question)\n\n"
+        text = ""
+        decisionBox?.removeFromSuperview()
+        decisionBox = nil
+        finished = false
+        bodyField.stringValue = transcript
+        statusLabel.textColor = .tertiaryLabelColor
+        statusLabel.stringValue = L10n.t("追问中…", "Following up…")
+        spinner.startAnimation(nil)
+    }
+
+    /// 一轮回答完成:assistant 消息入历史
+    func completeTurn() {
+        history.append(["role": "assistant", "content": text])
+    }
+
+    /// 组装追问请求:system + 最近 12 条 + 新问题;超出字符上限从旧轮次丢弃
+    func followupMessages(question: String, maxChars: Int) -> [[String: String]] {
+        let sys = history.first { $0["role"] == "system" }
+        var rest = history.filter { $0["role"] != "system" }
+        if rest.count > 12 { rest = Array(rest.suffix(12)) }
+        func total() -> Int {
+            rest.reduce(0) { $0 + ($1["content"]?.count ?? 0) }
+                + (sys?["content"]?.count ?? 0) + question.count
+        }
+        while total() > maxChars && rest.count > 2 { rest.removeFirst(2) }
+        var msgs = sys.map { [$0] } ?? []
+        msgs += rest
+        msgs.append(["role": "user", "content": question])
+        return msgs
     }
 
     func finish() {

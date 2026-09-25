@@ -1,14 +1,21 @@
 import Cocoa
 import AVFoundation
 
-/// 浮动工具条:无边框 NSPanel + 毛玻璃背景 + 上下文动作按钮
+/// 浮动工具条:无边框 NSPanel + 毛玻璃背景。
+/// 动作全部由 ActionRegistry 提供——内置、上下文、AI、扩展统一渲染,
+/// 超出 maxVisible 的收进「…」溢出菜单。
 final class FloatingBarController: NSObject {
     static let shared = FloatingBarController()
 
     private var panel: NSPanel?
-    private var currentText = ""
-    private var calcResult: String?
+    private(set) var ctx = SourceContext(text: "")
+    private var visibleActions: [BarAction] = []
+    private var overflowActions: [BarAction] = []
+    private var buttons: [BarButton] = []
     private let speech = AVSpeechSynthesizer()
+    /// 键盘模式:←/→ 移动高亮、Enter 执行(M8)
+    private(set) var keyboardMode = false
+    private var highlightIndex = -1
 
     var isVisible: Bool { panel?.isVisible ?? false }
     var frame: CGRect { panel?.frame ?? .zero }
@@ -19,49 +26,42 @@ final class FloatingBarController: NSObject {
         panel?.appearance = NSAppearance(named: name)
     }
 
-    private struct Item {
-        let symbol: String
-        let tip: String
-        let color: NSColor
-        let action: Selector
-    }
-
     // MARK: - Show / Hide
 
+    /// 兼容旧调用(截图工具等)
     func show(text: String, anchor: CGRect?) {
-        currentText = text
-        calcResult = nil
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        show(ctx: SourceContext(text: text, origin: .other).applying { $0.bounds = anchor })
+    }
 
-        var items = [
-            Item(symbol: "doc.on.doc",       tip: L10n.t("复制", "Copy"),              color: .systemBlue,   action: #selector(copyText)),
-            Item(symbol: "scissors",         tip: L10n.t("剪切", "Cut"),               color: .systemOrange, action: #selector(cutText)),
-            Item(symbol: "doc.on.clipboard", tip: L10n.t("粘贴", "Paste"),             color: .systemGreen,  action: #selector(pasteText)),
-            Item(symbol: "textformat",       tip: L10n.t("大写/小写转换", "Upper/Lower"), color: .systemPurple, action: #selector(toggleCase)),
-            Item(symbol: "wand.and.stars",   tip: L10n.t("清理换行与多余空格", "Clean text"), color: .systemTeal,   action: #selector(cleanText)),
-        ]
-        if isURLLike(t) {
-            items.append(Item(symbol: "link", tip: L10n.t("打开链接", "Open Link"), color: .systemIndigo, action: #selector(openLink)))
-        }
-        if isEmail(t) {
-            items.append(Item(symbol: "envelope", tip: L10n.t("发邮件", "Send Email"), color: .systemCyan, action: #selector(sendMail)))
-        }
-        if let r = evaluate(t) {
-            calcResult = r
-            items.append(Item(symbol: "equal.circle", tip: L10n.t("复制结果", "Copy") + " \(r)", color: .systemRed, action: #selector(copyCalc)))
-        }
-        items.append(contentsOf: [
-            Item(symbol: "magnifyingglass",       tip: "Google", color: NSColor(srgbRed: 0.26, green: 0.52, blue: 0.96, alpha: 1), action: #selector(search)),
-            Item(symbol: "pawprint.fill",         tip: L10n.t("百度搜索", "Baidu"), color: NSColor(srgbRed: 0.16, green: 0.39, blue: 0.88, alpha: 1), action: #selector(searchBaidu)),
-            Item(symbol: "globe",                 tip: L10n.t("翻译", "Translate"),        color: .systemIndigo, action: #selector(translate)),
-            Item(symbol: "text.bubble.fill",      tip: L10n.t("AI 翻译(多模型对比)", "AI Translate"), color: NSColor(srgbRed: 0.45, green: 0.30, blue: 0.95, alpha: 1), action: #selector(aiTranslate)),
-            Item(symbol: "character.book.closed", tip: L10n.t("词典", "Dictionary"),        color: .systemBrown,  action: #selector(lookupDict)),
-            Item(symbol: "speaker.wave.2.fill",   tip: L10n.t("朗读/停止", "Speak/Stop"),   color: .systemPink,   action: #selector(speak)),
-            Item(symbol: "number",                tip: L10n.t("字数统计", "Word Count"),    color: .systemGray,   action: #selector(showStats)),
-        ])
+    func show(ctx: SourceContext, keyboard: Bool = false) {
+        self.ctx = ctx
+        keyboardMode = keyboard
+        highlightIndex = -1
+        // #11 键盘模式装拦截 tap;非键盘模式确保摘除
+        if keyboard { KeyboardInterceptor.shared.install() }
+        else { KeyboardInterceptor.shared.uninstall() }
+        let resolved = ActionRegistry.resolve(for: ctx)
+        visibleActions = resolved.visible
+        overflowActions = resolved.overflow
+        guard !visibleActions.isEmpty || !overflowActions.isEmpty else { return }
 
-        // ---- 构建 UI ----
-        let stack = NSStackView(views: items.map(makeButton))
+        buttons = visibleActions.map { makeButton($0) }
+        var views: [NSView] = buttons
+        if !overflowActions.isEmpty {
+            let more = BarButton(image: NSImage(systemSymbolName: "ellipsis",
+                                                accessibilityDescription: L10n.t("更多", "More")) ?? NSImage(),
+                                 target: self, action: #selector(showOverflowMenu(_:)))
+            more.accentColor = .secondaryLabelColor
+            more.contentTintColor = .secondaryLabelColor
+            more.isBordered = false
+            more.toolTip = L10n.t("更多动作", "More actions")
+            more.imageScaling = .scaleProportionallyDown
+            more.widthAnchor.constraint(equalToConstant: 28).isActive = true
+            more.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            views.append(more)
+        }
+
+        let stack = NSStackView(views: views)
         stack.orientation = .horizontal
         stack.spacing = 4
         let fit = stack.fittingSize
@@ -97,7 +97,7 @@ final class FloatingBarController: NSObject {
 
         // ---- 定位:优先放在选区上方,放不下则放下方 ----
         var origin: CGPoint
-        if let a = anchor {
+        if let a = ctx.bounds {
             origin = CGPoint(x: a.midX - size.width / 2, y: a.maxY + 6)
         } else {
             let m = NSEvent.mouseLocation
@@ -107,7 +107,7 @@ final class FloatingBarController: NSObject {
             ?? NSScreen.main ?? NSScreen.screens.first
         if let f = screen?.visibleFrame {
             if origin.y + size.height > f.maxY {
-                origin.y = anchor.map { $0.minY - size.height - 6 } ?? (f.maxY - size.height - 4)
+                origin.y = ctx.bounds.map { $0.minY - size.height - 6 } ?? (f.maxY - size.height - 4)
             }
             origin.x = min(max(origin.x, f.minX + 4), f.maxX - size.width - 4)
             origin.y = min(max(origin.y, f.minY + 4), f.maxY - size.height - 4)
@@ -117,106 +117,124 @@ final class FloatingBarController: NSObject {
     }
 
     func hide() {
+        keyboardMode = false
+        KeyboardInterceptor.shared.uninstall()
+        BarTooltip.shared.hide()
         panel?.orderOut(nil)
     }
 
-    // MARK: - 动作
+    // MARK: - 溢出菜单
 
-    @objc private func copyText() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(currentText, forType: .string)
-        hide()
+    @objc private func showOverflowMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        for (i, action) in overflowActions.enumerated() {
+            let item = NSMenuItem(title: action.title, action: #selector(runOverflowItem(_:)),
+                                  keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: action.symbol, accessibilityDescription: nil)
+            item.target = self
+            item.tag = i
+            if let submenu = action.menu?(ctx) {
+                item.action = nil
+                item.submenu = submenu
+            }
+            menu.addItem(item)
+        }
+        // 菜单点击发生在工具条外,SelectionMonitor 会 hide()——ctx 不清空,动作照常执行
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 2), in: sender)
     }
 
-    @objc private func cutText() {
-        hide()
-        Actions.postKeyCombo(key: 7)   // kVK_ANSI_X
+    @objc private func runOverflowItem(_ sender: NSMenuItem) {
+        guard overflowActions.indices.contains(sender.tag) else { return }
+        performAction(overflowActions[sender.tag])
     }
 
-    @objc private func pasteText() {
-        hide()
-        Actions.postKeyCombo(key: 9)   // kVK_ANSI_V
+    // MARK: - 动作执行
+
+    @objc private func runAction(_ sender: BarButton) {
+        guard sender.actionIndex < visibleActions.count else { return }
+        performAction(visibleActions[sender.actionIndex])
     }
 
-    @objc private func search() {
-        openURL("https://www.google.com/search?q=\(enc(currentText))")
-    }
-
-    @objc private func searchBaidu() {
-        openURL("https://www.baidu.com/s?wd=\(enc(currentText))")
-    }
-
-    @objc private func lookupDict() {
-        let w = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        openURL("dict://\(enc(w))")
-    }
-
-    @objc private func speak() {
-        if speech.isSpeaking {
-            speech.stopSpeaking(at: .immediate)
-            hide()
+    private func performAction(_ action: BarAction) {
+        if let submenu = action.menu?(ctx) {
+            // 有子菜单的动作:弹出该菜单
+            submenu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
             return
         }
-        let utt = AVSpeechUtterance(string: currentText)
-        if currentText.range(of: "[\\u4e00-\\u9fff]", options: .regularExpression) != nil {
-            utt.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        UsageStats.shared.record(action.id, bundleID: ctx.bundleID)
+        action.perform(ctx)
+    }
+
+    // MARK: - 键盘模式(M8)
+
+    /// ←/→ 移动高亮;返回是否已处理
+    func moveHighlight(_ delta: Int) -> Bool {
+        guard keyboardMode, !visibleActions.isEmpty else { return false }
+        highlightIndex = (highlightIndex + delta + visibleActions.count) % visibleActions.count
+        for (i, b) in buttons.enumerated() {
+            b.isHighlightedByKeyboard = (i == highlightIndex)
         }
-        speech.speak(utt)
-        hide()
+        return true
     }
 
-    /// 打开多 provider 的 AI 翻译面板;未配置任何 provider 时给出提示
-    @objc private func aiTranslate() {
-        let text = currentText
-        hide()
-        guard !ConfigStore.shared.config.activeProviders.isEmpty else {
-            AppDelegate.openTranslateConfig()
-            return
-        }
-        TranslationPanelController.shared.show(text: text)
+    func performHighlighted() -> Bool {
+        guard keyboardMode, visibleActions.indices.contains(highlightIndex) else { return false }
+        performAction(visibleActions[highlightIndex])
+        return true
     }
 
-    @objc private func showStats() {
-        let chars = currentText.count
-        let words = currentText.split { $0.isWhitespace }.count
-        showInfo(L10n.t("字符 \(chars) · 词 \(words)",
-                        "\(chars) chars · \(words) words"))
-    }
-
-    @objc private func toggleCase() {
-        let t = currentText
-        replaceSelection(with: t == t.uppercased() ? t.lowercased() : t.uppercased())
-    }
-
-    @objc private func cleanText() {
-        var t = currentText
-        t = t.replacingOccurrences(of: "\\s*\\n\\s*", with: " ", options: .regularExpression)
-        t = t.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
-        replaceSelection(with: t.trimmingCharacters(in: .whitespaces))
-    }
-
-    /// 就地替换选中文本:备份剪贴板 → 写入新文本 → Cmd+V → 延时还原剪贴板
-    private func replaceSelection(with newText: String) {
-        let pb = NSPasteboard.general
-        let backup = SelectionService.snapshotPasteboard(pb)
-        pb.clearContents()
-        pb.setString(newText, forType: .string)
-        hide()
-        Actions.postKeyCombo(key: 9)   // kVK_ANSI_V
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            SelectionService.restorePasteboard(pb, backup)
-        }
-    }
+    // MARK: - 信息条 / 忙碌条 / 结果条
 
     /// 把弹条内容临时换成一行文字(字数统计等),几秒后自动隐藏
-    private func showInfo(_ info: String) {
-        guard let panel else { return }
-        let label = NSTextField(labelWithString: info)
+    func showInfo(_ info: String) {
+        showStrip(NSStackView(views: [stripLabel(info)]), height: 30, autoHide: 2.0)
+    }
+
+    /// 忙碌状态(AI 动作 replace 模式):转圈 + 文字 + 取消
+    func showBusy(_ info: String, onCancel: @escaping () -> Void) {
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.startAnimation(nil)
+        spinner.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        spinner.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        let cancel = ClosureButton(title: L10n.t("取消", "Cancel"), action: onCancel)
+        cancel.isBordered = false
+        cancel.font = .systemFont(ofSize: 11)
+        cancel.contentTintColor = .secondaryLabelColor
+        showStrip(NSStackView(views: [spinner, stripLabel(info), cancel]), height: 30, autoHide: nil)
+    }
+
+    /// 结果条(上下文识别):一行文本 + 可选按钮,悬停不消失,4s 后隐藏
+    func showResult(_ text: String, buttons: [(String, () -> Void)] = []) {
+        var views: [NSView] = [stripLabel(text)]
+        for (title, handler) in buttons {
+            let b = ClosureButton(title: title, action: handler)
+            b.isBordered = false
+            b.font = .systemFont(ofSize: 11, weight: .medium)
+            b.contentTintColor = .systemBlue
+            views.append(b)
+        }
+        showStrip(NSStackView(views: views), height: 30, autoHide: 4.0)
+    }
+
+    private func stripLabel(_ s: String) -> NSTextField {
+        let label = NSTextField(labelWithString: s)
         label.font = .systemFont(ofSize: 13, weight: .medium)
         label.textColor = .labelColor
         label.alignment = .center
-        let fit = label.fittingSize
-        let size = CGSize(width: fit.width + 28, height: 30)
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        return label
+    }
+
+    private func showStrip(_ content: NSStackView, height: CGFloat, autoHide: TimeInterval?) {
+        guard let panel else { return }
+        content.orientation = .horizontal
+        content.alignment = .centerY
+        content.spacing = 8
+        let fit = content.fittingSize
+        let size = CGSize(width: fit.width + 28, height: height)
 
         let effect = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
         effect.material = .popover
@@ -224,9 +242,9 @@ final class FloatingBarController: NSObject {
         effect.wantsLayer = true
         effect.layer?.cornerRadius = 9
         effect.layer?.masksToBounds = true
-        label.frame = NSRect(x: 14, y: (size.height - fit.height) / 2,
-                             width: fit.width, height: fit.height)
-        effect.addSubview(label)
+        content.frame = NSRect(x: 14, y: (size.height - fit.height) / 2,
+                               width: fit.width, height: fit.height)
+        effect.addSubview(content)
 
         let center = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
         panel.contentView = effect
@@ -234,160 +252,77 @@ final class FloatingBarController: NSObject {
         panel.setFrameOrigin(NSPoint(x: center.x - size.width / 2,
                                      y: center.y - size.height / 2))
         panel.orderFront(nil)   // hide() 之后调 showInfo 时也要能重新显示
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.hide()
+        if let autoHide {
+            DispatchQueue.main.asyncAfter(deadline: .now() + autoHide) { [weak self] in
+                self?.hide()
+            }
         }
     }
 
-    @objc private func translate() {
-        let hasCJK = currentText.range(
-            of: "[\\u4e00-\\u9fff]", options: .regularExpression) != nil
-        let tl = hasCJK ? "en" : "zh-CN"
-        openURL("https://translate.google.com/?sl=auto&tl=\(tl)&text=\(enc(currentText))")
+    // MARK: - 供动作调用的辅助
+
+    func speak(_ text: String) {
+        if speech.isSpeaking {
+            speech.stopSpeaking(at: .immediate)
+            return
+        }
+        let utt = AVSpeechUtterance(string: text)
+        if text.range(of: "[\\u4e00-\\u9fff]", options: .regularExpression) != nil {
+            utt.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        }
+        speech.speak(utt)
     }
 
-    @objc private func openLink() {
-        var s = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !s.contains("://") { s = "https://" + s }
+    func openURL(_ s: String) {
         if let u = URL(string: s) { NSWorkspace.shared.open(u) }
         hide()
     }
 
-    @objc private func sendMail() {
-        openURL("mailto:\(currentText.trimmingCharacters(in: .whitespacesAndNewlines))")
-    }
-
-    @objc private func copyCalc() {
-        guard let r = calcResult else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(r, forType: .string)
-        hide()
-    }
-
-    // MARK: - 工具
-
-    private func openURL(_ s: String) {
-        if let u = URL(string: s) { NSWorkspace.shared.open(u) }
-        hide()
-    }
-
-    private func enc(_ s: String) -> String {
+    func enc(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
     }
 
-    private func makeButton(_ item: Item) -> NSButton {
-        let img = NSImage(systemSymbolName: item.symbol, accessibilityDescription: item.tip)
-        let b = BarButton(image: img ?? NSImage(), target: self, action: item.action)
-        b.accentColor = item.color
-        b.contentTintColor = item.color
+    private func makeButton(_ action: BarAction) -> BarButton {
+        let b = BarButton(image: NSImage(), target: self, action: #selector(runAction(_:)))
+        b.actionIndex = actionIndex(of: action)
+        let img: NSImage
+        if let swatch = action.swatchColor {
+            img = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+                swatch.setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).fill()
+                NSColor.secondaryLabelColor.setStroke()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).stroke()
+                return true
+            }
+        } else {
+            img = NSImage(systemSymbolName: action.symbol,
+                          accessibilityDescription: action.title) ?? NSImage()
+        }
+        b.image = img
+        b.accentColor = action.color
+        b.contentTintColor = action.color
         b.isBordered = false
-        b.toolTip = item.tip
-        b.imageScaling = .scaleProportionallyDown
+        b.toolTip = action.title
+        b.imageScaling = NSImageScaling.scaleProportionallyDown
         b.widthAnchor.constraint(equalToConstant: 28).isActive = true
         b.heightAnchor.constraint(equalToConstant: 26).isActive = true
         return b
     }
 
-    private func isURLLike(_ s: String) -> Bool {
-        s.range(of: "^(https?://|www\\.)\\S+$", options: [.regularExpression, .caseInsensitive]) != nil
-            || s.range(of: "^[a-z0-9.-]+\\.[a-z]{2,}(/\\S*)?$",
-                       options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
-    private func isEmail(_ s: String) -> Bool {
-        s.range(of: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", options: .regularExpression) != nil
-    }
-
-    private func evaluate(_ s: String) -> String? {
-        guard s.count <= 200,
-              s.range(of: "^[0-9+\\-*/().%\\s]+$", options: .regularExpression) != nil,
-              s.range(of: "[+\\-*/]", options: .regularExpression) != nil,
-              s.range(of: "\\d", options: .regularExpression) != nil else { return nil }
-        var p = ExprParser(s)
-        guard let d = p.parse(), d.isFinite else { return nil }
-        return d == d.rounded() && abs(d) < 1e15
-            ? String(format: "%.0f", d)
-            : String(format: "%g", d)
-    }
-}
-
-/// 四则运算解析器(替代 NSExpression,避免 "1/0" 这类输入抛 ObjC 异常)
-private struct ExprParser {
-    private let s: [Character]
-    private var i = 0
-
-    init(_ str: String) { s = Array(str) }
-
-    mutating func parse() -> Double? {
-        guard let v = expr() else { return nil }
-        ws()
-        return i == s.count ? v : nil
-    }
-
-    private mutating func ws() {
-        while i < s.count && s[i] == " " { i += 1 }
-    }
-
-    private mutating func expr() -> Double? {
-        guard var v = term() else { return nil }
-        while true {
-            ws()
-            guard i < s.count, s[i] == "+" || s[i] == "-" else { return v }
-            let add = s[i] == "+"
-            i += 1
-            guard let r = term() else { return nil }
-            v = add ? v + r : v - r
-        }
-    }
-
-    private mutating func term() -> Double? {
-        guard var v = factor() else { return nil }
-        while true {
-            ws()
-            guard i < s.count, s[i] == "*" || s[i] == "/" || s[i] == "%" else { return v }
-            let op = s[i]
-            i += 1
-            guard let r = factor() else { return nil }
-            switch op {
-            case "*": v *= r
-            case "/": if r == 0 { return nil }; v /= r
-            default:  if r == 0 { return nil }; v = v.truncatingRemainder(dividingBy: r)
-            }
-        }
-    }
-
-    private mutating func factor() -> Double? {
-        ws()
-        guard i < s.count else { return nil }
-        let c = s[i]
-        if c == "-" { i += 1; return factor().map { -$0 } }
-        if c == "+" { i += 1; return factor() }
-        if c == "(" {
-            i += 1
-            guard let v = expr() else { return nil }
-            ws()
-            guard i < s.count, s[i] == ")" else { return nil }
-            i += 1
-            return v
-        }
-        var j = i, hasDot = false
-        while j < s.count {
-            if s[j].isNumber { j += 1 }
-            else if s[j] == "." && !hasDot { hasDot = true; j += 1 }
-            else { break }
-        }
-        guard j > i else { return nil }
-        let num = Double(String(s[i..<j]))
-        i = j
-        return num
+    private func actionIndex(of action: BarAction) -> Int {
+        visibleActions.firstIndex { $0.id == action.id } ?? -1
     }
 }
 
 /// 支持悬停高亮的图标按钮:
 /// mouseEntered 时显示圆角淡色底(取按钮主题色) + 手型光标。
 /// .activeAlways 很关键——App 是 accessory 且面板不抢焦点,普通 tracking 不会生效。
-private final class BarButton: NSButton {
+final class BarButton: NSButton {
     var accentColor: NSColor = .labelColor
+    var actionIndex = -1
+    var isHighlightedByKeyboard = false {
+        didSet { needsDisplay = true }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -399,12 +334,11 @@ private final class BarButton: NSButton {
         commonInit()
     }
 
-    init(image: NSImage, target: AnyObject?, action: Selector?) {
-        super.init(frame: .zero)
+    convenience init(image: NSImage, target: AnyObject?, action: Selector?) {
+        self.init(frame: .zero)
         self.image = image
         self.target = target
         self.action = action
-        commonInit()
     }
 
     private func commonInit() {
@@ -425,10 +359,22 @@ private final class BarButton: NSButton {
     override func mouseEntered(with event: NSEvent) {
         layer?.backgroundColor = accentColor.withAlphaComponent(0.18).cgColor
         NSCursor.pointingHand.push()
+        // 原生 toolTip 在非激活面板里不弹,自己画一个
+        if let tip = toolTip { BarTooltip.shared.show(tip, above: self) }
     }
 
     override func mouseExited(with event: NSEvent) {
-        layer?.backgroundColor = .clear
+        layer?.backgroundColor = isHighlightedByKeyboard
+            ? accentColor.withAlphaComponent(0.28).cgColor : .clear
         NSCursor.pop()
+        BarTooltip.shared.hide()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isHighlightedByKeyboard {
+            accentColor.withAlphaComponent(0.28).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
+        }
+        super.draw(dirtyRect)
     }
 }

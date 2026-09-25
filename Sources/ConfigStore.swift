@@ -6,7 +6,8 @@ final class ConfigStore {
     static let shared = ConfigStore()
     static let didChange = Notification.Name("PopBarConfigDidChange")
 
-    private(set) var config = PopBarConfig()
+    /// 测试代码可直接注入配置;生产路径经 save()/reload() 更新
+    var config = PopBarConfig()
     /// 最近一次读取失败的原因(JSON 写坏了等);nil 表示正常
     private(set) var loadError: String?
 
@@ -30,7 +31,8 @@ final class ConfigStore {
                 config = fresh
                 loadError = nil
             } else {
-                loadError = "config.json 格式错误,已沿用上一次的有效配置"
+                loadError = L10n.t("config.json 格式错误,已沿用上一次的有效配置",
+                                   "config.json is malformed; kept the last valid config")
             }
         } else {
             config = PopBarConfig()

@@ -14,8 +14,8 @@ enum LLMClient {
 
         var errorDescription: String? {
             switch self {
-            case .badURL(let s): return "Base URL 无效: \(s)"
-            case .badResponse: return "响应格式无法解析"
+            case .badURL(let s): return L10n.t("Base URL 无效: \(s)", "Invalid Base URL: \(s)")
+            case .badResponse: return L10n.t("响应格式无法解析", "Unparsable response format")
             }
         }
     }
@@ -24,14 +24,27 @@ enum LLMClient {
     static func stream(text: String, systemPrompt: String?, provider: LLMProvider,
                        timeout: Double, temperature: Double,
                        onEvent: @escaping (Event) -> Void) -> Task<Void, Never> {
+        var messages: [[String: String]] = []
+        if let sys = systemPrompt, !sys.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            messages.append(["role": "system", "content": sys])
+        }
+        messages.append(["role": "user", "content": text])
+        return stream(messages: messages, provider: provider,
+                      timeout: timeout, temperature: temperature, onEvent: onEvent)
+    }
+
+    /// 多轮消息版本(追问用)
+    static func stream(messages: [[String: String]], provider: LLMProvider,
+                       timeout: Double, temperature: Double,
+                       onEvent: @escaping (Event) -> Void) -> Task<Void, Never> {
         Task.detached(priority: .userInitiated) {
             do {
-                let request = try makeRequest(text: text, systemPrompt: systemPrompt,
+                let request = try makeRequest(messages: messages,
                                               provider: provider, timeout: timeout,
                                               temperature: temperature)
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
                 guard let http = response as? HTTPURLResponse else {
-                    onEvent(.failure("无 HTTP 响应")); return
+                    onEvent(.failure(L10n.t("无 HTTP 响应", "No HTTP response"))); return
                 }
                 guard (200..<300).contains(http.statusCode) else {
                     var body = ""
@@ -65,7 +78,7 @@ enum LLMClient {
 
     // MARK: - 私有
 
-    private static func makeRequest(text: String, systemPrompt: String?, provider: LLMProvider,
+    private static func makeRequest(messages: [[String: String]], provider: LLMProvider,
                                     timeout: Double, temperature: Double) throws -> URLRequest {
         let base = provider.baseURL.hasSuffix("/")
             ? String(provider.baseURL.dropLast()) : provider.baseURL
@@ -79,12 +92,6 @@ enum LLMClient {
         request.setValue("Bearer \(provider.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("PopBar/0.1", forHTTPHeaderField: "User-Agent")
 
-        // systemPrompt 为空串时,不发 system 消息(自定义提示词场景)
-        var messages: [[String: String]] = []
-        if let sys = systemPrompt, !sys.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            messages.append(["role": "system", "content": sys])
-        }
-        messages.append(["role": "user", "content": text])
         var body: [String: Any] = [
             "model": provider.model,
             "stream": true,
@@ -216,9 +223,9 @@ enum LanguageDetect {
 
     /// 给用户看的描述,例如「中文简体」
     static func describe(_ text: String) -> String {
-        if containsKana(text) { return "日本語" }
-        if containsHangul(text) { return "한국어" }
-        if containsCJK(text) { return "中文简体" }
+        if containsKana(text) { return L10n.t("日本語", "Japanese") }
+        if containsHangul(text) { return L10n.t("한국어", "Korean") }
+        if containsCJK(text) { return L10n.t("中文简体", "Chinese (Simplified)") }
         let latin = text.unicodeScalars.filter { CharacterSet.letters.contains($0) }.count
         if latin > 0 { return "English" }
         return L10n.t("未知语言", "Unknown")

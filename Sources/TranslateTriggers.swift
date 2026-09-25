@@ -16,7 +16,7 @@ enum TranslateTriggers {
                 "Screenshot translation needs to read text on screen.\nPlease allow PopBar in System Settings → Privacy & Security → Screen Recording, then try again.")
             a.addButton(withTitle: L10n.t("打开设置", "Open Settings"))
             a.addButton(withTitle: L10n.t("取消", "Cancel"))
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activateForUI()
             if a.runModal() == .alertFirstButtonReturn {
                 if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                     NSWorkspace.shared.open(u)
@@ -56,10 +56,38 @@ enum TranslateTriggers {
         TextOCR.recognize(image) { text in
             guard let text,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                NSSound.beep()   // 没识别到文字
+                // #19 没文字时仍可能是二维码
+                detectBarcode(image)
                 return
             }
-            TranslationPanelController.shared.show(text: text)
+            switch ConfigStore.shared.config.ocr.after {
+            case "bar":
+                // #19 OCR 结果直接弹完整工具条
+                var ctx = SourceContext(text: text, origin: .ocr)
+                ctx.bounds = nil
+                FloatingBarController.shared.show(ctx: ctx)
+                detectBarcode(image)
+            default:
+                TranslationPanelController.shared.show(text: text)
+                detectBarcode(image)
+            }
+        }
+    }
+
+    /// #19 识别截图里的二维码:命中则弹出可点击的结果条
+    private static func detectBarcode(_ image: CGImage) {
+        TextOCR.detectBarcode(image) { payloads in
+            guard let first = payloads.first else { return }
+            FloatingBarController.shared.showResult(
+                L10n.t("二维码:", "QR: ") + first,
+                buttons: [
+                    (L10n.t("复制", "Copy"), { PasteboardGuard.write(first) }),
+                    (L10n.t("打开", "Open"), {
+                        var s = first
+                        if !s.contains("://") { s = "https://" + s }
+                        if let u = URL(string: s) { NSWorkspace.shared.open(u) }
+                    }),
+                ])
         }
     }
 
@@ -98,6 +126,18 @@ enum TextOCR {
             request.recognitionLevel = .accurate
             request.recognitionLanguages = ["zh-Hans", "en-US"]
             request.usesLanguageCorrection = true
+            try? VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        }
+    }
+
+    /// #19 二维码识别;返回全部 payload(空数组 = 无)
+    static func detectBarcode(_ image: CGImage, completion: @escaping ([String]) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let request = VNDetectBarcodesRequest { req, _ in
+                let payloads = (req.results as? [VNBarcodeObservation])?
+                    .compactMap { $0.payloadStringValue } ?? []
+                DispatchQueue.main.async { completion(payloads) }
+            }
             try? VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         }
     }

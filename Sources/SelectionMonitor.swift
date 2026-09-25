@@ -11,6 +11,8 @@ final class SelectionMonitor {
     private var clickState: Int64 = 0
     private var downInsideBar = false
     private var downInsidePanel = false
+    /// #11 shift+方向键选区的去抖计数
+    private var keyboardSelToken = 0
 
     func start() {
         let mask: CGEventMask =
@@ -86,20 +88,36 @@ final class SelectionMonitor {
                 downInsideBar = false
                 return
             }
+            // #2 按应用规则:禁用名单里的 App 完全不触发(连取词都不做)
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            if let rule = ConfigStore.shared.config.appRule(for: frontmost?.bundleIdentifier),
+               rule.mode == "disabled" { return }
+
             let mode = ConfigStore.shared.config.triggerMode
             let triggered: Bool
             switch mode {
             case "drag":        triggered = didDrag
             case "doubleClick": triggered = clickState >= 2
+            case "keyboard":    triggered = didDrag || clickState >= 2
             default:            triggered = didDrag || clickState >= 2
             }
             if triggered {
+                let app = frontmost
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     SelectionService.fetch { result in
                         guard let result,
                               !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         else { return }
-                        FloatingBarController.shared.show(text: result.text, anchor: result.bounds)
+                        var ctx = SourceContext(text: result.text, origin: .selection)
+                        ctx.bounds = result.bounds
+                        ctx.element = result.element
+                        ctx.selectedRange = result.range
+                        if let app {
+                            ctx.app = app
+                            ctx.bundleID = app.bundleIdentifier
+                            ctx.appName = app.localizedName
+                        }
+                        FloatingBarController.shared.show(ctx: ctx)
                     }
                 }
             }
@@ -127,12 +145,57 @@ final class SelectionMonitor {
         case .keyDown:
             // 面板是 key window,按键(含 Esc 关闭、Cmd+C 复制)由它处理,不要隐藏
             if TranslationPanelController.shared.isVisible { return }
+            let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+            // #11 全局快捷键唤起工具条(键盘模式)
+            if let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.showBar),
+               Hotkey.matches(event, spec) {
+                fetchSelectionAndShow(keyboard: true)
+                return
+            }
+            // #11 键盘选区触发:shift+方向/Home/End/PgUp/PgDn 后用防抖判选
+            if ["both", "keyboard"].contains(ConfigStore.shared.config.triggerMode),
+               event.flags.contains(.maskShift),
+               [123, 124, 125, 126, 115, 116, 119, 121].contains(Int(code)) {
+                keyboardSelToken += 1
+                let token = keyboardSelToken
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                    guard self?.keyboardSelToken == token else { return }
+                    self?.fetchSelectionAndShow(keyboard: false)
+                }
+                return
+            }
+            // 键盘模式下按键由拦截 tap 处理,不隐藏工具条
+            if FloatingBarController.shared.isVisible,
+               FloatingBarController.shared.keyboardMode { return }
             if FloatingBarController.shared.isVisible {
                 FloatingBarController.shared.hide()
             }
 
         default:
             break
+        }
+    }
+
+    /// #11 取词并显示工具条;keyboard=true 进入键盘模式(装拦截 tap)
+    private func fetchSelectionAndShow(keyboard: Bool) {
+        // 应用规则同样生效
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if let rule = ConfigStore.shared.config.appRule(for: frontmost?.bundleIdentifier),
+           rule.mode == "disabled" { return }
+        SelectionService.fetch { result in
+            guard let result,
+                  !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return }
+            var ctx = SourceContext(text: result.text, origin: .selection)
+            ctx.bounds = result.bounds
+            ctx.element = result.element
+            ctx.selectedRange = result.range
+            if let app = frontmost {
+                ctx.app = app
+                ctx.bundleID = app.bundleIdentifier
+                ctx.appName = app.localizedName
+            }
+            FloatingBarController.shared.show(ctx: ctx, keyboard: keyboard)
         }
     }
 

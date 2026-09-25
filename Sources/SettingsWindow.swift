@@ -122,7 +122,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
         if !isVisible || !isDirty { loadDraft(from: ConfigStore.shared.config) }
         showLoadErrorIfNeeded()
         TranslationPanelController.shared.close()
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activateForUI()
         window?.makeKeyAndOrderFront(nil)
     }
 
@@ -163,7 +163,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
     // MARK: - 构建窗口
 
     private func buildWindow() {
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
+        let w = EscClosableWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
                          styleMask: [.titled, .closable, .miniaturizable],
                          backing: .buffered, defer: false)
         loc("PopBar · AI 翻译设置", "PopBar · AI Translation") { w.title = $0 }
@@ -290,7 +290,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
         keyPlain.widthAnchor.constraint(equalToConstant: fieldWidth - 30).isActive = true
         keyPlain.isHidden = true
 
-        revealButton.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "显示")
+        revealButton.image = NSImage(systemSymbolName: "eye", accessibilityDescription: L10n.t("显示", "Show"))
         revealButton.bezelStyle = .inline
         revealButton.isBordered = false
         revealButton.target = self
@@ -831,6 +831,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
         }
         do {
             try ConfigStore.shared.save(draft)
+            loadDraft(from: draft)   // 表单重新显示占位符后的值
             refreshDirty()
             let time = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
             setStatus(L10n.t("✓ 已保存", "✓ Saved") + " \(time)", .systemGreen)
@@ -900,6 +901,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
         alert.addButton(withTitle: L10n.t("保存", "Save"))
         alert.addButton(withTitle: L10n.t("取消", "Cancel"))
         alert.addButton(withTitle: L10n.t("不保存", "Don't Save"))
+        NSApp.activateForUI()
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             saveTapped()

@@ -4,6 +4,9 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let monitor = SelectionMonitor()
+    /// 打开菜单栏菜单时记录的前台 App(「在此 App 中禁用」用);
+    /// accessory 应用点菜单栏图标不会改变 frontmostApplication
+    private var menuFrontApp: NSRunningApplication?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -16,6 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.start()
         if !trusted || !monitor.tapInstalled {
             showPermissionAlert()
+        }
+        // #20 智能建议:启动 60s 后,每周最多问一次
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            UsageStats.shared.maybeSuggest()
         }
     }
 
@@ -33,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if c.launchAtLogin != enabled {
             try? c.launchAtLogin ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
         }
+        ClipboardHistory.shared.applyConfig()   // #8 启停轮询
     }
 
     // MARK: - 状态栏
@@ -67,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showStatusMenu() {
         guard let item = statusItem else { return }
+        menuFrontApp = NSWorkspace.shared.frontmostApplication
         // 临时挂回 item.menu 再 performClick,让系统按菜单栏菜单弹出;
         // 手动 popUp 会画成下拉列表样式,顶部带一个多余的箭头
         item.menu = buildStatusMenu()
@@ -85,6 +94,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggle.state = monitor.enabled ? .on : .off
         menu.addItem(toggle)
 
+        // #2 在『当前 App』中禁用/启用划词弹条
+        if let app = menuFrontApp,
+           let bid = app.bundleIdentifier,
+           bid != Bundle.main.bundleIdentifier {
+            let name = app.localizedName ?? bid
+            let disabled = ConfigStore.shared.config.appRule(for: bid)?.mode == "disabled"
+            let ruleItem = NSMenuItem(
+                title: disabled ? L10n.t("在「\(name)」中启用弹条", "Enable in \(name)")
+                                : L10n.t("在「\(name)」中禁用弹条", "Disable in \(name)"),
+                action: #selector(toggleAppRule(_:)), keyEquivalent: "")
+            ruleItem.target = self
+            ruleItem.representedObject = app
+            menu.addItem(ruleItem)
+        }
+
         menu.addItem(.separator())
         for (title, sel) in [
             (L10n.t("截图翻译(OCR)", "Screenshot Translate"), #selector(screenshotTranslateAction)),
@@ -95,6 +119,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mi.target = self
             menu.addItem(mi)
         }
+        // #8 剪贴板历史(enabled 时)
+        if let hist = ClipboardHistory.shared.menuItem() {
+            hist.target = self
+            menu.addItem(hist)
+        }
+
         menu.addItem(.separator())
 
         let translate = NSMenuItem(title: L10n.t("AI 翻译设置…", "AI Translation…"),
@@ -126,21 +156,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        appMenu.addItem(withTitle: "退出 PopBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L10n.t("关闭窗口", "Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        appMenu.addItem(withTitle: L10n.t("退出 PopBar", "Quit PopBar"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         let editItem = NSMenuItem()
-        let edit = NSMenu(title: "编辑")
-        edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        let edit = NSMenu(title: L10n.t("编辑", "Edit"))
+        edit.addItem(withTitle: L10n.t("撤销", "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: L10n.t("重做", "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         edit.addItem(.separator())
-        edit.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        edit.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        edit.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: L10n.t("剪切", "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L10n.t("复制", "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L10n.t("粘贴", "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: L10n.t("全选", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
         main.addItem(editItem)
 
@@ -163,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "PopBar needs to watch mouse selection and read selected text.\nPlease allow PopBar in System Settings → Privacy & Security → Accessibility, then relaunch.")
         a.addButton(withTitle: L10n.t("打开设置", "Open Settings"))
         a.addButton(withTitle: L10n.t("稍后", "Later"))
+        NSApp.activateForUI()          // 登录项启动时 App 不在前台,弹窗会被盖住
         if a.runModal() == .alertFirstButtonReturn {
             openAXSettings()
         }
@@ -177,6 +208,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             FloatingBarController.shared.hide()
             TranslationPanelController.shared.close()
         }
+    }
+
+    /// 菜单栏快捷开关:在当前 App 中禁用/启用弹条
+    @objc private func toggleAppRule(_ sender: NSMenuItem) {
+        guard let app = sender.representedObject as? NSRunningApplication,
+              let bid = app.bundleIdentifier else { return }
+        var c = ConfigStore.shared.config
+        if let i = c.appRules.firstIndex(where: { $0.bundleID == bid }) {
+            if c.appRules[i].mode == "disabled" {
+                c.appRules.remove(at: i)   // 重新启用=删掉规则
+            } else {
+                c.appRules[i].mode = "disabled"
+            }
+        } else {
+            c.appRules.append(AppRule(bundleID: bid,
+                                      name: app.localizedName ?? bid, mode: "disabled"))
+        }
+        try? ConfigStore.shared.save(c)
     }
 
     @objc private func openTranslateConfigAction() {
