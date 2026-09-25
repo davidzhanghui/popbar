@@ -86,7 +86,14 @@ final class SelectionMonitor {
                 downInsideBar = false
                 return
             }
-            if didDrag || clickState >= 2 {
+            let mode = ConfigStore.shared.config.triggerMode
+            let triggered: Bool
+            switch mode {
+            case "drag":        triggered = didDrag
+            case "doubleClick": triggered = clickState >= 2
+            default:            triggered = didDrag || clickState >= 2
+            }
+            if triggered {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     SelectionService.fetch { result in
                         guard let result,
@@ -131,6 +138,8 @@ final class SelectionMonitor {
 
     private static func insideSettings(_ point: CGPoint) -> Bool {
         let settings = SettingsWindowController.shared
-        return settings.isVisible && settings.frame.contains(point)
+        if settings.isVisible && settings.frame.contains(point) { return true }
+        let prefs = PreferencesWindowController.shared
+        return prefs.isVisible && prefs.frame.contains(point)
     }
 }

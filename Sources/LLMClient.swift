@@ -172,7 +172,7 @@ enum TranslatePrompt {
     static let customSystemTemplate =
         "You are a professional translation engine. Translate the user's text into {$query.detectToLang}. Output only the translation itself: no explanations, no notes, no surrounding quotes. Preserve the original formatting, line breaks, numbers, code snippets and proper nouns."
 
-    /// Bob 风格变量替换,带不带花括号都认:
+    /// 模板变量替换,带不带花括号都认:
     /// {$query.text} / $query.text 原文、{$query.detectFromLang} / $query.detectFromLang 源语言、
     /// {$query.detectToLang} / $query.detectToLang 目标语言
     static func render(_ template: String, text: String, source: String, target: String) -> String {
@@ -221,7 +221,7 @@ enum LanguageDetect {
         if containsCJK(text) { return "中文简体" }
         let latin = text.unicodeScalars.filter { CharacterSet.letters.contains($0) }.count
         if latin > 0 { return "English" }
-        return "未知语言"
+        return L10n.t("未知语言", "Unknown")
     }
 
     static func code(_ text: String) -> String {

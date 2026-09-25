@@ -37,7 +37,6 @@
 | 🔍 | Google 搜索 | 浏览器打开搜索结果 |
 | 🐾 | 百度搜索 | 同上 |
 | 🌐 | 翻译 | Google 翻译,中→英 / 其他→中自动判断 |
-| ⓑ | Bob 翻译 | 发送 `⌥D` 唤起 Bob 划词翻译;未运行自动拉起,未安装则提示 |
 | 💬 | AI 翻译 | 打开多 provider 翻译面板,流式显示各家译文;未配置 provider 时打开设置窗口 |
 | 📖 | 词典 | 调起 macOS 词典(`dict://`) |
 | 🔊 | 朗读/停止 | AVSpeechSynthesizer,中文自动选中文语音 |
@@ -67,7 +66,7 @@ flowchart TD
 
 - **事件监听** `.cgSessionEventTap` + `listenOnly`,不阻断系统事件流
 - **取词降级链** AX → 剪贴板快照/还原(`(type, Data)` 物化,规避懒加载 item 的 `writeObjects:` 崩溃)
-- **面板** `NSPanel` + `.nonactivatingPanel`,点击按钮时前台 App 焦点与选区不丢失——这是 ⌥D 唤起 Bob 等功能成立的前提
+- **面板** `NSPanel` + `.nonactivatingPanel`,点击按钮时前台 App 焦点与选区不丢失——模拟按键替换选区等操作都依赖这一点
 - **悬停反馈** `NSTrackingArea` + `.activeAlways`,accessory 应用下依然生效
 - **Chrome/Electron 兼容** 自动设置 `AXEnhancedUserInterface`
 
@@ -77,7 +76,7 @@ flowchart TD
   <img src="docs/popbar-panel.png" width="480" alt="AI 翻译面板:多 provider 并行流式翻译">
 </p>
 
-点击弹条上的 💬 按钮,会打开一个 Bob 风格的翻译面板:顶部是原文(可选中、可朗读),
+点击弹条上的 💬 按钮,会打开一个 PopClip 风格的翻译面板:顶部是原文(可选中、可朗读),
 下面是每个 provider 一张卡片,译文**流式**逐字出现;每张卡片都有复制、朗读和重试,
 失败的 provider 会单独显示错误,不影响其它家。面板出现在屏幕中上方,左上角 📌 可钉住
 (钉住后点击面板外不关闭,Esc/✕ 仍可关)。
@@ -102,6 +101,26 @@ flowchart TD
 「测试连接」会真实请求一次并显示耗时。下方是默认语言、超时、最大字符与温度。
 点「保存」(⌘S)写回配置文件,有未保存修改时关闭窗口会提示。
 
+### 偏好设置
+
+<p align="center">
+  <img src="docs/popbar-prefs.png" width="560" alt="偏好设置窗口">
+</p>
+
+菜单栏 →「偏好设置…」(⌘,)打开,改动**即时生效**,不需要点保存:
+
+| 项 | 说明 |
+|---|---|
+| 外观 | 跟随系统 / 浅色 / 深色,立即切换所有窗口与面板 |
+| 语言 | 跟随系统 / English / 中文,菜单栏、浮动条、翻译面板双语即时切换 |
+| 托盘图标 | 左键点菜单栏图标的行为:菜单 / 输入翻译 / 剪贴板翻译(右键始终弹菜单) |
+| 面板位置 | 翻译面板弹在屏幕中上方 / 跟随鼠标 |
+| 划词触发 | 拖拽+双击 / 仅拖拽 / 仅双击 |
+| 剪贴板取词 | AX 读不到选区时是否允许模拟 ⌘C 兜底(关掉更保护剪贴板隐私) |
+| 开机启动 | SMAppService 登录项,与系统设置 → 登录项 同步 |
+
+「关于」区显示版本号和配置目录,可一键在 Finder 打开。
+
 ### 配置文件
 
 配置保存在 `~/Library/Application Support/PopBar/config.json`(首次启动自动生成,权限 0600;
@@ -113,6 +132,13 @@ flowchart TD
 
 ```json
 {
+  "appearance": "system",
+  "language": "system",
+  "trayClick": "menu",
+  "panelPosition": "top",
+  "triggerMode": "both",
+  "clipboardFallback": true,
+  "launchAtLogin": false,
   "sourceLanguage": "auto",
   "targetLanguage": "auto",
   "timeout": 30,
@@ -148,7 +174,7 @@ flowchart TD
 
 - 任何 **OpenAI 兼容**服务都能用:填 `baseURL` + `model` + `apiKey` 即可,`enabled` 控制启用
 - **深度思考**:每个 provider 可选「默认设置 / 启用思考 / 禁用思考」,按域名适配各家写法(DeepSeek `thinking.type`、OpenRouter `reasoning`、Qwen/硅基流动/vLLM 系 `enable_thinking`),未知服务走通用写法
-- **自定义提示词**:provider 勾选「自定义提示词」后可改系统提示词和用户指令模板(像 Bob 那样把划词弹条变成解释、改写等任意任务)。模板变量:`$query.text` 原文、`$query.detectFromLang` 源语言、`$query.detectToLang` 目标语言(与 Bob 一致,带 `{}` 花括号的写法也认);面板仍按翻译样式流式展示结果。系统提示词留空则不发 system 消息
+- **自定义提示词**:provider 勾选「自定义提示词」后可改系统提示词和用户指令模板(把划词弹条变成解释、改写等任意任务)。模板变量:`$query.text` 原文、`$query.detectFromLang` 源语言、`$query.detectToLang` 目标语言(`{$…}` 带花括号的写法也认);面板仍按翻译样式流式展示结果。系统提示词留空则不发 system 消息
 - `apiKey` 在设置窗口里填写,以明文保存在配置文件(权限 0600,仅本机当前用户可读)
 - `targetLanguage` 为 `auto` 时按原文自动判断方向(中文→英文,其它→中文)
 - 面板里的语言下拉可以临时改方向,改动只对本次生效,不写回配置
@@ -195,6 +221,9 @@ popbar/
 │   ├── PopBarConfig.swift            # config.json 结构、路径、迁移与读写
 │   ├── ConfigStore.swift             # 启动加载 + 文件监听热重载 + 变更通知
 │   ├── SettingsWindow.swift          # AI 翻译设置窗口(provider 增删改、测试连接)
+│   ├── PreferencesWindow.swift       # 偏好设置窗口(通用选项,即时生效)
+│   ├── TranslateTriggers.swift       # 截图 OCR / 输入 / 剪贴板翻译触发器
+│   ├── L10n.swift                    # 中/英双语界面字符串
 │   ├── Actions.swift                 # CGEvent 按键模拟(含 flagsChanged)
 │   └── Screen.swift                  # CG/AX ↔ Cocoa 坐标系转换
 ├── shot/main.swift                   # 截图工具(独立可执行,复用 Sources)

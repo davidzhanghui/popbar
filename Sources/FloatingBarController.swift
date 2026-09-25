@@ -34,31 +34,30 @@ final class FloatingBarController: NSObject {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         var items = [
-            Item(symbol: "doc.on.doc",       tip: "复制",               color: .systemBlue,   action: #selector(copyText)),
-            Item(symbol: "scissors",         tip: "剪切",               color: .systemOrange, action: #selector(cutText)),
-            Item(symbol: "doc.on.clipboard", tip: "粘贴",               color: .systemGreen,  action: #selector(pasteText)),
-            Item(symbol: "textformat",       tip: "大写/小写转换",       color: .systemPurple, action: #selector(toggleCase)),
-            Item(symbol: "wand.and.stars",   tip: "清理换行与多余空格",  color: .systemTeal,   action: #selector(cleanText)),
+            Item(symbol: "doc.on.doc",       tip: L10n.t("复制", "Copy"),              color: .systemBlue,   action: #selector(copyText)),
+            Item(symbol: "scissors",         tip: L10n.t("剪切", "Cut"),               color: .systemOrange, action: #selector(cutText)),
+            Item(symbol: "doc.on.clipboard", tip: L10n.t("粘贴", "Paste"),             color: .systemGreen,  action: #selector(pasteText)),
+            Item(symbol: "textformat",       tip: L10n.t("大写/小写转换", "Upper/Lower"), color: .systemPurple, action: #selector(toggleCase)),
+            Item(symbol: "wand.and.stars",   tip: L10n.t("清理换行与多余空格", "Clean text"), color: .systemTeal,   action: #selector(cleanText)),
         ]
         if isURLLike(t) {
-            items.append(Item(symbol: "link", tip: "打开链接", color: .systemIndigo, action: #selector(openLink)))
+            items.append(Item(symbol: "link", tip: L10n.t("打开链接", "Open Link"), color: .systemIndigo, action: #selector(openLink)))
         }
         if isEmail(t) {
-            items.append(Item(symbol: "envelope", tip: "发邮件", color: .systemCyan, action: #selector(sendMail)))
+            items.append(Item(symbol: "envelope", tip: L10n.t("发邮件", "Send Email"), color: .systemCyan, action: #selector(sendMail)))
         }
         if let r = evaluate(t) {
             calcResult = r
-            items.append(Item(symbol: "equal.circle", tip: "复制结果 \(r)", color: .systemRed, action: #selector(copyCalc)))
+            items.append(Item(symbol: "equal.circle", tip: L10n.t("复制结果", "Copy") + " \(r)", color: .systemRed, action: #selector(copyCalc)))
         }
         items.append(contentsOf: [
-            Item(symbol: "magnifyingglass",       tip: "Google 搜索", color: NSColor(srgbRed: 0.26, green: 0.52, blue: 0.96, alpha: 1), action: #selector(search)),
-            Item(symbol: "pawprint.fill",         tip: "百度搜索",    color: NSColor(srgbRed: 0.16, green: 0.39, blue: 0.88, alpha: 1), action: #selector(searchBaidu)),
-            Item(symbol: "globe",                 tip: "翻译",        color: .systemIndigo, action: #selector(translate)),
-            Item(symbol: "b.circle.fill",         tip: "Bob 翻译",    color: NSColor(srgbRed: 0.0, green: 0.60, blue: 0.95, alpha: 1), action: #selector(bobTranslate)),
-            Item(symbol: "text.bubble.fill",      tip: "AI 翻译(多模型对比)", color: NSColor(srgbRed: 0.45, green: 0.30, blue: 0.95, alpha: 1), action: #selector(aiTranslate)),
-            Item(symbol: "character.book.closed", tip: "词典",        color: .systemBrown,  action: #selector(lookupDict)),
-            Item(symbol: "speaker.wave.2.fill",   tip: "朗读/停止",   color: .systemPink,   action: #selector(speak)),
-            Item(symbol: "number",                tip: "字数统计",    color: .systemGray,   action: #selector(showStats)),
+            Item(symbol: "magnifyingglass",       tip: "Google", color: NSColor(srgbRed: 0.26, green: 0.52, blue: 0.96, alpha: 1), action: #selector(search)),
+            Item(symbol: "pawprint.fill",         tip: L10n.t("百度搜索", "Baidu"), color: NSColor(srgbRed: 0.16, green: 0.39, blue: 0.88, alpha: 1), action: #selector(searchBaidu)),
+            Item(symbol: "globe",                 tip: L10n.t("翻译", "Translate"),        color: .systemIndigo, action: #selector(translate)),
+            Item(symbol: "text.bubble.fill",      tip: L10n.t("AI 翻译(多模型对比)", "AI Translate"), color: NSColor(srgbRed: 0.45, green: 0.30, blue: 0.95, alpha: 1), action: #selector(aiTranslate)),
+            Item(symbol: "character.book.closed", tip: L10n.t("词典", "Dictionary"),        color: .systemBrown,  action: #selector(lookupDict)),
+            Item(symbol: "speaker.wave.2.fill",   tip: L10n.t("朗读/停止", "Speak/Stop"),   color: .systemPink,   action: #selector(speak)),
+            Item(symbol: "number",                tip: L10n.t("字数统计", "Word Count"),    color: .systemGray,   action: #selector(showStats)),
         ])
 
         // ---- 构建 UI ----
@@ -166,14 +165,6 @@ final class FloatingBarController: NSObject {
         hide()
     }
 
-    @objc private func bobTranslate() {
-        hide()
-        ensureBobRunning {
-            // ⌥D —— Bob 的"划词翻译"快捷键,需与 Bob 偏好设置一致
-            Actions.postHotkey(key: 2, modifierKey: 58, flags: .maskAlternate)
-        }
-    }
-
     /// 打开多 provider 的 AI 翻译面板;未配置任何 provider 时给出提示
     @objc private func aiTranslate() {
         let text = currentText
@@ -185,33 +176,11 @@ final class FloatingBarController: NSObject {
         TranslationPanelController.shared.show(text: text)
     }
 
-    /// Bob 未运行时先拉起,等它注册好全局热键再发 ⌥D
-    private func ensureBobRunning(_ block: @escaping () -> Void) {
-        let bundleID = "com.hezongyidev.Bob"
-        let running = NSWorkspace.shared.runningApplications.contains {
-            $0.bundleIdentifier == bundleID
-        }
-        if running { block(); return }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            showInfo("未安装 Bob.app,请先安装")
-            return
-        }
-        NSWorkspace.shared.openApplication(at: url, configuration: .init()) { [weak self] app, err in
-            DispatchQueue.main.async {
-                if app != nil && err == nil {
-                    // 等 Bob 完成启动并注册全局热键
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { block() }
-                } else {
-                    self?.showInfo("Bob 启动失败")
-                }
-            }
-        }
-    }
-
     @objc private func showStats() {
         let chars = currentText.count
         let words = currentText.split { $0.isWhitespace }.count
-        showInfo("字符 \(chars) · 词 \(words)")
+        showInfo(L10n.t("字符 \(chars) · 词 \(words)",
+                        "\(chars) chars · \(words) words"))
     }
 
     @objc private func toggleCase() {

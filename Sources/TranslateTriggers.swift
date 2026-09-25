@@ -10,10 +10,12 @@ enum TranslateTriggers {
         if !CGPreflightScreenCaptureAccess() {
             CGRequestScreenCaptureAccess()   // 触发系统授权弹窗
             let a = NSAlert()
-            a.messageText = "需要「屏幕录制」权限"
-            a.informativeText = "截图翻译需要读取屏幕上的文字。\n请在 系统设置 → 隐私与安全性 → 屏幕录制 中允许 PopBar,然后重新使用本功能。"
-            a.addButton(withTitle: "打开设置")
-            a.addButton(withTitle: "取消")
+            a.messageText = L10n.t("需要「屏幕录制」权限", "Screen Recording Permission Required")
+            a.informativeText = L10n.t(
+                "截图翻译需要读取屏幕上的文字。\n请在 系统设置 → 隐私与安全性 → 屏幕录制 中允许 PopBar,然后重新使用本功能。",
+                "Screenshot translation needs to read text on screen.\nPlease allow PopBar in System Settings → Privacy & Security → Screen Recording, then try again.")
+            a.addButton(withTitle: L10n.t("打开设置", "Open Settings"))
+            a.addButton(withTitle: L10n.t("取消", "Cancel"))
             NSApp.activate(ignoringOtherApps: true)
             if a.runModal() == .alertFirstButtonReturn {
                 if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {

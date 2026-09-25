@@ -15,6 +15,11 @@ enum SelectionService {
             completion(r)
             return
         }
+        // 「剪贴板取词」关闭时不模拟 Cmd+C(避免打扰剪贴板)
+        guard ConfigStore.shared.config.clipboardFallback else {
+            completion(nil)
+            return
+        }
         copyViaPasteboard { text in
             if let t = text, !t.isEmpty {
                 completion(Result(text: t, bounds: nil))

@@ -7,7 +7,7 @@ enum Actions {
     }
 
     /// 完整模拟"修饰键按下 → 主键按下/抬起 → 修饰键抬起"的全套事件。
-    /// 比只给主键事件打 flags 更可靠:有些全局热键监听(如 Bob)依赖修饰键的 flagsChanged。
+    /// 比只给主键事件打 flags 更可靠:有些全局热键监听依赖修饰键的 flagsChanged。
     static func postHotkey(key: CGKeyCode, modifierKey: CGKeyCode, flags: CGEventFlags) {
         let src = CGEventSource(stateID: .hidSystemState)
         postFlagsChanged(src, key: modifierKey, down: true, flags: flags)

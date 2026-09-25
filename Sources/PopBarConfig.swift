@@ -31,6 +31,15 @@ struct PopBarConfig: Codable, Equatable {
     var temperature: Double = 0.2
     var providers: [LLMProvider] = []
 
+    // 通用偏好(偏好设置窗口编辑,保存即时生效)
+    var appearance: String = "system"        // system | light | dark
+    var language: String = "system"          // system | zh | en
+    var trayClick: String = "menu"           // menu | input | clipboard — 左键点菜单栏图标
+    var panelPosition: String = "top"        // top | cursor
+    var triggerMode: String = "both"         // both | drag | doubleClick
+    var clipboardFallback: Bool = true       // AX 取词失败时允许模拟 Cmd+C 兜底
+    var launchAtLogin: Bool = false
+
     init(sourceLanguage: String = "auto", targetLanguage: String = "auto",
          timeout: Double = 30, maxCharacters: Int = 5000,
          temperature: Double = 0.2, providers: [LLMProvider] = []) {
@@ -51,6 +60,13 @@ struct PopBarConfig: Codable, Equatable {
         maxCharacters = (try? c.decode(Int.self, forKey: .maxCharacters)) ?? d.maxCharacters
         temperature = (try? c.decode(Double.self, forKey: .temperature)) ?? d.temperature
         providers = (try? c.decode([LLMProvider].self, forKey: .providers)) ?? []
+        appearance = (try? c.decode(String.self, forKey: .appearance)) ?? d.appearance
+        language = (try? c.decode(String.self, forKey: .language)) ?? d.language
+        trayClick = (try? c.decode(String.self, forKey: .trayClick)) ?? d.trayClick
+        panelPosition = (try? c.decode(String.self, forKey: .panelPosition)) ?? d.panelPosition
+        triggerMode = (try? c.decode(String.self, forKey: .triggerMode)) ?? d.triggerMode
+        clipboardFallback = (try? c.decode(Bool.self, forKey: .clipboardFallback)) ?? d.clipboardFallback
+        launchAtLogin = (try? c.decode(Bool.self, forKey: .launchAtLogin)) ?? d.launchAtLogin
     }
 
     /// 已启用且字段完整的 provider
