@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.1)'
+        required: true
+
+jobs:
+  # 分别在 Apple Silicon 与 Intel runner 上构建,各出一个架构的 dmg
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-13]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & package
+        run: ./build.sh   # dmg 文件名自动带 uname -m 架构后缀
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.os }}
+          path: build/*.dmg
+
+  # 两个架构都成功后,把 dmg 一起挂到同一个 Release
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compose bilingual release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## 下载 | Downloads
+
+          | 芯片 | Chip | 文件 |
+          |---|---|---|
+          | Apple Silicon (M 系列) | Apple Silicon | `*-arm64.dmg` |
+          | Intel | Intel | `*-x86_64.dmg` |
+
+          ## 安装 | Install
+
+          **中文**:打开 dmg,把 `PopBar.app` 拖入 `Applications`。
+          本应用未经 Apple 公证,首次打开若提示「已损坏,无法打开」,在终端执行一次:
+
+          ```bash
+          xattr -cr /Applications/PopBar.app
+          ```
+
+          首次启动还需在「系统设置 → 隐私与安全性 → 辅助功能」中允许 PopBar。
+
+          **English**: Open the dmg and drag `PopBar.app` into `Applications`.
+          The app is not notarized; if macOS reports it "damaged", run once in Terminal:
+
+          ```bash
+          xattr -cr /Applications/PopBar.app
+          ```
+
+          Then allow PopBar in System Settings → Privacy & Security → Accessibility.
+          EOF
+          # 追加自动生成的变更列表(英文,来自 PR/commit 标题)
+          AUTO=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" --jq .body 2>/dev/null || true)
+          if [ -n "$AUTO" ]; then
+            printf '\n---\n\n%s\n' "$AUTO" >> release-notes.md
+          fi
+
+      - name: Create release & upload DMGs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          ls -l dist/
+          gh release create "$RELEASE_TAG" dist/*.dmg \
+            --title "PopBar $RELEASE_TAG" \
+            --notes-file release-notes.md

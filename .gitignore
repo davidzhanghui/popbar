@@ -4,3 +4,5 @@ PopBar.app
 icon/PopBar.iconset/
 .DS_Store
 .commandcode/
+push-main.sh
+push-tag.sh

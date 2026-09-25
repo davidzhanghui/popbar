@@ -13,9 +13,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2</string>
+    <string>1.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>1</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>PopBar uses automation to read the browser's current URL for clipping and to create Calendar events.</string>
     <key>LSMinimumSystemVersion</key>

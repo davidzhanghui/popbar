@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  中文 | <a href="README_EN.md">English</a>
+</p>
+
+<p align="center">
   <img src="docs/popbar-bar-light.png" width="520" alt="浅色模式"><br>
   <img src="docs/popbar-bar-dark.png" width="520" alt="深色模式">
 </p>
@@ -244,6 +248,9 @@ App 每次先删后增干净重建；同名 dmg 直接覆盖；打包暂存目�
 
 要求:macOS 13+；源码构建需要 Swift 工具链（Xcode 或 Command Line Tools）。
 
+> 从 GitHub Release 下载的 DMG 未经 Apple 公证,首次打开会提示"已损坏,无法打开"。
+> 把 App 拖入 `Applications` 后在终端执行一次 `xattr -cr /Applications/PopBar.app` 即可正常启动。
+
 ## 权限
 
 首次启动需授予 **系统设置 → 隐私与安全性 → 辅助功能**:
@@ -274,7 +281,7 @@ popbar/
 │   ├── ContextDetector.swift         # 上下文识别(URL/邮箱/算式/时间戳/JSON/颜色…)
 │   ├── TranslationPanel.swift        # AI 翻译/动作面板(provider 卡片 + 追问)
 │   ├── LLMClient.swift               # OpenAI 兼容流式客户端(messages 多轮)
-│   ├── PopBarConfig.swift            # config.json 结构、路径、迁移与读写
+│   ├── PopBarConfig.swift            # config.json 结构、路径与读写
 │   ├── ConfigStore.swift             # 启动加载 + 文件监听热重载 + 变更通知
 │   ├── SettingsWindow.swift          # AI 翻译设置窗口(provider 增删改、测试连接)
 │   ├── PreferencesWindow.swift       # 偏好设置窗口(通用/功能/工具条/关于 四 tab,即时生效)
