@@ -32,6 +32,8 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # GITHUB_TOKEN 建 release 需要的权限
     steps:
       - uses: actions/download-artifact@v4
         with:
