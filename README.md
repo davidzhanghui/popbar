@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <video src="https://github.com/davidzhanghui/popbar/raw/main/docs/popbar-promo-v1.0.mp4" poster="docs/popbar-promo-poster.png" width="720" controls muted></video><br>
+  <video src="https://github.com/user-attachments/assets/1857be08-837e-4c7e-bb0b-44d6773929cd" poster="docs/popbar-promo-poster.png" width="720" controls muted></video><br>
   <a href="docs/popbar-promo-v1.0.mp4">▶ 观看宣传片</a> · <sub>52 秒:划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏</sub>
 </p>
 
