@@ -19,8 +19,8 @@
 </p>
 
 <p align="center">
-  <video src="docs/popbar-promo-v1.0.mp4" width="720" controls muted></video><br>
-  <sub>52s promo: select-to-pop · context-aware actions · AI translation panel · privacy masking</sub>
+  <video src="https://github.com/davidzhanghui/popbar/raw/main/docs/popbar-promo-v1.0.mp4" poster="docs/popbar-promo-poster.png" width="720" controls muted></video><br>
+  <a href="docs/popbar-promo-v1.0.mp4">▶ Watch the promo</a> · <sub>52s: select-to-pop · context-aware actions · AI translation panel · privacy masking</sub>
 </p>
 
 ## Features

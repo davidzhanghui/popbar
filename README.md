@@ -19,8 +19,8 @@
 </p>
 
 <p align="center">
-  <video src="docs/popbar-promo-v1.0.mp4" width="720" controls muted></video><br>
-  <sub>52 秒宣传片:划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏</sub>
+  <video src="https://github.com/davidzhanghui/popbar/raw/main/docs/popbar-promo-v1.0.mp4" poster="docs/popbar-promo-poster.png" width="720" controls muted></video><br>
+  <a href="docs/popbar-promo-v1.0.mp4">▶ 观看宣传片</a> · <sub>52 秒:划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏</sub>
 </p>
 
 ## 特性
