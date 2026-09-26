@@ -18,6 +18,11 @@
   <img src="docs/popbar-bar-dark.png" width="520" alt="Dark mode">
 </p>
 
+<p align="center">
+  <video src="docs/popbar-promo-v1.0.mp4" width="720" controls muted></video><br>
+  <sub>52s promo: select-to-pop · context-aware actions · AI translation panel · privacy masking</sub>
+</p>
+
 ## Features
 
 - **Select & pop**: after a drag or double-click selection, a floating bar appears above the selection
