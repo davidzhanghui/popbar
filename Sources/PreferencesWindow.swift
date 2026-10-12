@@ -170,6 +170,27 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         hotkeyField.delegate = self
         textFieldKeys[ObjectIdentifier(hotkeyField)] = "hotkeys.showBar"
         textFields.append(hotkeyField)
+        let snapHotkeyField = NSTextField()
+        snapHotkeyField.placeholderString = "ctrl+opt+p"
+        snapHotkeyField.stringValue = ConfigStore.shared.config.hotkeys.snap
+        snapHotkeyField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        snapHotkeyField.delegate = self
+        textFieldKeys[ObjectIdentifier(snapHotkeyField)] = "hotkeys.snap"
+        textFields.append(snapHotkeyField)
+        let limitField = NSTextField()
+        limitField.placeholderString = "20"
+        limitField.stringValue = String(ConfigStore.shared.config.snap.history.limit)
+        limitField.alignment = .right
+        limitField.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        limitField.delegate = self
+        textFieldKeys[ObjectIdentifier(limitField)] = "snap.historyLimit"
+        textFields.append(limitField)
+        let dirButton = ClosureButton(title: ConfigStore.shared.config.snap.saveDir) {}
+        dirButton.bezelStyle = .rounded
+        dirButton.lineBreakMode = .byTruncatingMiddle
+        dirButton.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
+        dirButton.target = self
+        dirButton.action = #selector(chooseSnapDir(_:))
         return [sectionHeader(L10n.t("功能", "Features")), card([
             row(L10n.t("剪贴板历史", "Clipboard History"),
                 L10n.t("记录最近剪贴板,菜单栏可选粘贴;跳过密码类标记",
@@ -192,7 +213,40 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 L10n.t("格式 ctrl+opt+space;键盘选中后按它呼出工具条",
                        "Format: ctrl+opt+space; press after selecting via keyboard"),
                 hotkeyField),
+        ]), sectionHeader(L10n.t("截屏", "Screenshot")), card([
+            row(L10n.t("截屏快捷键", "Screenshot Hotkey"),
+                L10n.t("格式 ctrl+opt+p;全局唤起截屏", "Format: ctrl+opt+p; starts a screenshot anywhere"),
+                snapHotkeyField),
+            row(L10n.t("保存位置", "Save Folder"),
+                L10n.t("⌘S 保存截屏的目录", "Where ⌘S saves screenshots"),
+                dirButton),
+            row(L10n.t("保存格式", "Save Format"),
+                L10n.t("PNG 无损,JPG 体积小", "PNG is lossless, JPG is smaller"),
+                seg("snapFormat", "PNG", "JPG", values: ["png", "jpg"])),
+            row(L10n.t("放大镜", "Magnifier"),
+                L10n.t("选区时显示像素放大镜与颜色值", "Show pixel magnifier and color value while selecting"),
+                toggle("snapMagnifier")),
+            row(L10n.t("截图历史", "Screenshot History"),
+                L10n.t("保存到本机 Application Support/PopBar/Snaps,默认关闭",
+                       "Stored locally in Application Support/PopBar/Snaps; off by default"),
+                toggle("snapHistory")),
+            row(L10n.t("保留数量", "History Limit"),
+                L10n.t("1–200,超出自动删除最旧的", "1–200; oldest are removed beyond this"),
+                limitField),
         ])]
+    }
+
+    @objc private func chooseSnapDir(_ sender: NSButton) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        NSApp.activateForUI()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var c = ConfigStore.shared.config
+        c.snap.saveDir = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        sender.title = c.snap.saveDir
+        try? ConfigStore.shared.save(c)
     }
 
     /// 工具条(#3)与应用规则(#2)
@@ -405,6 +459,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             case "triggerMode":   current = c.triggerMode
             case "privacyGuard":  current = c.privacy.guardMode
             case "ocrAfter":      current = c.ocr.after
+            case "snapFormat":    current = c.snap.format
             default: continue
             }
             s.selectedSegment = max(0, values.firstIndex(of: current) ?? 0)
@@ -415,6 +470,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             case "clipHistory":  s.state = c.clipboardHistory.enabled ? .on : .off
             case "clipPersist":  s.state = c.clipboardHistory.persist ? .on : .off
             case "usageEnabled": s.state = c.usage.enabled ? .on : .off
+            case "snapMagnifier": s.state = c.snap.showMagnifier ? .on : .off
+            case "snapHistory":   s.state = c.snap.history.enabled ? .on : .off
             case "launchAtLogin":
                 // 以系统实际登录项状态为准(用户可能在系统设置里关过)
                 s.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -435,6 +492,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         case "panelPosition": c.panelPosition = v
         case "triggerMode":   c.triggerMode = v
         case "ocrAfter":      c.ocr.after = v
+        case "snapFormat":    c.snap.format = v
         case "privacyGuard":  c.privacy.guardMode = v
         default: return
         }
@@ -463,6 +521,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         case "clipHistory":   c.clipboardHistory.enabled = sender.state == .on
         case "clipPersist":   c.clipboardHistory.persist = sender.state == .on
         case "usageEnabled":  c.usage.enabled = sender.state == .on
+        case "snapMagnifier": c.snap.showMagnifier = sender.state == .on
+        case "snapHistory":   c.snap.history.enabled = sender.state == .on
         default: return
         }
         try? ConfigStore.shared.save(c)
@@ -480,6 +540,23 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 c.hotkeys.showBar = v.isEmpty ? "ctrl+opt+space" : v
             } else {
                 field.stringValue = c.hotkeys.showBar
+                NSSound.beep()
+                return
+            }
+        case "snap.historyLimit":
+            if let n = Int(field.stringValue.trimmingCharacters(in: .whitespaces)), (1...200).contains(n) {
+                c.snap.history.limit = n
+            } else {
+                field.stringValue = String(c.snap.history.limit)
+                NSSound.beep()
+                return
+            }
+        case "hotkeys.snap":
+            let v = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if v.isEmpty || Hotkey.parse(v) != nil {
+                c.hotkeys.snap = v.isEmpty ? "ctrl+opt+p" : v
+            } else {
+                field.stringValue = c.hotkeys.snap
                 NSSound.beep()
                 return
             }

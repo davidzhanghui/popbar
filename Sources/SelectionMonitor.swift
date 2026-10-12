@@ -54,6 +54,23 @@ final class SelectionMonitor {
             if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
             return
         }
+        if type == .keyDown,
+           let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.snap),
+           Hotkey.matches(event, spec) {
+            DispatchQueue.main.async { SnapController.shared.start() }
+            return
+        }
+        if SnapController.shared.isScrolling {
+            if type == .keyDown {
+                switch event.getIntegerValueField(.keyboardEventKeycode) {
+                case 53: DispatchQueue.main.async { SnapController.shared.cancelScroll() }
+                case 36, 76: DispatchQueue.main.async { SnapController.shared.completeScroll(.copy) }
+                default: break
+                }
+            }
+            return
+        }
+        if SnapController.shared.isActive { return }
         guard enabled else { return }
 
         switch type {
@@ -63,7 +80,7 @@ final class SelectionMonitor {
             let insideTranslation = translation.isVisible && translation.frame.contains(cocoaLoc)
             if translation.isVisible && !insideTranslation && !translation.isPinned { translation.close() }
             // 翻译面板、设置窗口里的拖选/点击都属于 PopBar 自己,不触发取词
-            downInsidePanel = insideTranslation || Self.insideSettings(cocoaLoc)
+            downInsidePanel = insideTranslation || SnapPinWindow.contains(cocoaLoc) || Self.insideSettings(cocoaLoc)
             downInsideBar = FloatingBarController.shared.isVisible
                 && FloatingBarController.shared.frame.contains(cocoaLoc)
             downPoint = event.location
@@ -123,6 +140,7 @@ final class SelectionMonitor {
             }
 
         case .rightMouseDown, .otherMouseDown:
+            if SnapPinWindow.contains(Screen.cocoaPoint(from: event.location)) { return }
             let translation = TranslationPanelController.shared
             if translation.isVisible {
                 if translation.frame.contains(Screen.cocoaPoint(from: event.location)) { return }
@@ -137,7 +155,7 @@ final class SelectionMonitor {
             let translation = TranslationPanelController.shared
             let point = Screen.cocoaPoint(from: event.location)
             if translation.isVisible, translation.frame.contains(point) { return }
-            if Self.insideSettings(point) { return }
+            if SnapPinWindow.contains(point) || Self.insideSettings(point) { return }
             if FloatingBarController.shared.isVisible {
                 FloatingBarController.shared.hide()
             }

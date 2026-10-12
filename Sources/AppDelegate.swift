@@ -111,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         for (title, sel) in [
+            (L10n.t("截屏", "Screenshot"), #selector(snapAction)),
             (L10n.t("截图翻译(OCR)", "Screenshot Translate"), #selector(screenshotTranslateAction)),
             (L10n.t("输入翻译", "Input Translate"), #selector(inputTranslateAction)),
             (L10n.t("剪贴板翻译", "Clipboard Translate"), #selector(clipboardTranslateAction)),
@@ -124,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hist.target = self
             menu.addItem(hist)
         }
+        if let snapHist = SnapHistory.menuItem() { menu.addItem(snapHist) }
 
         menu.addItem(.separator())
 
@@ -232,6 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.openTranslateConfig()
     }
 
+    @objc private func snapAction() { SnapController.shared.start() }
     @objc private func screenshotTranslateAction() { TranslateTriggers.screenshot() }
     @objc private func inputTranslateAction() { TranslateTriggers.input() }
     @objc private func clipboardTranslateAction() { TranslateTriggers.clipboard() }

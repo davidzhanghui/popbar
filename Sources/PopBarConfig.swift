@@ -119,6 +119,57 @@ struct HotkeysConfig: Codable, Equatable {
     var showBar: String = "ctrl+opt+space"
     var ocr: String = ""
     var history: String = "opt+cmd+v"
+    var snap: String = "ctrl+opt+p"
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = HotkeysConfig()
+        showBar = (try? c.decode(String.self, forKey: .showBar)) ?? d.showBar
+        ocr = (try? c.decode(String.self, forKey: .ocr)) ?? d.ocr
+        history = (try? c.decode(String.self, forKey: .history)) ?? d.history
+        snap = (try? c.decode(String.self, forKey: .snap)) ?? d.snap
+    }
+}
+
+/// 截屏历史(阶段 C 使用)
+struct SnapHistoryConfig: Codable, Equatable {
+    var enabled: Bool = false
+    var limit: Int = 20
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = SnapHistoryConfig()
+        enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? d.enabled
+        limit = (try? c.decode(Int.self, forKey: .limit)) ?? d.limit
+    }
+}
+
+/// 截屏
+struct SnapConfig: Codable, Equatable {
+    var saveDir: String = "~/Desktop"
+    /// png | jpg
+    var format: String = "png"
+    var showMagnifier: Bool = true
+    var history = SnapHistoryConfig()
+    var lastColor: String = "#FF3B30"
+    var lastWidth: Double = 3
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = SnapConfig()
+        saveDir = (try? c.decode(String.self, forKey: .saveDir)) ?? d.saveDir
+        format = (try? c.decode(String.self, forKey: .format)) ?? d.format
+        showMagnifier = (try? c.decode(Bool.self, forKey: .showMagnifier)) ?? d.showMagnifier
+        history = (try? c.decode(SnapHistoryConfig.self, forKey: .history)) ?? d.history
+        lastColor = (try? c.decode(String.self, forKey: .lastColor)) ?? d.lastColor
+        lastWidth = (try? c.decode(Double.self, forKey: .lastWidth)) ?? d.lastWidth
+    }
 }
 
 /// #19 OCR
@@ -161,6 +212,7 @@ struct PopBarConfig: Codable, Equatable {
     var hotkeys = HotkeysConfig()
     var ocr = OCRConfig()
     var usage = UsageConfig()
+    var snap = SnapConfig()
 
     func appRule(for bundleID: String?) -> AppRule? {
         guard let bundleID else { return nil }
@@ -194,6 +246,7 @@ struct PopBarConfig: Codable, Equatable {
         hotkeys = (try? c.decode(HotkeysConfig.self, forKey: .hotkeys)) ?? d.hotkeys
         ocr = (try? c.decode(OCRConfig.self, forKey: .ocr)) ?? d.ocr
         usage = (try? c.decode(UsageConfig.self, forKey: .usage)) ?? d.usage
+        snap = (try? c.decode(SnapConfig.self, forKey: .snap)) ?? d.snap
         seedDefaults()
     }
 

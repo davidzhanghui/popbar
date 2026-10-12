@@ -317,7 +317,7 @@ final class FloatingBarController: NSObject {
 /// 支持悬停高亮的图标按钮:
 /// mouseEntered 时显示圆角淡色底(取按钮主题色) + 手型光标。
 /// .activeAlways 很关键——App 是 accessory 且面板不抢焦点,普通 tracking 不会生效。
-final class BarButton: NSButton {
+class BarButton: NSButton {
     var accentColor: NSColor = .labelColor
     var actionIndex = -1
     var isHighlightedByKeyboard = false {

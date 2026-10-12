@@ -7,23 +7,7 @@ enum TranslateTriggers {
     /// 截图翻译:系统 screencapture 选区截图 → Vision OCR → 翻译面板
     /// 需要「屏幕录制」权限;SCScreenshotManager 没有交互选区 API,统一走 screencapture -i
     static func screenshot() {
-        if !CGPreflightScreenCaptureAccess() {
-            CGRequestScreenCaptureAccess()   // 触发系统授权弹窗
-            let a = NSAlert()
-            a.messageText = L10n.t("需要「屏幕录制」权限", "Screen Recording Permission Required")
-            a.informativeText = L10n.t(
-                "截图翻译需要读取屏幕上的文字。\n请在 系统设置 → 隐私与安全性 → 屏幕录制 中允许 PopBar,然后重新使用本功能。",
-                "Screenshot translation needs to read text on screen.\nPlease allow PopBar in System Settings → Privacy & Security → Screen Recording, then try again.")
-            a.addButton(withTitle: L10n.t("打开设置", "Open Settings"))
-            a.addButton(withTitle: L10n.t("取消", "Cancel"))
-            NSApp.activateForUI()
-            if a.runModal() == .alertFirstButtonReturn {
-                if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                    NSWorkspace.shared.open(u)
-                }
-            }
-            return
-        }
+        guard ScreenPermission.ensure() else { return }
         captureInteractively()
     }
 
@@ -43,16 +27,15 @@ enum TranslateTriggers {
         for type in [NSPasteboard.PasteboardType.png, .tiff] {
             if let data = pb.data(forType: type),
                let cg = NSImage(data: data)?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                ocrAndShow(cg)
+                handleOCRImage(cg)
                 return
             }
         }
         NSSound.beep()
     }
 
-    // MARK: - 私有
-
-    private static func ocrAndShow(_ image: CGImage) {
+    /// OCR 结果统一路由(截图翻译、截屏 OCR 共用)
+    static func handleOCRImage(_ image: CGImage) {
         TextOCR.recognize(image) { text in
             guard let text,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -73,6 +56,8 @@ enum TranslateTriggers {
             }
         }
     }
+
+    // MARK: - 私有
 
     /// #19 识别截图里的二维码:命中则弹出可点击的结果条
     private static func detectBarcode(_ image: CGImage) {
@@ -105,7 +90,7 @@ enum TranslateTriggers {
                         .cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                     return   // 用户取消
                 }
-                ocrAndShow(cg)
+                handleOCRImage(cg)
             }
         }
         try? proc.run()
