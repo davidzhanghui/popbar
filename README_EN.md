@@ -33,6 +33,7 @@
 - **Privacy first**: before AI requests, detects phone numbers, ID numbers, bank cards, emails, API keys, private keys, internal IPs — ask / auto-mask / off; clipboard history is off by default and never persisted by default
 - **Extension system**: three types — URL template / Shell script (text via stdin, injection-safe) / Shortcut; live on config change
 - **More built-in tools**: QR code generation, developer toolbox (HTML/Unicode escape, SHA256/MD5, JWT decode, JSON processing)
+- **Screenshot**: WeChat-style capture (`ctrl+opt+p`) — frozen screen, window detection, pixel magnifier and color picker, rectangle/ellipse/arrow/pen/text/mosaic/number annotations, pin to screen, OCR, scrolling capture, optional local history
 - **Menu bar translation entries**: screenshot OCR / input / clipboard — three ways to open the translation panel; screenshots and clipboard images are also scanned for QR codes
 - **Clipboard history**: opt-in; paste or append from the menu bar; memory-only by default, concealed clipboard markers always skipped
 - **Keyboard control**: configurable global hotkey; in keyboard mode ←/→ moves the highlight, Enter runs, Esc closes; the interceptor tap is auto-removed on timeout
@@ -80,6 +81,7 @@ pressing the summon hotkey (default `ctrl+opt+space`, configurable in Preference
 - **Pasteboard protection**: the app's own writes are registered; history never stores temporary content from the capture fallback; ConcealedType / TransientType are always skipped
 - **Extension isolation**: Shell / Shortcut extensions receive text only via stdin + environment variables, never interpolated into a command string; 10 s default timeout with SIGKILL
 - **App blocklist**: capture can be fully disabled in sensitive apps; one click in the menu bar toggles the current app
+- **Screenshot protection**: PopBar's own windows never appear in captures; screenshot history is off by default and, when enabled, stored only locally under Application Support/PopBar/Snaps with a retention limit; nothing is uploaded unless you choose OCR → AI translate yourself
 
 ## How it works
 
@@ -126,11 +128,51 @@ The menu bar offers three more triggers:
 | Input Translate | The panel's source area becomes an input field; Enter submits, Shift+Enter inserts a newline; edit and re-translate freely |
 | Clipboard Translate | Text is translated directly; images are OCR'd first |
 
+Screenshot entries in the menu bar:
+
+| Entry | Description |
+|---|---|
+| Screenshot | Starts a capture (same as the global hotkey, default `ctrl+opt+p`); see "Screenshot" below |
+| Screenshot History | Shown when enabled in Preferences and there are records; each item has a thumbnail with Copy / Pin / Show in Finder, plus Open Folder and Clear History at the bottom |
+
 Other menu items: master switch for the selection bar, one-click disable/enable for the
 current app, clipboard history (shown when enabled), AI translation settings, Preferences,
 Accessibility settings, Quit.
 The left-click action on the menu bar icon can be changed to "Input Translate / Clipboard
 Translate" in Preferences; right-click always opens the menu.
+
+## Screenshot
+
+Menu bar → "Screenshot" or the global hotkey `ctrl+opt+p`: every screen freezes and dims instantly, and PopBar's own windows never appear in the capture.
+Hovering highlights a window and a click selects it; you can also drag a custom region. A toolbar appears below the selection.
+It needs the Screen Recording permission, shared with Screenshot Translate, and guides you through granting it on first use.
+
+<p align="center">
+  <img src="docs/popbar-snap.png" width="700" alt="Screenshot: frozen frame, selection, annotations and toolbar">
+</p>
+
+- **Magnifier**: while selecting, an 8× pixel magnifier shows the pixel coordinates and RGB/HEX color; press `C` to copy the color under the cursor (can be turned off in Preferences)
+- **Annotations**: rectangle, ellipse, arrow, pen, text, mosaic, number; 3 sizes and 6 colors (last choice remembered), undo/redo;
+  the selection locks once a tool is selected or an annotation exists. Hold Shift: rectangle/ellipse become square/circle, arrows snap to 45°
+- **Output**: Done (copy to clipboard), Save (to the folder set in Preferences, named `PopBar yyyy-MM-dd at HH.mm.ss`, PNG/JPG), OCR (into the translation panel), Pin
+- **Scrolling capture**: click the scrolling-capture button on the toolbar and the selection becomes a dashed frame; **scroll the content down slowly** and PopBar stitches it automatically, with a live preview in a panel beside it.
+  `Return` or "Done" copies, `Esc` or "Cancel" discards; limit 20000 px; if it says "Scroll slower / Scroll down", adjust how you scroll. Unavailable while annotations exist
+- **History**: opt-in in Preferences (off by default); PNGs are stored locally in `Application Support/PopBar/Snaps` and the oldest are pruned beyond the limit (1–200)
+
+| Action | Description |
+|---|---|
+| `ctrl+opt+p` | Start a screenshot (configurable in Preferences) |
+| `Esc` | Cancel (while editing text, the first Esc only commits the text) |
+| `Return` / `⌘C` | Done and copy |
+| `⌘S` | Save to the configured folder |
+| `⌘Z` / `⇧⌘Z` | Undo / redo annotations |
+| Arrows / `Shift`+arrows | Nudge the selection 1 pt / 10 pt (while unlocked) |
+| `C` | Copy the HEX color under the cursor |
+| Double-click selection | Done and copy (when no annotation tool is active) |
+| Right-click | Tool active → deselect tool; annotations exist → nothing; selection → back to selecting; otherwise cancel |
+
+**Pin window**: floats where the region was captured and can be dragged; scroll to zoom 10%–500% (anchored at the cursor);
+double-click or `Esc` closes; `⌘C` copies; right-click menu: Copy / Save / OCR / Opacity (100% 80% 60% 40%) / Close.
 
 ### Settings window
 
@@ -159,7 +201,7 @@ tab content (a tab scrolls internally when it exceeds the available screen heigh
 | Tab | Content |
 |---|---|
 | General | Appearance, language, tray icon, panel position, trigger, clipboard fallback, privacy guard, launch at login |
-| Features | Clipboard history, history persistence, OCR result, usage stats, summon hotkey |
+| Features | Clipboard history, history persistence, OCR result, usage stats, summon hotkey; Screenshot: hotkey, save folder, format, magnifier, history and limit |
 | Toolbar | Actions & ordering (drag), per-app rules |
 | About | Version, config folder |
 
@@ -178,6 +220,10 @@ Item details:
 | OCR Result | After screenshot recognition: translation panel / full action bar |
 | Usage Stats | Counts actions only, never text; powers the weekly ordering suggestion; can be disabled |
 | Summon Hotkey | Default `ctrl+opt+space`; format `ctrl+opt+space` |
+| Screenshot Hotkey | Default `ctrl+opt+p`; clear it to restore the default |
+| Save Folder / Format | Where ⌘S saves screenshots (default `~/Desktop`) and PNG / JPG |
+| Magnifier | Show the pixel magnifier and color value while selecting |
+| Screenshot History / Limit | Keep a local screenshot history (off by default) and how many to keep, 1–200 |
 | Launch at Login | SMAppService login item, synced with System Settings → Login Items |
 
 The About tab shows the version and config folder, with a one-click Finder reveal.
@@ -204,6 +250,9 @@ Config lives in `~/Library/Application Support/PopBar/config.json` (auto-created
   "timeout": 30,
   "maxCharacters": 5000,
   "temperature": 0.2,
+  "hotkeys": {"showBar": "ctrl+opt+space", "history": "opt+cmd+v", "snap": "ctrl+opt+p"},
+  "snap": {"saveDir": "~/Desktop", "format": "png", "showMagnifier": true,
+           "history": {"enabled": false, "limit": 20}, "lastColor": "#FF3B30", "lastWidth": 1},
   "providers": [
     {
       "name": "DeepSeek",
@@ -240,6 +289,7 @@ Config lives in `~/Library/Application Support/PopBar/config.json` (auto-created
 - **Per-app rules**: `appRules`, each `{bundleID, name, mode, actions[]}`; `mode` is `disabled / custom`
 - **Toolbar**: `toolbar.items` ordered as `{id, visible}`; `maxVisible` controls buttons on the main bar (default 12, adjustable 4–24), the rest go to the overflow menu; `contextPosition` is `afterEdit / front / back`; `order` is `manual / perApp` (perApp promotes frequently used actions in that app based on usage stats)
 - **First-launch seeding**: with no config, a template is written containing 2 disabled provider templates (DeepSeek, SiliconFlow), 1 GitHub-search extension, and 5 preset app-disable rules (1Password / Bitwarden / Keychain Access / Screen Sharing / Windows App)
+- **Screenshot**: `snap` — `saveDir` is where ⌘S saves; `format` is `png / jpg`; `showMagnifier` toggles the magnifier; `history.enabled / limit` control screenshot history (off by default, keeps 1–200); `lastColor / lastWidth` remember the last annotation color and size tier (0/1/2)
 - **Others**: `clipboardHistory`, `ocr.after`, `usage.enabled`, `hotkeys`, `privacy` etc. can all be handwritten with defaults
 - When `targetLanguage` is `auto`, direction is inferred from the source text (Chinese→English, otherwise→Chinese)
 - The language dropdown in the panel changes direction for that session only — it's not written back
@@ -257,7 +307,7 @@ Config lives in `~/Library/Application Support/PopBar/config.json` (auto-created
 
 The app bundle is deleted and rebuilt cleanly every time; a same-name DMG is overwritten; the DMG staging directory is cleaned up automatically. Open the DMG, drag `PopBar.app` into `Applications`, and launch it from Applications. The app only shows a menu bar icon — no Dock icon. You can also run the local build directly: `open build.noindex/PopBar.app`. The build and staging directories use the `.noindex` suffix so the dev copy stays out of Spotlight app results.
 
-Requirements: macOS 13+; building from source needs the Swift toolchain (Xcode or Command Line Tools).
+Requirements: macOS 14+; building from source needs the Swift toolchain (Xcode or Command Line Tools).
 
 > DMGs downloaded from GitHub Releases are not notarized by Apple, so the first launch reports
 > "damaged and can't be opened". After dragging the app into `Applications`, run once in Terminal:
@@ -270,6 +320,9 @@ On first launch, grant **System Settings → Privacy & Security → Accessibilit
 - Global event listening (selection gesture detection)
 - Reading selected text
 - Simulating keystrokes (`Cmd+C/X/V`)
+
+Separately, **Screenshot** and **Screenshot Translate (OCR)** need **System Settings → Privacy & Security → Screen Recording**; the app guides you through it on first use.
+On macOS 15+, the system periodically asks you to re-confirm screen-recording access for third-party apps — that's system behaviour every screenshot tool gets.
 
 > The AI translation panel needs network access (outbound HTTPS); every other action works fully offline. Selected text is only sent to a service when you actively use search, online lookup or AI translation.
 
@@ -306,6 +359,19 @@ popbar/
 │   ├── UsageStats.swift              # Usage stats & weekly smart suggestion
 │   ├── KeyboardTrigger.swift         # Hotkey parsing + keyboard-mode interceptor tap
 │   ├── QRCodePanel.swift             # QR code from selection (CoreImage, offline)
+│   ├── ScreenPermission.swift        # Screen Recording permission check/guidance (shared by screenshot and screenshot translate)
+│   ├── SnapController.swift          # Screenshot session: freeze → overlays → done/cancel/pin/scrolling capture
+│   ├── SnapOverlay.swift             # Overlay window and view: selection, annotation interaction, keyboard
+│   ├── SnapGeometry.swift            # Pure geometry: selection, drag, pixel conversion
+│   ├── SnapCapture.swift             # ScreenCaptureKit capture + window list
+│   ├── SnapMagnifier.swift           # Pixel magnifier and color picking
+│   ├── SnapToolbar.swift             # Screenshot toolbar and style bar
+│   ├── SnapAnnotation.swift          # Annotation model/drawing, undo stack, mosaic
+│   ├── SnapOutput.swift              # Compose annotations, copy, save, OCR
+│   ├── SnapPin.swift                 # Pin window
+│   ├── SnapScroll.swift              # Scrolling capture: row-hash stitcher + capture loop
+│   ├── SnapScrollUI.swift            # Scrolling capture dashed frame and control panel
+│   ├── SnapHistory.swift             # Screenshot history storage, pruning and menu
 │   ├── L10n.swift                    # Chinese/English UI strings
 │   ├── Actions.swift                 # CGEvent keystroke simulation (incl. flagsChanged)
 │   ├── AppActivation.swift           # Accessory-app foreground activation / Esc-closable window
@@ -341,8 +407,11 @@ swift icon/make_icon.swift icon/PopBar.iconset icon/preview.png
 iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 
 # Regenerate the bar screenshots used in the README (light + dark)
-swiftc -O -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
+swiftc -O -target $(uname -m)-apple-macos14.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
 ./build/shot docs/popbar-bar-light.png docs/popbar-bar-dark.png
+
+# Screenshot-feature showcase image (offline composite over docs/index.html, no Screen Recording needed)
+./build/shot --snap docs
 ```
 
 ## Known limitations
@@ -351,6 +420,8 @@ swiftc -O -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main
 - In apps with no AX support at all, capture relies on the pasteboard fallback and positioning degrades to the mouse location
 - OCR uses offline Vision recognition; accuracy is limited for long passages and small fonts
 - The extension system has three lightweight types (URL/Shell/Shortcut); YAML+JS-style plugins are not supported
+- Scrolling capture only supports scrolling down; it relies on heuristics for fixed headers/footers, and large blank or animated areas may trigger the "scroll slower" hint; the result cannot be annotated
+- The screenshot hotkey fires through a listen-only event tap, so the key also reaches the frontmost app; the selection can't span screens
 - No Developer ID signing or Apple notarization yet; the DMG is fine for local installs/internal testing — public distribution needs proper signing and notarization per Apple requirements
 
 ## License

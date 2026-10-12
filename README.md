@@ -33,6 +33,7 @@
 - **隐私优先**:AI 请求前检测手机号、身份证、银行卡、API Key、私钥、内网 IP,可选询问 / 自动脱敏;剪贴板历史默认关闭、默认不落盘
 - **扩展系统**:URL 模板 / Shell 脚本(stdin 传文本,防注入)/ 快捷指令三类扩展,配置即生效
 - **更多内置工具**:二维码生成、开发者工具箱(HTML/Unicode 转义、SHA256/MD5、JWT 解码、JSON 处理)
+- **截屏**:微信式截屏(`ctrl+opt+p`)——冻结画面、自动识别窗口、像素放大镜与取色、矩形/椭圆/箭头/画笔/文字/马赛克/序号标注、贴图、文字识别、长截图,可选本地截图历史
 - **菜单栏翻译入口**:截图 OCR / 输入 / 剪贴板三种方式直接唤起翻译面板;截图与剪贴板图片还会识别二维码
 - **剪贴板历史**:可选开启,菜单栏选择粘贴或追加;默认内存存储不落盘,密码类剪贴板标记一律跳过
 - **键盘操作**:可配置全局快捷键唤起;键盘模式期间 ←/→ 移动高亮、Enter 执行、Esc 关闭,自动限时摘除拦截
@@ -80,6 +81,7 @@
 - **剪贴板保护**:自身写入统一登记,历史不误存降级取词的临时内容;ConcealedType / TransientType 一律跳过
 - **扩展隔离**:Shell / Shortcut 扩展文本只走 stdin + 环境变量,不拼命令串;默认 10s 超时强杀
 - **应用黑名单**:敏感应用可整体禁用取词;菜单栏可一键对当前 App 禁用/启用
+- **截屏保护**:PopBar 自己的窗口不会出现在截图里;截图历史默认关闭,开启后也只存本机 Application Support/PopBar/Snaps 并按保留数量自动清理;截屏内容不会上传,除非你自己点「文字识别」走 AI 翻译
 
 ## 工作原理
 
@@ -125,9 +127,49 @@ flowchart TD
 | 输入翻译 | 面板原文区变为输入框,Enter 提交、Shift+Enter 换行,可反复修改重译 |
 | 剪贴板翻译 | 剪贴板是文本直接翻;是图片则先 OCR 再翻 |
 
+菜单栏的截屏相关入口:
+
+| 入口 | 说明 |
+|---|---|
+| 截屏 | 唤起截屏(同全局快捷键,默认 `ctrl+opt+p`);详见下方「截屏」 |
+| 截图历史 | 偏好设置里开启且有记录时显示;每条带缩略图,可复制 / 贴图 / 在 Finder 中显示,底部可打开文件夹、清空历史 |
+
 菜单里的其他条目:启用/停用划词弹条总开关、对当前 App 一键禁用/启用、
 剪贴板历史(开启后显示)、AI 翻译设置、偏好设置、辅助功能设置、退出。
 左键点菜单栏图标的行为可在偏好设置里改为「输入翻译 / 剪贴板翻译」,右键始终弹菜单。
+
+## 截屏
+
+菜单栏 →「截屏」或全局快捷键 `ctrl+opt+p`:所有屏幕瞬间冻结并变暗,PopBar 自己的窗口不会出现在截图里。
+鼠标悬停会高亮窗口,点击直接选中该窗口,也可以拖拽自定义选区;选区下方出现工具条。
+需要「屏幕录制」权限,与截图翻译共用同一项授权,首次使用会引导授权。
+
+<p align="center">
+  <img src="docs/popbar-snap.png" width="700" alt="截屏:定格画面、选区、标注与工具条">
+</p>
+
+- **放大镜**:拖选时显示 8 倍像素放大镜、像素坐标与 RGB/HEX 颜色,按 `C` 复制光标处颜色(偏好设置可关闭)
+- **标注**:矩形、椭圆、箭头、画笔、文字、马赛克、序号;3 档粗细、6 种颜色(记住上次选择),可撤销/重做;
+  选中工具或已有标注后选区锁定。按住 Shift:矩形/椭圆约束为正方形/正圆,箭头吸附 45°
+- **输出**:完成(复制到剪贴板)、保存(到偏好设置里的目录,文件名 `PopBar yyyy-MM-dd at HH.mm.ss`,PNG/JPG)、文字识别(进翻译面板)、贴图
+- **长截图**:点工具条上的长截图按钮后选区变成虚线框,**向下缓慢滚动**目标内容,PopBar 自动拼接并在旁边的面板里实时预览,
+  `Return` 或「完成」复制,`Esc` 或「取消」放弃;上限 20000 px,提示「请慢一点滚动 / 请向下滚动」时调整滚动方式。有标注时不可用
+- **截图历史**:偏好设置里可开启(默认关闭),PNG 存于本机 `Application Support/PopBar/Snaps`,按保留数量(1–200)自动清理最旧的
+
+| 操作 | 说明 |
+|---|---|
+| `ctrl+opt+p` | 开始截屏(偏好设置可改) |
+| `Esc` | 取消截屏(编辑文字时,第一次 Esc 只确认文字) |
+| `Return` / `⌘C` | 完成并复制 |
+| `⌘S` | 保存到指定目录 |
+| `⌘Z` / `⇧⌘Z` | 撤销 / 重做标注 |
+| `←→↑↓` / `Shift`+方向键 | 微调选区 1 pt / 10 pt(未锁定时) |
+| `C` | 复制光标处颜色 HEX |
+| 双击选区 | 完成并复制(未选标注工具时) |
+| 右键 | 已选工具 → 取消工具;已有标注 → 无操作;已选区 → 回到选择状态;否则取消截屏 |
+
+**贴图窗口**:悬浮在原位置,可拖动;滚轮缩放 10%–500%(以光标为中心);双击或 `Esc` 关闭;`⌘C` 复制;
+右键菜单:复制 / 保存 / 文字识别 / 透明度(100% 80% 60% 40%)/ 关闭。
 
 ### 设置窗口
 
@@ -153,7 +195,7 @@ flowchart TD
 | tab | 内容 |
 |---|---|
 | 通用 | 外观、语言、托盘图标、面板位置、划词触发、剪贴板取词、敏感信息、开机启动 |
-| 功能 | 剪贴板历史、历史持久化、OCR 结果、使用统计、唤起快捷键 |
+| 功能 | 剪贴板历史、历史持久化、OCR 结果、使用统计、唤起快捷键;截屏:快捷键、保存位置、保存格式、放大镜、截图历史与保留数量 |
 | 工具条 | 动作与排序(拖拽调整)、应用规则 |
 | 关于 | 版本号、配置目录 |
 
@@ -172,6 +214,10 @@ flowchart TD
 | OCR 结果 | 截图识别后弹翻译面板 / 完整工具条 |
 | 使用统计 | 只记动作次数不记文本;用于每周一次的排序建议;可关 |
 | 唤起快捷键 | 默认 `ctrl+opt+space`;格式 `ctrl+opt+space` 可改 |
+| 截屏快捷键 | 默认 `ctrl+opt+p`,清空恢复默认 |
+| 保存位置 / 格式 | ⌘S 保存截屏的目录(默认 `~/Desktop`)与格式 PNG / JPG |
+| 放大镜 | 选区时是否显示像素放大镜与颜色值 |
+| 截图历史 / 保留数量 | 是否在本机保存截图历史(默认关)与保留条数 1–200 |
 | 开机启动 | SMAppService 登录项,与系统设置 → 登录项 同步 |
 
 「关于」tab 显示版本号和配置目录,可一键在 Finder 打开。
@@ -198,6 +244,9 @@ flowchart TD
   "timeout": 30,
   "maxCharacters": 5000,
   "temperature": 0.2,
+  "hotkeys": {"showBar": "ctrl+opt+space", "history": "opt+cmd+v", "snap": "ctrl+opt+p"},
+  "snap": {"saveDir": "~/Desktop", "format": "png", "showMagnifier": true,
+           "history": {"enabled": false, "limit": 20}, "lastColor": "#FF3B30", "lastWidth": 1},
   "providers": [
     {
       "name": "DeepSeek",
@@ -234,6 +283,7 @@ flowchart TD
 - **应用规则**:`appRules`,每项 `{bundleID, name, mode, actions[]}`;`mode` 取 `disabled / custom`
 - **工具条**:`toolbar.items` 按 `{id, visible}` 排序;`maxVisible` 控制主条按钮数(默认 12,可调 4–24),其余进溢出菜单;`contextPosition` 取 `afterEdit / front / back`;`order` 取 `manual / perApp`(perApp 按该应用的使用统计把常用动作提前)
 - **首次启动预置**:没有配置时会写入模板,内含 2 个停用状态的 provider 模板(DeepSeek、硅基流动)、1 个 GitHub 搜索扩展,以及 5 条预置应用禁用规则(1Password / Bitwarden / 钥匙串访问 / 屏幕共享 / Windows App)
+- **截屏**:`snap`,`saveDir` ⌘S 保存目录;`format` `png / jpg`;`showMagnifier` 放大镜开关;`history.enabled / limit` 截图历史(默认关,保留 1–200 张);`lastColor / lastWidth` 记住上次的标注颜色与字号档(0/1/2)
 - **其余**:`clipboardHistory`、`ocr.after`、`usage.enabled`、`hotkeys`、`privacy` 等都可缺省手写
 - `targetLanguage` 为 `auto` 时按原文自动判断方向(中文→英文,其它→中文)
 - 面板里的语言下拉可以临时改方向,改动只对本次生效,不写回配置
@@ -251,7 +301,7 @@ flowchart TD
 
 App 每次先删后增干净重建；同名 dmg 直接覆盖；打包暂存目录用完自动清理。打开 DMG，把 `PopBar.app` 拖到 `Applications` 文件夹，再从「应用程序」启动。应用只在菜单栏显示图标，不占用 Dock。也可直接运行本地构建：`open build.noindex/PopBar.app`。构建与打包暂存目录采用 `.noindex` 后缀，避免开发副本出现在系统应用搜索结果中。
 
-要求:macOS 13+；源码构建需要 Swift 工具链（Xcode 或 Command Line Tools）。
+要求:macOS 14+；源码构建需要 Swift 工具链（Xcode 或 Command Line Tools）。
 
 > 从 GitHub Release 下载的 DMG 未经 Apple 公证,首次打开会提示"已损坏,无法打开"。
 > 把 App 拖入 `Applications` 后在终端执行一次 `xattr -cr /Applications/PopBar.app` 即可正常启动。
@@ -263,6 +313,9 @@ App 每次先删后增干净重建；同名 dmg 直接覆盖；打包暂存目�
 - 全局事件监听(划词检测)
 - 读取选中文字
 - 模拟按键(`Cmd+C/X/V`)
+
+另外,**截屏**与**截图翻译(OCR)**需要「系统设置 → 隐私与安全性 → 屏幕录制」,首次使用会引导授权。
+macOS 15+ 会定期要求第三方应用重新确认屏幕录制权限——这是系统行为,所有截图工具都会遇到。
 
 > AI 翻译面板需要网络访问(出站 HTTPS);其余动作全部离线。只有你主动使用搜索、在线翻译或 AI 翻译时,选中的文字才会被发送到对应服务。
 
@@ -299,6 +352,19 @@ popbar/
 │   ├── UsageStats.swift              # 使用统计与每周智能建议
 │   ├── KeyboardTrigger.swift         # 快捷键解析 + 键盘模式拦截 tap
 │   ├── QRCodePanel.swift             # 选中内容生成二维码(CoreImage 离线)
+│   ├── ScreenPermission.swift        # 屏幕录制权限检查与引导(截屏/截图翻译共用)
+│   ├── SnapController.swift          # 截屏会话:冻结 → 覆盖窗口 → 完成/取消/贴图/长截图
+│   ├── SnapOverlay.swift             # 覆盖窗口与视图:选区、标注交互、键盘
+│   ├── SnapGeometry.swift            # 选区/拖拽/像素换算等纯几何逻辑
+│   ├── SnapCapture.swift             # ScreenCaptureKit 抓屏 + 窗口列表
+│   ├── SnapMagnifier.swift           # 像素放大镜与取色
+│   ├── SnapToolbar.swift             # 截屏工具条与样式条
+│   ├── SnapAnnotation.swift          # 标注模型/绘制、撤销栈、马赛克
+│   ├── SnapOutput.swift              # 合成标注、复制、保存、OCR
+│   ├── SnapPin.swift                 # 贴图窗口
+│   ├── SnapScroll.swift              # 长截图:行哈希拼接器 + 抓取循环
+│   ├── SnapScrollUI.swift            # 长截图虚线框与控制面板
+│   ├── SnapHistory.swift             # 截图历史存储、清理与菜单
 │   ├── L10n.swift                    # 中/英双语界面字符串
 │   ├── Actions.swift                 # CGEvent 按键模拟(含 flagsChanged)
 │   ├── AppActivation.swift           # accessory 应用激活前台 / Esc 可关窗口
@@ -332,8 +398,11 @@ swift icon/make_icon.swift icon/PopBar.iconset icon/preview.png
 iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 
 # 重新生成 README 里的弹条截图(浅色+深色)
-swiftc -O -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
+swiftc -O -target $(uname -m)-apple-macos14.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
 ./build/shot docs/popbar-bar-light.png docs/popbar-bar-dark.png
+
+# 生成截屏功能展示图(离线合成 docs/index.html 作背景,无需屏幕录制权限)
+./build/shot --snap docs
 ```
 
 ## 已知限制
@@ -342,6 +411,8 @@ swiftc -O -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main
 - 完全无 AX 支持的应用里只能靠剪贴板降级取词,位置精度降为鼠标位置
 - OCR 走 Vision 离线识别,长段落/小字体识别率有限
 - 扩展系统为轻量三类(URL/Shell/Shortcut),暂不支持 YAML+JS 形式的插件
+- 长截图只支持向下滚动,依靠固定页头/页脚的启发式检测,大面积空白或动画区域可能提示「请慢一点滚动」;长截图结果不能再标注
+- 截屏快捷键经 listen-only event tap 触发,按键同时会传给前台应用;截屏选区不能跨屏
 - 当前没有 Developer ID 签名和 Apple 公证；DMG 适合本机安装/内部测试，公开分发需按 Apple 要求签名、公证
 
 ## License

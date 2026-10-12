@@ -62,7 +62,7 @@ jobs:
           xattr -cr /Applications/PopBar.app
           ```
 
-          首次启动还需在「系统设置 → 隐私与安全性 → 辅助功能」中允许 PopBar。
+          首次启动还需在「系统设置 → 隐私与安全性 → 辅助功能」中允许 PopBar；截屏 / 截图翻译需另行允许「屏幕录制」权限。
 
           **English**: Open the dmg and drag `PopBar.app` into `Applications`.
           The app is not notarized; if macOS reports it "damaged", run once in Terminal:
@@ -71,7 +71,7 @@ jobs:
           xattr -cr /Applications/PopBar.app
           ```
 
-          Then allow PopBar in System Settings → Privacy & Security → Accessibility.
+          Then allow PopBar in System Settings → Privacy & Security → Accessibility; Screenshot / Screenshot Translate additionally needs Screen Recording.
           EOF
           # 追加自动生成的变更列表(英文,来自 PR/commit 标题)
           AUTO=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \

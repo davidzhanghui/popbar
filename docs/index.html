@@ -181,11 +181,11 @@
     <img class="icon" src="popbar-icon.png" alt="PopBar 图标">
     <div class="kicker en">MACOS 划词工具条</div>
     <h1>选中文字，事就办了</h1>
-    <p class="sub">选中文字，浮动工具条即刻出现在选区上方 —— 复制、搜索、AI 翻译、上下文操作，一步到位。纯 Swift + AppKit，无 Xcode 工程依赖，单文件编译打包。</p>
+    <p class="sub">选中文字，浮动工具条即刻出现在选区上方 —— 复制、搜索、AI 翻译、上下文操作，一步到位，也能像微信一样截屏标注。纯 Swift + AppKit，无 Xcode 工程依赖，单文件编译打包。</p>
     <div class="badges">
       <span class="badge">开源</span>
       <span class="badge en">Swift + AppKit</span>
-      <span class="badge en">macOS 13+</span>
+      <span class="badge en">macOS 14+</span>
       <span class="badge">无 Dock 图标 · 空闲 CPU ≈ 0</span>
     </div>
     <div class="cta">
@@ -249,11 +249,23 @@
         <h3>扩展系统</h3>
         <p>URL 模板、Shell 脚本（stdin 传文本、防注入）、快捷指令三类扩展，写进配置即刻生效。</p>
       </div>
+      <div class="card reveal">
+        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h3>微信式截屏</h3>
+        <p>ctrl+opt+p 冻结画面、自动识别窗口、放大镜取色；矩形/箭头/画笔/文字/马赛克/序号标注，贴图、文字识别、长截图一气呵成。</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M7 10v4M11 10v4M15 10v4M19 10v4"/></svg></div>
+        <h3>键盘模式</h3>
+        <p>可配置全局快捷键唤起工具条；键盘模式期间 ←/→ 移动高亮、Enter 执行、Esc 关闭，拦截自动限时摘除。</p>
+      </div>
     </div>
     <div class="chips reveal">
       <span class="chip">键盘模式 ←/→ 执行</span>
       <span class="chip">按应用规则</span>
       <span class="chip">截图 OCR 翻译</span>
+      <span class="chip">长截图</span>
+      <span class="chip">贴图</span>
       <span class="chip">开发者工具箱</span>
       <span class="chip">二维码生成</span>
       <span class="chip">明暗双主题</span>
@@ -283,9 +295,13 @@
         <img src="popbar-panel.png" alt="AI 翻译面板，多 provider 并行流式翻译">
         <figcaption>AI 翻译面板 —— 多个 provider 并行流式返回译文</figcaption>
       </figure>
+      <figure class="wide reveal">
+        <img src="popbar-snap.png" alt="微信式截屏：定格画面、选区、标注与工具条">
+        <figcaption>截屏 —— 冻结画面、框选、标注、马赛克、长截图，一气呵成</figcaption>
+      </figure>
       <figure class="reveal">
         <img src="popbar-prefs.png" alt="偏好设置窗口">
-        <figcaption>偏好设置 —— 工具条排序、应用规则、快捷键</figcaption>
+        <figcaption>偏好设置 —— 工具条排序、应用规则、快捷键、截屏</figcaption>
       </figure>
       <figure class="reveal">
         <img src="popbar-settings.png" alt="AI 翻译设置窗口">
@@ -321,7 +337,7 @@ open https://github.com/davidzhanghui/popbar/releases</code>
 cd popbar
 ./build.sh   <span class="cm"># 编译 → 打包 → 生成 build/PopBar-*.dmg</span></code>
         </div>
-        <p class="note">运行需要 macOS 13+，首次使用按引导授予「辅助功能」权限。</p>
+        <p class="note">运行需要 macOS 14+，首次使用按引导授予「辅助功能」权限；截屏 / 截图翻译还需「屏幕录制」权限。</p>
       </div>
     </div>
   </div>
