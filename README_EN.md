@@ -35,7 +35,7 @@
 - **More built-in tools**: QR code generation, developer toolbox (HTML/Unicode escape, SHA256/MD5, JWT decode, JSON processing)
 - **Screenshot**: WeChat-style capture (`ctrl+opt+p`) — frozen screen, window detection, pixel magnifier and color picker, rectangle/ellipse/arrow/pen/text/mosaic/number annotations, pin to screen, OCR, scrolling capture, optional local history
 - **Menu bar translation entries**: screenshot OCR / input / clipboard — three ways to open the translation panel; screenshots and clipboard images are also scanned for QR codes
-- **Clipboard history**: opt-in; paste or append from the menu bar; memory-only by default, concealed clipboard markers always skipped
+- **Clipboard history**: opt-in; records text/images/files (up to 10 items, pinnable) with per-item submenu — paste / copy only / append / pin; off by default and memory-only, concealed clipboard markers always skipped
 - **Keyboard control**: configurable global hotkey; in keyboard mode ←/→ moves the highlight, Enter runs, Esc closes; the interceptor tap is auto-removed on timeout
 - **Bilingual UI**: menu bar, floating bar, translation panel and both settings windows switch between Chinese and English instantly
 - **Smart ordering suggestion**: driven by local usage stats (action counts only), suggests pinning a frequent action to the main bar at most once a week
@@ -216,7 +216,7 @@ Item details:
 | Trigger | Drag + double-click / drag only / double-click only |
 | Clipboard Fallback | Whether to simulate ⌘C when AX can't read the selection (turning it off better protects pasteboard privacy) |
 | Privacy Guard | Check sensitive content before AI requests: ask / auto-mask / off |
-| Clipboard History | Records recent pasteboard items, pastable from the menu bar; off by default, memory-only |
+| Clipboard History | Records recent text/images/files (≤10, pinnable); per-item submenu paste / copy only / append; plus persist-history, capture-images and capture-files toggles; off by default, memory-only |
 | OCR Result | After screenshot recognition: translation panel / full action bar |
 | Usage Stats | Counts actions only, never text; powers the weekly ordering suggestion; can be disabled |
 | Summon Hotkey | Default `ctrl+opt+space`; format `ctrl+opt+space` |

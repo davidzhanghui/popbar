@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        ClipboardHistory.shared.save()   // #8 persist 开启时兜底写盘
+    }
+
     /// 偏好改动即时生效:外观、开机启动
     @objc private func configChanged() { applyConfigSideEffects() }
 

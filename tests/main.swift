@@ -412,5 +412,108 @@ expect(!SensitiveGuard.isLocal(LLMProvider(name: "d", baseURL: "https://api.deep
 section("UsageStats")
 expect(UsageStats.shared.topActions(for: "nobody", limit: 3).isEmpty, "empty top actions")
 
+// MARK: - ClipboardHistory(纯逻辑;不碰 NSPasteboard)
+
+section("ClipboardHistory")
+func mkItem(_ payload: ClipboardHistory.Payload,
+            pinned: Bool = false) -> ClipboardHistory.Item {
+    ClipboardHistory.Item(id: UUID(), payload: payload, time: Date(),
+                          pinned: pinned, thumbnail: nil)
+}
+
+// pick:类型优先级与跳过规则
+expectEqual(ClipboardHistory.pick(types: ["public.utf8-plain-text"], images: true, files: true),
+            .kind(.text), "pick text")
+expectEqual(ClipboardHistory.pick(types: ["public.file-url", "public.utf8-plain-text"],
+                                  images: true, files: true),
+            .kind(.files), "pick files over text")
+expectEqual(ClipboardHistory.pick(types: ["public.file-url", "public.utf8-plain-text"],
+                                  images: true, files: false),
+            .skip, "files disabled → skip")
+expectEqual(ClipboardHistory.pick(types: ["public.tiff", "public.utf8-plain-text"],
+                                  images: true, files: true),
+            .kind(.image), "pick image over text")
+expectEqual(ClipboardHistory.pick(types: ["public.tiff", "public.utf8-plain-text"],
+                                  images: false, files: true),
+            .skip, "images disabled → skip")
+expectEqual(ClipboardHistory.pick(types: ["com.apple.is-remote-clipboard", "public.utf8-plain-text"],
+                                  images: true, files: true),
+            .skip, "remote clipboard → skip")
+expectEqual(ClipboardHistory.pick(types: ["org.nspasteboard.ConcealedType", "public.utf8-plain-text"],
+                                  images: true, files: true),
+            .skip, "concealed → skip")
+expectEqual(ClipboardHistory.pick(types: ["com.foo.private"], images: true, files: true),
+            .none, "unknown → none")
+
+// evict:条数硬上限 + 置顶豁免 + 图片容量预算
+let eleven = (0..<11).map { mkItem(.text("t\($0)")) }
+let ev = ClipboardHistory.evict(eleven, limit: 10, imageBudgetBytes: 1 << 30)
+expectEqual(ev.count, 10, "evict 11→10")
+if case .text(let s) = ev.last?.payload {
+    expectEqual(s, "t9", "oldest evicted")
+} else { expect(false, "oldest evicted") }
+let mixed = (0..<3).map { mkItem(.text("p\($0)"), pinned: true) }
+    + (0..<8).map { mkItem(.text("n\($0)")) }
+let ev2 = ClipboardHistory.evict(mixed, limit: 10, imageBudgetBytes: 1 << 30)
+expectEqual(ev2.count, 10, "pinned+normal → 10")
+expectEqual(ev2.filter { $0.pinned }.count, 3, "all pinned kept")
+func imgItem(_ bytes: Int, pinned: Bool = false) -> ClipboardHistory.Item {
+    mkItem(.image(.data(Data()), pixelSize: CGSize(width: 10, height: 10),
+                  byteCount: bytes, hash: "\(bytes)"), pinned: pinned)
+}
+let imgs = [imgItem(30), imgItem(30), imgItem(30)]
+let ev3 = ClipboardHistory.evict(imgs, limit: 10, imageBudgetBytes: 70)
+expectEqual(ev3.count, 2, "image budget evicts oldest")
+let ev4 = ClipboardHistory.evict([imgItem(100, pinned: true)], limit: 10, imageBudgetBytes: 10)
+expectEqual(ev4.count, 1, "pinned image over budget kept")
+
+// isDuplicate
+expect(ClipboardHistory.isDuplicate(.text("a"), .text("a")), "dup text")
+expect(!ClipboardHistory.isDuplicate(.text("a"), .text("b")), "not dup text")
+expect(ClipboardHistory.isDuplicate(
+    .image(.data(Data()), pixelSize: CGSize(width: 1, height: 2), byteCount: 3, hash: "4"),
+    .image(.file(URL(fileURLWithPath: "/x.png")), pixelSize: CGSize(width: 1, height: 2),
+           byteCount: 3, hash: "4")), "dup image ignores blob")
+expect(!ClipboardHistory.isDuplicate(
+    .image(.data(Data()), pixelSize: .zero, byteCount: 3, hash: "4"),
+    .image(.data(Data()), pixelSize: .zero, byteCount: 3, hash: "5")), "not dup image hash")
+let u1 = URL(fileURLWithPath: "/tmp/a")
+expect(ClipboardHistory.isDuplicate(.files([u1]), .files([u1])), "dup files")
+expect(!ClipboardHistory.isDuplicate(.files([u1]), .files([u1, u1])), "not dup files")
+
+// decode 旧格式 + 新格式往返
+let oldJson: [[String: Any]] = [["text": "a", "time": "1.0"]]
+let oldItems = ClipboardHistory.decode(oldJson, dir: URL(fileURLWithPath: "/tmp"))
+expectEqual(oldItems.count, 1, "legacy decode count")
+if case .text(let s) = oldItems.first?.payload { expectEqual(s, "a", "legacy text") }
+else { expect(false, "legacy text") }
+let srcDir = URL(fileURLWithPath: "/tmp/popbar-clip-test")
+let rt = [
+    mkItem(.text("hello"), pinned: true),
+    mkItem(.image(.file(srcDir.appendingPathComponent("x.png")),
+                  pixelSize: CGSize(width: 2, height: 3), byteCount: 9, hash: "7")),
+    mkItem(.files([u1])),
+]
+let rt2 = ClipboardHistory.decode(ClipboardHistory.encode(rt), dir: srcDir)
+expectEqual(rt2.count, 3, "roundtrip count")
+expect(rt2[0].pinned, "roundtrip pinned")
+if case .image(.file(let u), let size, let bytes, let hash) = rt2[1].payload {
+    expect(u.lastPathComponent == "x.png" && size == CGSize(width: 2, height: 3)
+           && bytes == 9 && hash == "7", "roundtrip image")
+} else { expect(false, "roundtrip image") }
+if case .files(let urls) = rt2[2].payload {
+    expectEqual(urls, [u1], "roundtrip urls")
+} else { expect(false, "roundtrip urls") }
+
+// ClipboardHistoryConfig:limit clamp 与缺省回退
+let ccfg1 = try! JSONDecoder().decode(ClipboardHistoryConfig.self, from: "{\"limit\":100}".data(using: .utf8)!)
+expectEqual(ccfg1.limit, 10, "limit clamp max")
+let ccfg0 = try! JSONDecoder().decode(ClipboardHistoryConfig.self, from: "{\"limit\":0}".data(using: .utf8)!)
+expectEqual(ccfg0.limit, 1, "limit clamp min")
+let ccfgD = try! JSONDecoder().decode(ClipboardHistoryConfig.self, from: "{}".data(using: .utf8)!)
+expect(ccfgD.images && ccfgD.files, "images/files default true")
+expectEqual(ccfgD.imageSizeMB, 50, "imageSizeMB default")
+expectEqual(ccfgD.imageMaxMB, 10, "imageMaxMB default")
+
 print("\n========== \(checks) 项检查,\(failures) 项失败 ==========")
 exit(failures == 0 ? 0 : 1)

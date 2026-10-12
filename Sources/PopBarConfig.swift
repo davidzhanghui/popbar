@@ -93,11 +93,34 @@ struct ExtensionConfig: Codable, Equatable {
     var enabled: Bool = true
 }
 
-/// #8 剪贴板历史(默认关闭)
+/// #8 剪贴板历史(默认关闭);limit 硬上限 10(含置顶,置顶 ≤5)
 struct ClipboardHistoryConfig: Codable, Equatable {
     var enabled: Bool = false
-    var limit: Int = 100
+    var limit: Int = 10
     var persist: Bool = false
+    /// 是否采集图片
+    var images: Bool = true
+    /// 是否采集文件
+    var files: Bool = true
+    /// 图片历史总容量上限(MB)
+    var imageSizeMB: Int = 50
+    /// 单张 PNG 阈值,超过按比例缩小
+    var imageMaxMB: Int = 10
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ClipboardHistoryConfig()
+        enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? d.enabled
+        let raw = (try? c.decode(Int.self, forKey: .limit)) ?? d.limit
+        limit = min(max(raw, 1), 10)
+        persist = (try? c.decode(Bool.self, forKey: .persist)) ?? d.persist
+        images = (try? c.decode(Bool.self, forKey: .images)) ?? d.images
+        files = (try? c.decode(Bool.self, forKey: .files)) ?? d.files
+        imageSizeMB = (try? c.decode(Int.self, forKey: .imageSizeMB)) ?? d.imageSizeMB
+        imageMaxMB = (try? c.decode(Int.self, forKey: .imageMaxMB)) ?? d.imageMaxMB
+    }
 }
 
 /// #4 汇率(默认关闭)

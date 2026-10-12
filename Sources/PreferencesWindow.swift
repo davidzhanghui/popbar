@@ -197,9 +197,17 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                        "Recent clipboard items from the menu; skips concealed types"),
                 toggle("clipHistory")),
             row(L10n.t("历史持久化", "Persist History"),
-                L10n.t("重启后保留剪贴板历史(默认仅内存)",
-                       "Keep clipboard history across restarts (memory-only by default)"),
+                L10n.t("重启后保留剪贴板历史(默认仅内存);开启后图片将以文件保存在本机",
+                       "Keep history across restarts (memory-only by default); images are saved as files on this Mac"),
                 toggle("clipPersist")),
+            row(L10n.t("采集图片", "Capture Images"),
+                L10n.t("剪贴板历史记录复制的图片(缩略图预览)",
+                       "Clipboard history records copied images (with thumbnails)"),
+                toggle("clipImages")),
+            row(L10n.t("采集文件", "Capture Files"),
+                L10n.t("剪贴板历史记录复制的文件/文件夹",
+                       "Clipboard history records copied files/folders"),
+                toggle("clipFiles")),
             row(L10n.t("OCR 结果", "OCR Result"),
                 L10n.t("截图识别后弹翻译面板还是完整工具条",
                        "After screenshot OCR: translate panel or full action bar"),
@@ -469,6 +477,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             case "clipboardFallback": s.state = c.clipboardFallback ? .on : .off
             case "clipHistory":  s.state = c.clipboardHistory.enabled ? .on : .off
             case "clipPersist":  s.state = c.clipboardHistory.persist ? .on : .off
+            case "clipImages":   s.state = c.clipboardHistory.images ? .on : .off
+            case "clipFiles":    s.state = c.clipboardHistory.files ? .on : .off
             case "usageEnabled": s.state = c.usage.enabled ? .on : .off
             case "snapMagnifier": s.state = c.snap.showMagnifier ? .on : .off
             case "snapHistory":   s.state = c.snap.history.enabled ? .on : .off
@@ -520,6 +530,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             }
         case "clipHistory":   c.clipboardHistory.enabled = sender.state == .on
         case "clipPersist":   c.clipboardHistory.persist = sender.state == .on
+        case "clipImages":    c.clipboardHistory.images = sender.state == .on
+        case "clipFiles":     c.clipboardHistory.files = sender.state == .on
         case "usageEnabled":  c.usage.enabled = sender.state == .on
         case "snapMagnifier": c.snap.showMagnifier = sender.state == .on
         case "snapHistory":   c.snap.history.enabled = sender.state == .on

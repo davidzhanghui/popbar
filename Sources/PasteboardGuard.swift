@@ -22,10 +22,22 @@ enum PasteboardGuard {
         declareOwn(pb.changeCount)
     }
 
-    /// 写入富文本/多类型并登记(二维码「复制图片」等多类型剪贴板用)
-    static func write(items: [NSPasteboardItem], to pb: NSPasteboard = .general) {
+    /// 写入富文本/多类型并登记(二维码「复制图片」等多类型剪贴板用);
+    /// record=true 表示「用户意图写入」(如截屏复制),同时入剪贴板历史
+    static func write(items: [NSPasteboardItem], to pb: NSPasteboard = .general,
+                      record: Bool = false) {
         pb.clearContents()
         pb.writeObjects(items)
+        declareOwn(pb.changeCount)
+        if record, let png = items.lazy.compactMap({ $0.data(forType: .png) }).first {
+            ClipboardHistory.shared.recordImageData(png)
+        }
+    }
+
+    /// 写入文件 URL 列表并登记(剪贴板历史「粘贴文件」用)
+    static func write(urls: [URL], to pb: NSPasteboard = .general) {
+        pb.clearContents()
+        pb.writeObjects(urls as [NSURL])
         declareOwn(pb.changeCount)
     }
 

@@ -37,7 +37,7 @@ enum SnapOutput {
         let item = NSPasteboardItem()
         if let png = rep.representation(using: .png, properties: [:]) { item.setData(png, forType: .png) }
         if let tiff = nsImage.tiffRepresentation { item.setData(tiff, forType: .tiff) }
-        PasteboardGuard.write(items: [item])
+        PasteboardGuard.write(items: [item], record: true)
     }
 
     static func save(_ img: CGImage) {
