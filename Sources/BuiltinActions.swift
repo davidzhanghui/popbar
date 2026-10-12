@@ -55,7 +55,7 @@ enum BuiltinActions {
             },
             BarAction(id: "builtin.speak", title: L10n.t("朗读/停止", "Speak/Stop"),
                       symbol: "speaker.wave.2.fill", color: .systemPink) { ctx in
-                bar.hide()
+                // 不隐藏工具条:朗读中图标变「停止」,再点一次即停;条被收起时朗读一并停止
                 bar.speak(ctx.text)
             },
             BarAction(id: "builtin.stats", title: L10n.t("字数统计", "Word Count"),

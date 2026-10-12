@@ -12,7 +12,7 @@
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p build
-swiftc -O -target $(uname -m)-apple-macos14.0 -o build/popbar-tests $(ls Sources/*.swift | grep -v '/main.swift$') tests/main.swift
+swiftc -O -target $(uname -m)-apple-macos15.0 -o build/popbar-tests $(ls Sources/*.swift | grep -v '/main.swift$') tests/main.swift tests/export.swift
 POPBAR_CONFIG_DIR=$(mktemp -d) ./build/popbar-tests
 
 echo ""

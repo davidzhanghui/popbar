@@ -7,7 +7,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
                                       NSTextFieldDelegate, NSTextViewDelegate {
     static let shared = SettingsWindowController()
 
-    private var window: NSWindow?
+    /// AI 翻译设置已并入「偏好设置」窗口成为一个 tab;
+    /// 本 controller 只提供 tab 内容,window 指向共享的宿主窗口
+    weak var hostWindow: NSWindow?
+    private var window: NSWindow? { hostWindow }
+    private var contentView: NSView?
     private var draft = PopBarConfig()
     private var selected = -1
     private var testTask: Task<Void, Never>?
@@ -113,17 +117,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
 
     // MARK: - 显示
 
+    /// 菜单入口:打开「偏好设置」并落在 AI 翻译 tab
     func show() {
-        if window == nil {
-            buildWindow()
-            NotificationCenter.default.addObserver(self, selector: #selector(storeChanged),
-                                                   name: ConfigStore.didChange, object: nil)
-        }
+        TranslationPanelController.shared.close()
+        PreferencesWindowController.shared.show(tab: PreferencesWindowController.aiTabIndex)
+    }
+
+    /// 宿主窗口每次打开时调用;窗口关闭时未保存草稿已被 windowShouldClose 拦下处理过
+    func windowShown() {
         if !isVisible || !isDirty { loadDraft(from: ConfigStore.shared.config) }
         showLoadErrorIfNeeded()
-        TranslationPanelController.shared.close()
-        NSApp.activateForUI()
-        window?.makeKeyAndOrderFront(nil)
     }
 
     private func loadDraft(from config: PopBarConfig) {
@@ -162,36 +165,23 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
 
     // MARK: - 构建窗口
 
-    private func buildWindow() {
-        let w = EscClosableWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 560),
-                         styleMask: [.titled, .closable, .miniaturizable],
-                         backing: .buffered, defer: false)
-        loc("PopBar · AI 翻译设置", "PopBar · AI Translation") { w.title = $0 }
-        w.isReleasedWhenClosed = false
-        w.delegate = self
-        w.center()
+    /// 作为「偏好设置」的一个 tab 内容构建(只建一次);
+    /// 渐变底与页面边距由宿主窗口统一提供,与其他 tab 一致
+    func buildContent(in host: NSWindow) -> NSView {
+        hostWindow = host
+        if let v = contentView { return v }
+        NotificationCenter.default.addObserver(self, selector: #selector(storeChanged),
+                                               name: ConfigStore.didChange, object: nil)
 
         let root = NSView()
-        // 淡紫渐变底,与翻译面板一致;动态颜色,跟随系统明暗
-        let bg = GradientView(top: dyn(lightTheme.gradientTop, darkTheme.gradientTop),
-                              bottom: dyn(lightTheme.gradientBottom, darkTheme.gradientBottom))
-        bg.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(bg)
-        NSLayoutConstraint.activate([
-            bg.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            bg.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            bg.topAnchor.constraint(equalTo: root.topAnchor),
-            bg.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ])
-
         let main = vstack(spacing: 14)
         main.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(main)
         NSLayoutConstraint.activate([
-            main.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            main.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            main.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
-            main.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
+            main.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            main.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            main.topAnchor.constraint(equalTo: root.topAnchor),
+            main.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
 
         main.addArrangedSubview(sectionTitle("square.grid.2x2", "Provider", "Providers",
@@ -212,14 +202,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
         for view in main.arrangedSubviews {
             view.widthAnchor.constraint(equalTo: main.widthAnchor).isActive = true
         }
-
-        // 宽度固定,高度按内容收紧,避免底部留白
-        root.widthAnchor.constraint(equalToConstant: 780).isActive = true
-        w.contentView = root
-        root.layoutSubtreeIfNeeded()
-        w.setContentSize(NSSize(width: 780, height: root.fittingSize.height))
-        w.center()
-        window = w
+        contentView = root
+        return root
     }
 
     private func buildSidebar() -> NSView {

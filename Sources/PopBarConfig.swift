@@ -143,6 +143,12 @@ struct HotkeysConfig: Codable, Equatable {
     var ocr: String = ""
     var history: String = "opt+cmd+v"
     var snap: String = "ctrl+opt+p"
+    /// 录屏:未录制时进入选区,录制中则停止
+    var record: String = "ctrl+opt+r"
+    /// 录屏暂停/继续(M3)
+    var recordPause: String = "ctrl+opt+shift+r"
+    /// 录制中打标记点(v2)
+    var recordMarker: String = "ctrl+opt+shift+m"
 
     init() {}
 
@@ -153,6 +159,9 @@ struct HotkeysConfig: Codable, Equatable {
         ocr = (try? c.decode(String.self, forKey: .ocr)) ?? d.ocr
         history = (try? c.decode(String.self, forKey: .history)) ?? d.history
         snap = (try? c.decode(String.self, forKey: .snap)) ?? d.snap
+        record = (try? c.decode(String.self, forKey: .record)) ?? d.record
+        recordPause = (try? c.decode(String.self, forKey: .recordPause)) ?? d.recordPause
+        recordMarker = (try? c.decode(String.self, forKey: .recordMarker)) ?? d.recordMarker
     }
 }
 
@@ -171,6 +180,191 @@ struct SnapHistoryConfig: Codable, Equatable {
     }
 }
 
+/// 录屏导出 GIF(M4);width = 0 表示原始宽度
+struct GifConfig: Codable, Equatable {
+    var fps: Int = 10
+    var width: Int = 800
+    var copyToClipboard: Bool = true
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = GifConfig()
+        fps = min(max((try? c.decode(Int.self, forKey: .fps)) ?? d.fps, 1), 30)
+        width = max((try? c.decode(Int.self, forKey: .width)) ?? d.width, 0)
+        copyToClipboard = (try? c.decode(Bool.self, forKey: .copyToClipboard)) ?? d.copyToClipboard
+    }
+}
+
+/// 导出参数(v2):裁剪 / 缩放 / 压缩 / 混音 —— 见 PRD-screen-recording-v2.md
+struct RecordExportConfig: Codable, Equatable {
+    /// 录制结束后按这些默认值自动跑一次导出
+    var autoExport: Bool = false
+    /// high | medium | low
+    var quality: String = "high"
+    /// 目标宽度,0 = 原始(不放大)
+    var width: Int = 0
+    /// mp4 | mov
+    var container: String = "mp4"
+    /// 0–2(1 = 原音量)
+    var systemVolume: Double = 1
+    var micVolume: Double = 1
+    /// 导出完成后复制文件到剪贴板
+    var copyToClipboard: Bool = false
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = RecordExportConfig()
+        autoExport = (try? c.decode(Bool.self, forKey: .autoExport)) ?? d.autoExport
+        let rawQuality = (try? c.decode(String.self, forKey: .quality)) ?? d.quality
+        quality = ["high", "medium", "low"].contains(rawQuality) ? rawQuality : d.quality
+        width = max((try? c.decode(Int.self, forKey: .width)) ?? d.width, 0)
+        container = ((try? c.decode(String.self, forKey: .container)) ?? d.container) == "mov" ? "mov" : "mp4"
+        systemVolume = min(max((try? c.decode(Double.self, forKey: .systemVolume)) ?? d.systemVolume, 0), 2)
+        micVolume = min(max((try? c.decode(Double.self, forKey: .micVolume)) ?? d.micVolume, 0), 2)
+        copyToClipboard = (try? c.decode(Bool.self, forKey: .copyToClipboard)) ?? d.copyToClipboard
+    }
+}
+
+/// 点击涟漪(v2):录制时只记事件,导出时烧进画面
+struct ClickHighlightConfig: Codable, Equatable {
+    var enabled: Bool = true
+    /// 半径(pt,按 1080p 高度为基准等比缩放)
+    var radius: Double = 40
+    /// 单次涟漪持续时间(秒)
+    var duration: Double = 0.6
+    var color: String = "#FF3B30"
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ClickHighlightConfig()
+        enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? d.enabled
+        radius = min(max((try? c.decode(Double.self, forKey: .radius)) ?? d.radius, 8), 200)
+        duration = min(max((try? c.decode(Double.self, forKey: .duration)) ?? d.duration, 0.15), 3)
+        color = (try? c.decode(String.self, forKey: .color)) ?? d.color
+    }
+}
+
+/// 摄像头画中画(v2)
+struct CameraConfig: Codable, Equatable {
+    var enabled: Bool = false
+    /// 空串 = 系统默认摄像头
+    var device: String = ""
+    /// 预览窗边长(pt)
+    var size: Int = 160
+    var mirror: Bool = true
+    /// bottomRight | bottomLeft | topRight | topLeft
+    var position: String = "bottomRight"
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = CameraConfig()
+        enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? d.enabled
+        device = (try? c.decode(String.self, forKey: .device)) ?? d.device
+        size = min(max((try? c.decode(Int.self, forKey: .size)) ?? d.size, 64), 480)
+        mirror = (try? c.decode(Bool.self, forKey: .mirror)) ?? d.mirror
+        let pos = (try? c.decode(String.self, forKey: .position)) ?? d.position
+        position = ["bottomRight", "bottomLeft", "topRight", "topLeft"].contains(pos) ? pos : d.position
+    }
+}
+
+/// 水印(v2)
+struct WatermarkConfig: Codable, Equatable {
+    var enabled: Bool = false
+    /// imagePath 非空时优先用图片
+    var text: String = "PopBar"
+    var imagePath: String = ""
+    /// 0–1
+    var opacity: Double = 0.6
+    /// topRight | topLeft | bottomRight | bottomLeft
+    var position: String = "topRight"
+    /// 字号(pt,按 1080p 高度等比缩放)
+    var size: Int = 14
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = WatermarkConfig()
+        enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? d.enabled
+        text = (try? c.decode(String.self, forKey: .text)) ?? d.text
+        imagePath = (try? c.decode(String.self, forKey: .imagePath)) ?? d.imagePath
+        opacity = min(max((try? c.decode(Double.self, forKey: .opacity)) ?? d.opacity, 0.05), 1)
+        let pos = (try? c.decode(String.self, forKey: .position)) ?? d.position
+        position = ["topRight", "topLeft", "bottomRight", "bottomLeft"].contains(pos) ? pos : d.position
+        size = min(max((try? c.decode(Int.self, forKey: .size)) ?? d.size, 8), 96)
+    }
+}
+
+/// 录屏(M1 起)——复用截屏的 saveDir 与屏幕录制权限
+struct RecordConfig: Codable, Equatable {
+    /// 30 | 60
+    var fps: Int = 30
+    /// 1 = 逻辑像素,2 = 原生像素
+    var scale: Int = 2
+    /// h264 | hevc
+    var codec: String = "h264"
+    /// mov | mp4
+    var container: String = "mov"
+    var showsCursor: Bool = true
+    var systemAudio: Bool = true
+    var microphone: Bool = false
+    /// 空串 = 系统默认麦克风
+    var microphoneDevice: String = ""
+    /// 秒,0 = 不限
+    var maxDuration: Int = 0
+    var gif = GifConfig()
+    /// 按屏幕 UUID 记忆上次选区:UUID → "x,y,w,h"(Cocoa 全局坐标,整数)
+    var lastRects: [String: String] = [:]
+    // MARK: v2
+    /// 确认选区后先倒计时几秒再开始采集(0/3/5/10)
+    var countdown: Int = 3
+    /// 选区吸附到窗口时跟随窗口移动/缩放
+    var windowFollow: Bool = true
+    /// 录制完成后自动把视频文件复制到剪贴板
+    var copyToClipboard: Bool = false
+    var export = RecordExportConfig()
+    var click = ClickHighlightConfig()
+    var camera = CameraConfig()
+    var watermark = WatermarkConfig()
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = RecordConfig()
+        fps = min(max((try? c.decode(Int.self, forKey: .fps)) ?? d.fps, 1), 60)
+        let rawScale = (try? c.decode(Int.self, forKey: .scale)) ?? d.scale
+        scale = rawScale == 1 ? 1 : d.scale
+        let rawCodec = (try? c.decode(String.self, forKey: .codec)) ?? d.codec
+        codec = rawCodec == "hevc" ? "hevc" : "h264"
+        let rawContainer = (try? c.decode(String.self, forKey: .container)) ?? d.container
+        container = rawContainer == "mp4" ? "mp4" : "mov"
+        showsCursor = (try? c.decode(Bool.self, forKey: .showsCursor)) ?? d.showsCursor
+        systemAudio = (try? c.decode(Bool.self, forKey: .systemAudio)) ?? d.systemAudio
+        microphone = (try? c.decode(Bool.self, forKey: .microphone)) ?? d.microphone
+        microphoneDevice = (try? c.decode(String.self, forKey: .microphoneDevice)) ?? d.microphoneDevice
+        maxDuration = max((try? c.decode(Int.self, forKey: .maxDuration)) ?? d.maxDuration, 0)
+        gif = (try? c.decode(GifConfig.self, forKey: .gif)) ?? d.gif
+        lastRects = (try? c.decode([String: String].self, forKey: .lastRects)) ?? d.lastRects
+        let rawCountdown = (try? c.decode(Int.self, forKey: .countdown)) ?? d.countdown
+        countdown = [0, 3, 5, 10].contains(rawCountdown) ? rawCountdown : d.countdown
+        windowFollow = (try? c.decode(Bool.self, forKey: .windowFollow)) ?? d.windowFollow
+        copyToClipboard = (try? c.decode(Bool.self, forKey: .copyToClipboard)) ?? d.copyToClipboard
+        export = (try? c.decode(RecordExportConfig.self, forKey: .export)) ?? d.export
+        click = (try? c.decode(ClickHighlightConfig.self, forKey: .click)) ?? d.click
+        camera = (try? c.decode(CameraConfig.self, forKey: .camera)) ?? d.camera
+        watermark = (try? c.decode(WatermarkConfig.self, forKey: .watermark)) ?? d.watermark
+    }
+}
+
 /// 截屏
 struct SnapConfig: Codable, Equatable {
     var saveDir: String = "~/Desktop"
@@ -180,6 +374,8 @@ struct SnapConfig: Codable, Equatable {
     var history = SnapHistoryConfig()
     var lastColor: String = "#FF3B30"
     var lastWidth: Double = 3
+    /// 录屏(M1 起与截屏并列的功能)
+    var record = RecordConfig()
 
     init() {}
 
@@ -192,6 +388,7 @@ struct SnapConfig: Codable, Equatable {
         history = (try? c.decode(SnapHistoryConfig.self, forKey: .history)) ?? d.history
         lastColor = (try? c.decode(String.self, forKey: .lastColor)) ?? d.lastColor
         lastWidth = (try? c.decode(Double.self, forKey: .lastWidth)) ?? d.lastWidth
+        record = (try? c.decode(RecordConfig.self, forKey: .record)) ?? d.record
     }
 }
 
@@ -199,6 +396,22 @@ struct SnapConfig: Codable, Equatable {
 struct OCRConfig: Codable, Equatable {
     /// panel | bar
     var after: String = "panel"
+}
+
+/// 朗读(划词工具条与翻译面板共用);voice 存 AVSpeechSynthesisVoice.identifier,空 = 自动跟随语言
+struct SpeakConfig: Codable, Equatable {
+    var voice: String = ""
+    /// 语速倍率,1 = 系统默认
+    var rate: Double = 1.0
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = SpeakConfig()
+        voice = (try? c.decode(String.self, forKey: .voice)) ?? d.voice
+        rate = min(max((try? c.decode(Double.self, forKey: .rate)) ?? d.rate, 0.4), 2.0)
+    }
 }
 
 /// #20 使用统计
@@ -234,6 +447,7 @@ struct PopBarConfig: Codable, Equatable {
     var privacy = PrivacyConfig()
     var hotkeys = HotkeysConfig()
     var ocr = OCRConfig()
+    var speak = SpeakConfig()
     var usage = UsageConfig()
     var snap = SnapConfig()
 
@@ -268,6 +482,7 @@ struct PopBarConfig: Codable, Equatable {
         privacy = (try? c.decode(PrivacyConfig.self, forKey: .privacy)) ?? d.privacy
         hotkeys = (try? c.decode(HotkeysConfig.self, forKey: .hotkeys)) ?? d.hotkeys
         ocr = (try? c.decode(OCRConfig.self, forKey: .ocr)) ?? d.ocr
+        speak = (try? c.decode(SpeakConfig.self, forKey: .speak)) ?? d.speak
         usage = (try? c.decode(UsageConfig.self, forKey: .usage)) ?? d.usage
         snap = (try? c.decode(SnapConfig.self, forKey: .snap)) ?? d.snap
         seedDefaults()

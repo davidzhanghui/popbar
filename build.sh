@@ -8,7 +8,7 @@ mkdir -p build build.noindex
 # 先删后增:避免改名/删除的源码或资源在包里留下幽灵文件
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O -target $(uname -m)-apple-macos14.0 -o "build/PopBar" Sources/*.swift
+swiftc -O -target $(uname -m)-apple-macos15.0 -o "build/PopBar" Sources/*.swift
 
 cp build/PopBar "$APP/Contents/MacOS/PopBar"
 cp Info.plist "$APP/Contents/Info.plist"

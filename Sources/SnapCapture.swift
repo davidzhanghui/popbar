@@ -41,18 +41,22 @@ enum SnapCapture {
         }
     }
 
-    /// 屏幕上的普通窗口(Cocoa 全局坐标),前→后排序
-    static func windowRects() -> [CGRect] {
+    /// 屏幕上的普通窗口(Cocoa 全局坐标),前→后排序。
+    /// 带上 windowID —— 选区正好落在一个窗口上时,录屏可以按窗口录并跟随窗口移动。
+    static func windows() -> [(rect: CGRect, id: CGWindowID)] {
         let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
         let pid = getpid()
         return info.compactMap { w in
             guard (w[kCGWindowLayer as String] as? Int) == 0,
                   (w[kCGWindowOwnerPID as String] as? Int32) != pid,
+                  let number = w[kCGWindowNumber as String] as? CGWindowID,
                   let b = w[kCGWindowBounds as String] as? [String: CGFloat],
                   let r = CGRect(dictionaryRepresentation: b as CFDictionary),
                   r.width >= 20, r.height >= 20 else { return nil }
-            return Screen.cocoaRect(from: r)
+            return (Screen.cocoaRect(from: r), number)
         }
     }
+
+    static func windowRects() -> [CGRect] { windows().map(\.rect) }
 }

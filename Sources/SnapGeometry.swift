@@ -71,6 +71,17 @@ enum SnapGeometry {
         windows.first { $0.contains(p) }
     }
 
+    /// 返回第一个包含 p 的窗口下标(用来取回对应的 windowID)
+    static func windowIndex(at p: CGPoint, in windows: [CGRect]) -> Int? {
+        windows.firstIndex { $0.contains(p) }
+    }
+
+    /// 选区与某个窗口矩形是否重合(容差 2pt)——用来判断用户是不是"选中的这个窗口"
+    static func matchesWindow(_ rect: CGRect, window: CGRect, tolerance: CGFloat = 2) -> Bool {
+        abs(rect.minX - window.minX) <= tolerance && abs(rect.minY - window.minY) <= tolerance
+            && abs(rect.width - window.width) <= tolerance && abs(rect.height - window.height) <= tolerance
+    }
+
     /// Shift:矩形/椭圆约束为正方形/正圆,保持拖动方向
     static func constrainSquare(from a: CGPoint, to b: CGPoint) -> CGPoint {
         let dx = b.x - a.x, dy = b.y - a.y

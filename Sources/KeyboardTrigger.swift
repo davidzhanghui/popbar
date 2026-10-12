@@ -43,6 +43,31 @@ enum Hotkey {
         let f = event.flags.intersection([.maskControl, .maskAlternate, .maskShift, .maskCommand])
         return f == spec.flags
     }
+
+    /// "ctrl+opt+p" → 菜单展示用的 (keyEquivalent, modifierMask);无法解析返回 nil
+    static func menuEquivalent(_ s: String) -> (key: String, mask: NSEvent.ModifierFlags)? {
+        guard let spec = parse(s), let key = equivalentChars[spec.key] else { return nil }
+        var mask: NSEvent.ModifierFlags = []
+        if spec.flags.contains(.maskControl)   { mask.insert(.control) }
+        if spec.flags.contains(.maskAlternate) { mask.insert(.option) }
+        if spec.flags.contains(.maskShift)     { mask.insert(.shift) }
+        if spec.flags.contains(.maskCommand)   { mask.insert(.command) }
+        return (key, mask)
+    }
+
+    /// keyCode → NSMenuItem.keyEquivalent 字符,由 keyCodes 表反推
+    private static let equivalentChars: [CGKeyCode: String] = {
+        var map: [CGKeyCode: String] = [49: " ", 36: "\r", 48: "\t", 53: "\u{1b}"]
+        for (name, code) in keyCodes {
+            if name.count == 1 {
+                map[code] = name
+            } else if name.hasPrefix("f"), let n = Int(name.dropFirst()),
+                      (1...12).contains(n), let u = Unicode.Scalar(0xF703 + n) {
+                map[code] = String(Character(u))   // NSF1FunctionKey = 0xF704
+            }
+        }
+        return map
+    }()
 }
 
 /// 键盘模式的拦截 tap:存在时间短暂(工具条键盘模式期间),

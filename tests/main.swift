@@ -1,5 +1,6 @@
 import Cocoa
 import Foundation
+@preconcurrency import AVFoundation
 
 /// PopBar 纯逻辑测试:swiftc 编译 Sources(除 main.swift)+ 本文件后运行。
 /// 用法:tests/run.sh;退出码非 0 即失败。
@@ -146,6 +147,329 @@ section("Hotkey.parse snap")
 let snapKey = Hotkey.parse("ctrl+opt+p")
 expectEqual(snapKey?.key, 35, "ctrl+opt+p key code")
 expect(snapKey?.flags == [.maskControl, .maskAlternate], "ctrl+opt+p flags")
+
+section("Hotkey.parse record")
+let recKey = Hotkey.parse("ctrl+opt+r")
+expectEqual(recKey?.key, 15, "ctrl+opt+r key code")
+expect(recKey?.flags == [.maskControl, .maskAlternate], "ctrl+opt+r flags")
+let pauseKey = Hotkey.parse("ctrl+opt+shift+r")
+expectEqual(pauseKey?.key, 15, "ctrl+opt+shift+r key code")
+expect(pauseKey?.flags == [.maskControl, .maskAlternate, .maskShift], "ctrl+opt+shift+r flags")
+
+section("RecordConfig decode")
+let recCfg = try! JSONDecoder().decode(PopBarConfig.self, from: "{}".data(using: .utf8)!)
+expectEqual(recCfg.hotkeys.record, "ctrl+opt+r", "record hotkey default")
+expectEqual(recCfg.hotkeys.recordPause, "ctrl+opt+shift+r", "recordPause hotkey default")
+expectEqual(recCfg.snap.record, RecordConfig(), "record config default")
+expectEqual(recCfg.snap.record.fps, 30, "default fps 30")
+expectEqual(recCfg.snap.record.scale, 2, "default scale 2")
+expectEqual(recCfg.snap.record.codec, "h264", "default codec h264")
+expectEqual(recCfg.snap.record.container, "mov", "default container mov")
+expect(recCfg.snap.record.showsCursor && recCfg.snap.record.systemAudio, "cursor+audio on by default")
+expect(!recCfg.snap.record.microphone, "microphone off by default")
+expectEqual(recCfg.snap.record.gif.width, 800, "gif default width")
+let recFull = try! JSONDecoder().decode(RecordConfig.self, from: """
+{"fps":60,"scale":1,"codec":"hevc","container":"mp4","showsCursor":false,
+ "systemAudio":false,"microphone":true,"microphoneDevice":"mic-1","maxDuration":30,
+ "gif":{"fps":15,"width":480,"copyToClipboard":false}}
+""".data(using: .utf8)!)
+expectEqual(recFull.fps, 60, "fps 60 kept")
+expectEqual(recFull.scale, 1, "scale 1 kept")
+expectEqual(recFull.codec, "hevc", "codec hevc kept")
+expectEqual(recFull.container, "mp4", "container mp4 kept")
+expect(!recFull.showsCursor && !recFull.systemAudio, "flags off kept")
+expect(recFull.microphone && recFull.microphoneDevice == "mic-1", "microphone kept")
+expectEqual(recFull.maxDuration, 30, "maxDuration kept")
+expectEqual(recFull.gif.fps, 15, "gif fps kept")
+expect(!recFull.gif.copyToClipboard, "gif clipboard flag kept")
+let recBad = try! JSONDecoder().decode(RecordConfig.self, from: """
+{"fps":1000,"scale":9,"codec":"vp9","container":"mkv","maxDuration":-5}
+""".data(using: .utf8)!)
+expectEqual(recBad.fps, 60, "fps clamped to 60")
+expectEqual(recBad.scale, 2, "unknown scale falls back to 2")
+expectEqual(recBad.codec, "h264", "unknown codec falls back to h264")
+expectEqual(recBad.container, "mov", "unknown container falls back to mov")
+expectEqual(recBad.maxDuration, 0, "negative maxDuration clamped to 0")
+
+section("SpeakConfig decode")
+let spkCfg = try! JSONDecoder().decode(PopBarConfig.self, from: "{}".data(using: .utf8)!)
+expectEqual(spkCfg.speak, SpeakConfig(), "speak config default")
+expect(spkCfg.speak.voice.isEmpty && spkCfg.speak.rate == 1.0, "voice auto + rate 1.0")
+let spkFull = try! JSONDecoder().decode(SpeakConfig.self, from:
+    #"{"voice":"com.apple.voice.enhanced.zh-CN.Tingting","rate":1.5}"#.data(using: .utf8)!)
+expectEqual(spkFull.voice, "com.apple.voice.enhanced.zh-CN.Tingting", "voice identifier kept")
+expectEqual(spkFull.rate, 1.5, "rate kept")
+let spkBad = try! JSONDecoder().decode(SpeakConfig.self, from:
+    #"{"voice":"gone","rate":9}"#.data(using: .utf8)!)
+expectEqual(spkBad.rate, 2.0, "rate clamped to 2.0")
+let spkLow = try! JSONDecoder().decode(SpeakConfig.self, from:
+    #"{"rate":0.1}"#.data(using: .utf8)!)
+expectEqual(spkLow.rate, 0.4, "rate clamped to 0.4")
+
+// MARK: - 录屏(纯逻辑)
+
+section("RecordUtil.evenPixel")
+expectEqual(RecordUtil.evenPixel(100.6), 100, "even: 100.6 → 100")
+expectEqual(RecordUtil.evenPixel(101), 100, "even: 101 → 100 向下对齐")
+expectEqual(RecordUtil.evenPixel(1), 2, "even: 最小 2")
+expectEqual(RecordUtil.evenPixel(0), 2, "even: 0 → 2")
+expectEqual(RecordUtil.evenPixel(640 * 2), 1280, "even: retina 640pt")
+
+section("RecordUtil.sourceRect")
+let sFrame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+expectEqual(RecordUtil.sourceRect(global: CGRect(x: 100, y: 200, width: 300, height: 150), screenFrame: sFrame),
+            CGRect(x: 100, y: 730, width: 300, height: 150), "sourceRect y 翻转")
+let sFrame2 = CGRect(x: -800, y: 60, width: 800, height: 600)
+expectEqual(RecordUtil.sourceRect(global: CGRect(x: -700, y: 100, width: 200, height: 100), screenFrame: sFrame2),
+            CGRect(x: 100, y: 460, width: 200, height: 100), "sourceRect 副屏偏移")
+
+section("RecordUtil.durationText")
+expectEqual(RecordUtil.durationText(0), "00:00", "duration 0")
+expectEqual(RecordUtil.durationText(9.4), "00:09", "duration 9.4")
+expectEqual(RecordUtil.durationText(65), "01:05", "duration 65")
+expectEqual(RecordUtil.durationText(3661), "1:01:01", "duration 1h1m1s")
+expectEqual(RecordUtil.durationText(-5), "00:00", "duration 负数")
+
+section("RecordUtil.fileName")
+let stem = RecordUtil.fileStem(Date(timeIntervalSince1970: 1_726_000_000))
+expect(stem.hasPrefix("PopBar-Rec-"), "stem 前缀")
+expectEqual(stem.count, "PopBar-Rec-".count + 15, "stem 长度 yyyyMMdd-HHmmss")
+let recDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("popbar-rec-test-\(UUID().uuidString)", isDirectory: true)
+try? FileManager.default.createDirectory(at: recDir, withIntermediateDirectories: true)
+let u1st = RecordUtil.uniqueURL(in: recDir, stem: "PopBar-Rec-20261012-120000", ext: "mov")
+expectEqual(u1st.lastPathComponent, "PopBar-Rec-20261012-120000.mov", "首个文件名无后缀")
+FileManager.default.createFile(atPath: u1st.path, contents: Data())
+let u2nd = RecordUtil.uniqueURL(in: recDir, stem: "PopBar-Rec-20261012-120000", ext: "mov")
+expectEqual(u2nd.lastPathComponent, "PopBar-Rec-20261012-120000-2.mov", "同名追加 -2")
+FileManager.default.createFile(atPath: u2nd.path, contents: Data())
+let u3rd = RecordUtil.uniqueURL(in: recDir, stem: "PopBar-Rec-20261012-120000", ext: "mov")
+expectEqual(u3rd.lastPathComponent, "PopBar-Rec-20261012-120000-3.mov", "同名追加 -3")
+try? FileManager.default.removeItem(at: recDir)
+
+section("RecordUtil.byteText")
+expectEqual(RecordUtil.byteText(512), "512 B", "bytes")
+expectEqual(RecordUtil.byteText(2048), "2 KB", "KB")
+expectEqual(RecordUtil.byteText(12_000_000), "11.4 MB", "MB")
+expectEqual(RecordUtil.byteText(3_000_000_000), "2.79 GB", "GB")
+expectEqual(RecordUtil.gifBytes(frames: 100, width: 800, height: 450), 10_800_000, "gif 预估")
+
+section("RecordRectMemory")
+let rmRect = CGRect(x: -300, y: 40, width: 640, height: 480)
+expectEqual(RecordRectMemory.decode(RecordRectMemory.encode(rmRect)), rmRect, "rect 编解码往返")
+expect(RecordRectMemory.decode("1,2,1,1") == nil, "过小的 rect 丢弃")
+expect(RecordRectMemory.decode("a,b,c,d") == nil, "非数字丢弃")
+
+section("RecordGIF.plan")
+let p1 = RecordGIF.plan(duration: 10, size: CGSize(width: 1920, height: 1080), fps: 10, width: 800)
+expectEqual(p1.frames, 100, "plan 帧数")
+expectEqual(Int(p1.size.width), 800, "plan 宽度")
+expectEqual(Int(p1.size.height), 450, "plan 等比高度")
+let p2 = RecordGIF.plan(duration: 3, size: CGSize(width: 640, height: 480), fps: 10, width: 0)
+expectEqual(p2.frames, 30, "plan 原始宽度帧数")
+expectEqual(Int(p2.size.width), 640, "plan 原始宽度")
+let p3 = RecordGIF.plan(duration: 0.2, size: CGSize(width: 1920, height: 1080), fps: 5, width: 480)
+expectEqual(p3.frames, 1, "plan 极短至少 1 帧")
+
+section("RecordGIF.clampRange")
+let cr1 = RecordGIF.clampRange(span: 9.93, start: 0, end: nil)
+expect(cr1.1 <= 9.93, "end 缺省钳到视频轨时长")
+let cr2 = RecordGIF.clampRange(span: 9.93, start: 0, end: 11.4)
+expect(cr2.1 <= 9.93, "end 超出视频轨时长被钳位")
+let cr3 = RecordGIF.clampRange(span: 9.93, start: 12, end: nil)
+expect(cr3.0 < cr3.1, "start 超界仍保留最小区间")
+let cr4 = RecordGIF.clampRange(span: 10, start: 2, end: 5)
+expect(cr4.0 == 2 && cr4.1 == 5, "正常区间原样返回")
+
+// MARK: - 录屏 v2 纯逻辑
+
+section("RecordUtil.estimatedBytesPerSecond")
+// 1080p30 H.264 大约每分钟几十 MB 的量级,用于给用户一个体积概念
+let eps = RecordUtil.estimatedBytesPerSecond(width: 1920, height: 1080, fps: 30, codec: "h264")
+expect(eps > 300_000 && eps < 900_000, "1080p30 h264 码率落在合理区间(\(Int(eps)) B/s)")
+expect(RecordUtil.estimatedBytesPerSecond(width: 1920, height: 1080, fps: 30, codec: "hevc") < eps,
+       "HEVC 估计比 H.264 小")
+expect(RecordUtil.estimatedBytesPerSecond(width: 0, height: 0, fps: 0, codec: "h264") == 0,
+       "零尺寸不产生负数")
+expect(RecordUtil.estimatedBytesPerSecond(width: 100, height: 100, fps: 60, codec: "h264")
+       > RecordUtil.estimatedBytesPerSecond(width: 100, height: 100, fps: 30, codec: "h264"),
+       "60fps 估计更大")
+
+section("RecordExportUtil.targetSize")
+let ts1 = RecordExportUtil.targetSize(source: CGSize(width: 320, height: 180), width: 160)
+expect(ts1 == CGSize(width: 160, height: 90), "等比缩放到目标宽度")
+let ts2 = RecordExportUtil.targetSize(source: CGSize(width: 320, height: 180), width: 0)
+expect(ts2 == CGSize(width: 320, height: 180), "0 = 原始尺寸")
+let ts3 = RecordExportUtil.targetSize(source: CGSize(width: 320, height: 180), width: 9999)
+expect(ts3 == CGSize(width: 320, height: 180), "不放大")
+let ts4 = RecordExportUtil.targetSize(source: CGSize(width: 300, height: 200), width: 101)
+expect(Int(ts4.width) % 2 == 0 && Int(ts4.height) % 2 == 0, "宽高都对到偶数")
+let ts5 = RecordExportUtil.targetSize(source: CGSize(width: 1, height: 1), width: 0)
+expect(ts5.width >= 2 && ts5.height >= 2, "极小尺寸也有下限")
+
+section("RecordExportUtil.clampRange")
+let ec1 = RecordExportUtil.clampRange(span: 10, start: 2, end: 5)
+expect(ec1.0 == 2 && ec1.1 == 5, "正常区间原样")
+let ec2 = RecordExportUtil.clampRange(span: 10, start: 0, end: 99)
+expect(ec2.1 == 10, "end 超界钳到时长")
+let ec3 = RecordExportUtil.clampRange(span: 10, start: 20, end: nil)
+expect(ec3.0 < ec3.1, "start 超界仍保留最小区间")
+let ec4 = RecordExportUtil.clampRange(span: 10, start: 8, end: 3)
+expect(ec4.1 > ec4.0, "end 早于 start 时钳成最小区间")
+
+section("RecordExportUtil.presetName")
+expectEqual(RecordExportUtil.presetName(quality: "high", width: 1920),
+            AVAssetExportPresetHighestQuality, "高质量档")
+expectEqual(RecordExportUtil.presetName(quality: "low", width: 1920),
+            AVAssetExportPreset1280x720, "低质量档用 720p 预设")
+expectEqual(RecordExportUtil.presetName(quality: "medium", width: 854),
+            AVAssetExportPreset1280x720, "小尺寸的中档不必上 1080p")
+
+section("RecordExportUtil.rgb")
+let rgb1 = RecordExportUtil.rgb("#FF3B30")
+expect(rgb1 != nil && abs(rgb1!.0 - 1) < 0.001 && rgb1!.1 < 0.3, "#RRGGBB 解析")
+expect(RecordExportUtil.rgb("0A84FF") != nil, "不带 # 也能解析")
+expect(RecordExportUtil.rgb("#f00") != nil, "三位简写展开")
+expect(RecordExportUtil.rgb("nope") == nil, "非法输入返回 nil")
+
+section("RecordExportUtil 坐标约定")
+let render = CGSize(width: 160, height: 90)
+// CA 动画层用左下原点:归一化 y=0.25(靠上)应换算成较大的 CA y
+let lp = RecordExportUtil.layerPoint(x: 0.25, y: 0.25, renderSize: render)
+expect(abs(lp.x - 40) < 0.01 && abs(lp.y - 67.5) < 0.01, "CA 位置 y 轴翻转")
+// layerInstruction 的 transform 用左上原点:不做翻转
+let rr = RecordExportUtil.renderRect(x: 0.7, y: 0.7, w: 0.25, h: 0.25, renderSize: render)
+expect(abs(rr.minX - 112) < 0.01 && abs(rr.minY - 63) < 0.01, "层指令矩形不翻转")
+let lr = RecordExportUtil.layerRect(x: 0.7, y: 0.7, w: 0.25, h: 0.25, renderSize: render)
+expect(abs(lr.minX - 112) < 0.01 && abs(lr.minY - 4.5) < 0.01, "CA 矩形翻转")
+
+section("RecordExportUtil.watermarkFrame")
+let wf = RecordExportUtil.watermarkFrame(size: CGSize(width: 16, height: 16), renderSize: render,
+                                         position: "topLeft", margin: 0.025)
+expect(wf.minX >= 0 && wf.minY >= 0 && wf.maxY <= render.height, "水印留在画面内")
+let wf2 = RecordExportUtil.watermarkFrame(size: CGSize(width: 16, height: 16), renderSize: render,
+                                          position: "bottomRight", margin: 0.025)
+expect(wf2.minX > wf.minX && wf2.minY < wf.minY, "右下角与左上角位置相反")
+
+section("RecordExportUtil.volumePlan")
+expectEqual(RecordExportUtil.volumePlan(trackCount: 0, micEnabled: false, system: 1, mic: 1), [], "没有音轨")
+expectEqual(RecordExportUtil.volumePlan(trackCount: 1, micEnabled: false, system: 0.5, mic: 2), [0.5],
+            "只有系统声音")
+expectEqual(RecordExportUtil.volumePlan(trackCount: 1, micEnabled: true, system: 0.5, mic: 2), [0.5],
+            "开了麦克风但只有一轨:取较小值")
+expectEqual(RecordExportUtil.volumePlan(trackCount: 2, micEnabled: true, system: 0.4, mic: 1.5), [0.4, 1.5],
+            "两轨:最后一轨是麦克风")
+expectEqual(RecordExportUtil.volumePlan(trackCount: 2, micEnabled: false, system: 0.4, mic: 1.5), [0.4, 0.4],
+            "没开麦克风时两轨同音量")
+
+section("RecordExportUtil.placeTransform")
+let pt = RecordExportUtil.placeTransform(naturalSize: CGSize(width: 320, height: 180),
+                                         preferred: .identity, renderSize: CGSize(width: 160, height: 90))
+expectEqual(pt, CGAffineTransform(scaleX: 0.5, y: 0.5), "等比缩小居中")
+let ptFit = RecordExportUtil.placeTransform(naturalSize: CGSize(width: 160, height: 120),
+                                            preferred: .identity, renderSize: CGSize(width: 40, height: 22.5))
+let mapped = CGRect(origin: .zero, size: CGSize(width: 160, height: 120)).applying(ptFit)
+expect(mapped.width <= 40.01 && mapped.height <= 22.51, "按短边缩放进目标矩形")
+expect(abs(mapped.midX - 20) < 0.5, "水平居中")
+
+section("RecordCameraLayout")
+let cam = RecordCameraLayout.panelSize(width: 160, aspect: 4.0 / 3.0)
+expect(abs(cam.height - 120) < 0.6, "4:3 摄像头 160 宽 → 120 高")
+let cam16 = RecordCameraLayout.panelSize(width: 160, aspect: 16.0 / 9.0)
+expect(abs(cam16.height - 90) < 0.6, "16:9 摄像头 160 宽 → 90 高")
+expect(RecordCameraLayout.panelSize(width: 0, aspect: 0).width >= 64, "宽度有下限")
+let ov = RecordCameraLayout.overlay(panelSize: CGSize(width: 32, height: 24),
+                                    area: CGSize(width: 320, height: 180), position: "bottomRight")
+expect(abs(ov.x - (1 - 0.02 - 0.1)) < 0.001 && abs(ov.y - (1 - 0.02 - 24.0 / 180)) < 0.001,
+       "右下角归一化位置")
+let ovTL = RecordCameraLayout.overlay(panelSize: CGSize(width: 32, height: 24),
+                                      area: CGSize(width: 320, height: 180), position: "topLeft")
+expect(abs(ovTL.x - 0.02) < 0.001 && abs(ovTL.y - 0.02) < 0.001, "左上角归一化位置")
+let area = CGRect(x: 100, y: 200, width: 320, height: 180)
+let cocoa = RecordCameraLayout.cocoaFrame(area: area, overlay: ov)
+// 归一化 y 是左上原点,Cocoa 是左下原点:右下角的面板应该贴在 area 的右下,
+// 与两条边各留 2% 边距
+expect(abs((area.maxX - cocoa.maxX) - 0.02 * area.width) < 0.5, "右侧留给 2% 边距")
+expect(abs(cocoa.minY - (area.minY + 0.02 * area.height)) < 0.5, "底部留给 2% 边距")
+let cocoaTL = RecordCameraLayout.cocoaFrame(area: area, overlay: ovTL)
+expect(abs(cocoaTL.minX - (area.minX + 0.02 * area.width)) < 0.5
+       && abs(cocoaTL.maxY - (area.maxY - 0.02 * area.height)) < 0.5, "左上角面板贴住录制区的左上")
+
+section("ClickRecorder.normalize")
+let clickArea = CGRect(x: 100, y: 100, width: 200, height: 100)
+let n1 = ClickRecorder.normalize(CGPoint(x: 200, y: 150), in: clickArea)
+expect(n1 != nil && abs(n1!.0 - 0.5) < 0.001 && abs(n1!.1 - 0.5) < 0.001, "中心点 → (0.5,0.5)")
+// Cocoa 左下原点 → 归一化左上原点:区域的「视觉左上角」(Cocoa maxY)应为 y=0,
+// 「视觉左下角」(Cocoa minY)应为 y=1
+let nTop = ClickRecorder.normalize(CGPoint(x: 100, y: 200), in: clickArea)
+expect(nTop != nil && abs(nTop!.0) < 0.001 && abs(nTop!.1) < 0.001, "视觉左上角 → y=0")
+let nBottom = ClickRecorder.normalize(CGPoint(x: 100, y: 100), in: clickArea)
+expect(nBottom != nil && abs(nBottom!.1 - 1) < 0.001, "视觉左下角 → y=1")
+expect(ClickRecorder.normalize(CGPoint(x: 100, y: 200.5), in: clickArea) == nil, "区域上方返回 nil")
+expect(ClickRecorder.normalize(CGPoint(x: 50, y: 150), in: clickArea) == nil, "区域外返回 nil")
+expect(ClickRecorder.normalize(CGPoint(x: 200, y: 150), in: .zero) == nil, "零尺寸区域返回 nil")
+
+section("RecordDataStore.stableKey")
+let k1 = RecordDataStore.stableKey("/Users/x/Movies/a.mov")
+let k2 = RecordDataStore.stableKey("/Users/x/Movies/a.mov")
+let k3 = RecordDataStore.stableKey("/Users/x/Movies/b.mov")
+expectEqual(k1, k2, "同一路径稳定同 key")
+expect(k1 != k3, "不同路径不同 key")
+expectEqual(RecordDataStore.stableKey(""), "cbf29ce484222325", "空串 = FNV 偏移基数")
+
+section("SnapGeometry.matchesWindow")
+let win = CGRect(x: 10, y: 20, width: 300, height: 200)
+expect(SnapGeometry.matchesWindow(win, window: win), "完全一致")
+expect(SnapGeometry.matchesWindow(win.insetBy(dx: 1, dy: 1), window: win), "1pt 误差内算吸附")
+expect(!SnapGeometry.matchesWindow(win.insetBy(dx: 10, dy: 0), window: win), "差太多不算")
+let wins2 = [win, CGRect(x: 0, y: 0, width: 600, height: 400)]
+expectEqual(SnapGeometry.windowIndex(at: CGPoint(x: 50, y: 50), in: wins2), 0, "命中前窗下标")
+expectEqual(SnapGeometry.windowIndex(at: CGPoint(x: 500, y: 300), in: wins2), 1, "命中后窗下标")
+expect(SnapGeometry.windowIndex(at: CGPoint(x: 9999, y: 9999), in: wins2) == nil, "未命中返回 nil")
+
+section("RecordConfig v2 默认值与钳位")
+let recV2 = RecordConfig()
+expectEqual(recV2.countdown, 3, "默认倒计时 3 秒")
+expect(recV2.windowFollow, "默认跟随窗口")
+expect(!recV2.copyToClipboard, "默认不复制到剪贴板")
+expect(recV2.click.enabled, "默认开启点击记录")
+expect(!recV2.camera.enabled, "默认关摄像头")
+expect(!recV2.watermark.enabled, "默认关水印")
+expectEqual(recV2.export.container, "mp4", "导出默认 MP4")
+let badCountdown = try! JSONDecoder().decode(RecordConfig.self, from: #"{"countdown":7}"#.data(using: .utf8)!)
+expectEqual(badCountdown.countdown, 3, "非法倒计时回落默认")
+let okCountdown = try! JSONDecoder().decode(RecordConfig.self, from: #"{"countdown":10}"#.data(using: .utf8)!)
+expectEqual(okCountdown.countdown, 10, "合法倒计时保留")
+let vol = try! JSONDecoder().decode(RecordConfig.self,
+                                    from: #"{"export":{"systemVolume":9,"micVolume":-3}}"#.data(using: .utf8)!)
+expectEqual(vol.export.systemVolume, 2, "音量上限 2")
+expectEqual(vol.export.micVolume, 0, "音量下限 0")
+let camBad = try! JSONDecoder().decode(RecordConfig.self,
+                                       from: #"{"camera":{"position":"middle","size":9999}}"#.data(using: .utf8)!)
+expectEqual(camBad.camera.position, "bottomRight", "非法摄像头位置回落默认")
+expectEqual(camBad.camera.size, 480, "摄像头尺寸上限")
+let clickBad = try! JSONDecoder().decode(RecordConfig.self,
+                                         from: #"{"click":{"radius":9999,"duration":0.01}}"#.data(using: .utf8)!)
+expectEqual(clickBad.click.radius, 200, "涟漪半径上限")
+expectEqual(clickBad.click.duration, 0.15, "涟漪时长下限")
+let hkV2 = HotkeysConfig()
+expectEqual(hkV2.recordMarker, "ctrl+opt+shift+m", "默认标记快捷键")
+
+section("RecordSidecar 编解码")
+var sc = RecordSidecar()
+sc.videoPath = "/tmp/a.mov"
+sc.duration = 3.5
+sc.micEnabled = true
+sc.clicks = [ClickMark(t: 1.0, x: 0.5, y: 0.25, button: 0)]
+sc.markers = [RecordMarker(t: 2.0)]
+sc.camera = CameraSidecar(file: "camera.mov", x: 0.7, y: 0.7, width: 0.25, height: 0.25, mirror: true)
+sc.areaRect = [0, 0, 100, 100]
+let scData = try! JSONEncoder().encode(sc)
+let sc2 = try! JSONDecoder().decode(RecordSidecar.self, from: scData)
+expectEqual(sc2, sc, "sidecar 往返一致")
+expect(sc2.area == CGRect(x: 0, y: 0, width: 100, height: 100), "areaRect 还原成 CGRect")
+var scBad = RecordSidecar()
+scBad.areaRect = [1, 2, 3]
+expect(scBad.area == nil, "残缺 areaRect 返回 nil")
 
 section("SnapGeometry")
 let sr = CGRect(x: 100, y: 100, width: 200, height: 100)
@@ -514,6 +838,9 @@ let ccfgD = try! JSONDecoder().decode(ClipboardHistoryConfig.self, from: "{}".da
 expect(ccfgD.images && ccfgD.files, "images/files default true")
 expectEqual(ccfgD.imageSizeMB, 50, "imageSizeMB default")
 expectEqual(ccfgD.imageMaxMB, 10, "imageMaxMB default")
+
+// 录屏导出管线:合成视频 → 真跑导出 → 抽帧验收(tests/export.swift)
+await runExportPipelineTests()
 
 print("\n========== \(checks) 项检查,\(failures) 项失败 ==========")
 exit(failures == 0 ? 0 : 1)

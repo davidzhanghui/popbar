@@ -117,7 +117,8 @@ struct SnapStitcher {
 }
 
 /// 长截图抓取循环:固定区域反复截图,交给拼接器
-final class SnapScrollSession {
+/// 主 runloop 独占使用:timer/回调/外部调用都在主线程,unchecked Sendable 仅为消除严格并发警告
+final class SnapScrollSession: @unchecked Sendable {
     let scale: CGFloat
     var onUpdate: ((_ preview: CGImage?, _ status: String) -> Void)?
 

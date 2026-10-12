@@ -18,6 +18,9 @@ final class BarTooltip {
         hideWork?.cancel()
 
         let p = panel ?? makePanel()
+        // 浮在 anchor 所在窗口之上:截屏覆盖层/录屏面板是 .screenSaver 级,
+        // 固定 .popUpMenu 会被盖住
+        p.level = NSWindow.Level(rawValue: win.level.rawValue + 1)
         let field = label!
         field.stringValue = text
         field.sizeToFit()
@@ -64,7 +67,7 @@ final class BarTooltip {
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
         p.isFloatingPanel = true
-        p.level = .popUpMenu                 // 浮在浮动条之上
+        p.level = .popUpMenu                 // 初始值;show 时按 anchor 窗口 +1
         p.backgroundColor = .clear
         p.isOpaque = false
         p.hasShadow = true

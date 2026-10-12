@@ -715,7 +715,9 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate {
         if speech.isSpeaking { speech.stopSpeaking(at: .immediate); return }
         let utterance = AVSpeechUtterance(string: text)
         if LanguageDetect.containsCJK(text) {
-            utterance.voice = AVSpeechSynthesisVoice(language: LanguageDetect.code(text))
+            SpeakVoice.apply(utterance, fallbackLanguage: LanguageDetect.code(text))
+        } else {
+            SpeakVoice.apply(utterance, fallbackLanguage: nil)
         }
         speech.speak(utterance)
     }

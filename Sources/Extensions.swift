@@ -1,6 +1,11 @@
 import Cocoa
 import Foundation
 
+/// 把 @MainActor 的回调包成普通闭包:AppKit 控件(@objc action / Timer)都在主线程但类型上未隔离
+func mainClosure(_ body: @escaping @MainActor () -> Void) -> () -> Void {
+    { Task { @MainActor in body() } }
+}
+
 /// #6 扩展系统:url 模板 / shell 脚本 / 快捷指令三类动作。
 /// 配置见 ExtensionConfig;文本只通过 URL 参数或 stdin 传递,绝不拼进 shell 命令串。
 enum Extensions {

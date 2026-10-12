@@ -1,12 +1,18 @@
 import Cocoa
 
-enum SnapAction { case copy, save, ocr, pin }
+enum SnapAction { case copy, save, ocr, pin, record }
+
+/// 进入选区的意图:截屏(默认)或录屏(工具条高亮录制、回车直接开录)
+enum SnapMode { case snap, record }
 
 /// 截屏会话:冻结所有屏幕 → 每屏一个覆盖窗口 → 完成/取消后统一销毁
 final class SnapController {
     static let shared = SnapController()
     private(set) var isActive = false
     private(set) var isScrolling = false
+    /// 选区确认时的默认动作:录屏模式下是 .record
+    private(set) var mode: SnapMode = .snap
+    var defaultAction: SnapAction { mode == .record ? .record : .copy }
     private var scrollSession: SnapScrollSession?
     private var scrollBorder: SnapScrollBorderWindow?
     private var scrollPanel: SnapScrollPanel?
@@ -15,19 +21,20 @@ final class SnapController {
 
     private init() {}
 
-    func start() {
+    func start(mode: SnapMode = .snap) {
         guard !isActive, ScreenPermission.ensure() else { return }
+        self.mode = mode
         isActive = true
         FloatingBarController.shared.hide()
         if TranslationPanelController.shared.isVisible && !TranslationPanelController.shared.isPinned {
             TranslationPanelController.shared.close()
         }
-        let rects = SnapCapture.windowRects()
+        let windows = SnapCapture.windows()
         Task { @MainActor in
             do {
                 let shots = try await SnapCapture.captureAll()
                 guard self.isActive, !shots.isEmpty else { return self.cancel() }
-                self.show(shots, windowRects: rects)
+                self.show(shots, windowRects: windows)
             } catch {
                 self.cancel()
                 NSSound.beep()
@@ -35,7 +42,7 @@ final class SnapController {
         }
     }
 
-    private func show(_ shots: [SnapDisplayShot], windowRects: [CGRect]) {
+    private func show(_ shots: [SnapDisplayShot], windowRects: [(rect: CGRect, id: CGWindowID)]) {
         overlays = shots.map { SnapOverlayWindow(shot: $0, windowRects: windowRects) }
         overlays.forEach { $0.overlayView.prepare() }
         let mouse = NSEvent.mouseLocation
@@ -63,6 +70,7 @@ final class SnapController {
     /// 合成图 → 销毁覆盖窗口 → 执行动作
     func complete(from view: SnapOverlayView, action: SnapAction) {
         view.commitText()
+        if action == .record { return beginRecord(from: view) }
         guard let sel = view.selection else { return }
         let shot = view.shot
         let img = SnapOutput.compose(image: shot.image, scale: shot.scale, selection: sel,
@@ -83,8 +91,46 @@ final class SnapController {
         case .pin:
             SnapPinWindow.show(image: img, scale: shot.scale, frame: globalRect)
             restorePreviousApp()
+        case .record:
+            break       // 已在函数开头处理
         }
         SnapHistory.add(img, scale: shot.scale)
+    }
+
+    // MARK: - 录屏
+
+    /// 选区确认后:销毁覆盖层 → 恢复前台 App → 启动 RecordSession。
+    /// 选区等于整屏时录整屏(rect = nil)
+    func beginRecord(from view: SnapOverlayView, gif: Bool = false) {
+        view.commitText()
+        guard let sel = view.selection else { return }
+        // 有标注时不直接开录(工具条已禁用按钮,这里挡键盘 Return 路径)
+        guard view.annotationItems.isEmpty else {
+            NSSound.beep()
+            FloatingBarController.shared.showResult(L10n.t("请先清除标注再录屏", "Clear annotations before recording"))
+            return
+        }
+        let screen = view.shot.screen
+        let full = sel.equalTo(view.bounds)
+        let rect: CGRect? = full ? nil : sel.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY)
+        // 选区正好是一个窗口(且偏好里开了跟随)→ 按窗口录,窗口移动/缩放自动跟
+        let follow = ConfigStore.shared.config.snap.record.windowFollow
+            ? view.windowID(matching: sel) : nil
+        teardown()
+        restorePreviousApp()
+        if let rect { RecordRectMemory.save(rect, screen: screen) }
+        Task { @MainActor in
+            do {
+                try await RecordSession.shared.start(screen: screen, rect: rect, gif: gif,
+                                                     windowID: follow)
+            } catch {
+                NSSound.beep()
+                // 麦克风权限被拒时 denyAlert 已引导过,不再重复弹提示
+                if (error as NSError).code != NSFileReadNoPermissionError {
+                    FloatingBarController.shared.showResult(L10n.t("录屏启动失败", "Failed to start recording"))
+                }
+            }
+        }
     }
 
     // MARK: - 长截图
@@ -166,6 +212,7 @@ final class SnapController {
         BarTooltip.shared.hide()
         let old = overlays
         overlays = []
+        mode = .snap
         isActive = keepActive
         old.forEach { $0.orderOut(nil) }
         DispatchQueue.main.async { old.forEach { $0.close() } }

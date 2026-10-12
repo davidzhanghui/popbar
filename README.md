@@ -19,8 +19,8 @@
 </p>
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/1857be08-837e-4c7e-bb0b-44d6773929cd" poster="docs/popbar-promo-poster.png" width="720" controls muted></video><br>
-  <a href="docs/popbar-promo-v1.0.mp4">▶ 观看宣传片</a> · <sub>52 秒:划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏</sub>
+  <a href="docs/popbar-promo-v2.0.mp4"><img src="docs/popbar-promo-poster.png" width="720" alt="PopBar 宣传片"></a><br>
+  <a href="docs/popbar-promo-v2.0.mp4">▶ 观看宣传片</a> · <sub>69 秒:划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏标注 · 录屏导出</sub>
 </p>
 
 ## 特性
@@ -33,6 +33,7 @@
 - **隐私优先**:AI 请求前检测手机号、身份证、银行卡、API Key、私钥、内网 IP,可选询问 / 自动脱敏;剪贴板历史默认关闭、默认不落盘
 - **扩展系统**:URL 模板 / Shell 脚本(stdin 传文本,防注入)/ 快捷指令三类扩展,配置即生效
 - **更多内置工具**:二维码生成、开发者工具箱(HTML/Unicode 转义、SHA256/MD5、JWT 解码、JSON 处理)
+- **录屏**:选区 / 窗口跟随 / 整屏录制(`ctrl+opt+r`,macOS 15+)——倒计时开录、H.264/HEVC、MOV/MP4、30/60fps、系统声音与麦克风、暂停、标记点、摄像头画中画、点击涟漪、水印、统一导出面板(裁剪 / 压缩 / 混音)、可导出 GIF
 - **截屏**:微信式截屏(`ctrl+opt+p`)——冻结画面、自动识别窗口、像素放大镜与取色、矩形/椭圆/箭头/画笔/文字/马赛克/序号标注、贴图、文字识别、长截图,可选本地截图历史
 - **菜单栏翻译入口**:截图 OCR / 输入 / 剪贴板三种方式直接唤起翻译面板;截图与剪贴板图片还会识别二维码
 - **剪贴板历史**:可选开启,记录文字/图片/文件(最多 10 条,可置顶),菜单栏条目子菜单提供粘贴/仅复制/追加/置顶;默认关闭、默认内存存储不落盘,密码类剪贴板标记一律跳过
@@ -132,6 +133,8 @@ flowchart TD
 | 入口 | 说明 |
 |---|---|
 | 截屏 | 唤起截屏(同全局快捷键,默认 `ctrl+opt+p`);详见下方「截屏」 |
+| 录屏 / 停止录屏 | 唤起录屏选区或停止当前录制(默认 `ctrl+opt+r`);详见下方「录屏」 |
+| 最近录制 | 有录制记录时显示;每条可打开 / 在 Finder 中显示 / 复制路径或文件 / 导出 GIF / 移到废纸篓 |
 | 截图历史 | 偏好设置里开启且有记录时显示;每条带缩略图,可复制 / 贴图 / 在 Finder 中显示,底部可打开文件夹、清空历史 |
 
 菜单里的其他条目:启用/停用划词弹条总开关、对当前 App 一键禁用/启用、
@@ -171,6 +174,48 @@ flowchart TD
 **贴图窗口**:悬浮在原位置,可拖动;滚轮缩放 10%–500%(以光标为中心);双击或 `Esc` 关闭;`⌘C` 复制;
 右键菜单:复制 / 保存 / 文字识别 / 透明度(100% 80% 60% 40%)/ 关闭。
 
+## 录屏
+
+菜单栏 →「录屏」或全局快捷键 `ctrl+opt+r`（macOS 15+）:先进入与截屏相同的选区界面,
+点工具条上的 **红色录制按钮**（或直接 `Return`）就开始录;**直接点击屏幕不选区 = 录整屏**。
+**选区正好落在一个窗口上 = 跟随该窗口录制**（窗口移动、缩放、被遮挡都自动跟随）。
+默认先倒计时 3 秒再开始采集（0/3/5/10 可调）,留出切窗口、摆界面的时间,这段不会进片子。
+选区会被红线框住,旁边的面板显示 mm:ss 计时与**暂停 / 标记 / 隐藏面板 / 停止**四个按钮,菜单栏图标同时变成红色计时器。
+
+<p align="center">
+  <img src="docs/popbar-record-export.png" width="420" alt="录屏导出面板:裁剪、分辨率、质量、点击涟漪、摄像头画中画、水印">
+</p>
+
+- **输出**:默认 H.264 / MOV / 30fps / 2x 原生像素,保存位置沿用截屏的保存目录,文件名 `PopBar-Rec-yyyyMMdd-HHmmss`
+  （同名自动加 `-2`、`-3`）;文件用 `SCRecordingOutput` 直接落盘,录制中已在写盘,异常中断也能保住已录部分
+- **停止**:面板「停止」、全局快捷键再按一次、菜单栏「停止录屏」,任一方式都等同;完成后系统通知提示时长与体积,
+  通知上直接给出**播放 / 编辑并导出 / 导出 GIF** 三个动作;GIF 文件的通知只保留「播放」
+- **标记点**:`ctrl+opt+shift+m` 或面板按钮;导出面板里可以一键把起止点跳到任意标记,掐头去尾不用拖时间轴
+- **暂停**:`ctrl+opt+shift+r` 或面板按钮;暂停时边框变橙、计时停止,继续后新片段在结束时自动拼接为单个文件
+- **退出保护**:录制中退出 PopBar 会同步收尾,保证 moov 写完、文件可播放
+- **退出时长限制**:偏好设置里可设最长时长(秒,0 = 不限),到时自动停止并保存
+- **记忆选区**:每块屏幕各自记住上次录过的区域,选区界面按 `R` 恢复
+- **麦克风**:默认关闭;开启后才需要「麦克风」权限,系统声音默认开启(PopBar 自己的声音始终排除)
+- **录 GIF**:⌥+点录制按钮 = 直接录 GIF(≤30s、10fps、宽 ≤800),中间的 .mov 自动删除;
+  也可以从「最近录制」或完成通知的「导出 GIF」按钮打开导出面板(帧率 / 宽度 / 区间 / 体积预估 / 进度 / 取消),导出后可自动复制到剪贴板
+- **导出视频**:「最近录制」→「编辑并导出…」打开统一导出面板 ——
+  区间裁剪、目标宽度(原始/1920/1280/854)、质量档(高/中/低)、MP4/MOV、系统声音与麦克风独立音量、
+  点击涟漪、摄像头画中画、水印,一次导出全部生效;输出 moov 前置,网页与微信可直接播放
+- **点击涟漪**:录制时只记录点击(鼠标事件全局监听,**不需要辅助功能权限**;落在录制控制面板、摄像头预览窗上的点击不计入),导出时才烧进画面 ——
+  圆环出现在点击的位置与时刻,颜色/时长在偏好设置里调
+- **摄像头画中画**:偏好里开启后需要「摄像头」权限;录制时按配置的角落显示预览窗(所见即所得),
+  导出时把摄像头画面合成到成品上
+- **要发给别人**:偏好里「套用产品演示参数」一键切到 1x + MP4 + H.264 + 30fps + 倒计时 3 秒
+
+| 操作 | 说明 |
+|---|---|
+| `ctrl+opt+r` | 开始录屏 / 录制中停止 / 倒计时中取消(偏好设置可改) |
+| `ctrl+opt+shift+r` | 录制中暂停 / 继续 |
+| `ctrl+opt+shift+m` | 录制中打标记点(偏好设置可改) |
+| `Return` | 录屏模式下开始录制选区 |
+| `R` | 恢复这块屏幕上次的录制选区 |
+| `Esc` | 取消选区 / 取消倒计时(尚未开始录制) |
+
 ### 设置窗口
 
 <p align="center">
@@ -195,7 +240,7 @@ flowchart TD
 | tab | 内容 |
 |---|---|
 | 通用 | 外观、语言、托盘图标、面板位置、划词触发、剪贴板取词、敏感信息、开机启动 |
-| 功能 | 剪贴板历史、历史持久化、OCR 结果、使用统计、唤起快捷键;截屏:快捷键、保存位置、保存格式、放大镜、截图历史与保留数量 |
+| 功能 | 剪贴板历史、历史持久化、OCR 结果、使用统计、唤起快捷键;朗读:声音(按语言分组,可试听)与语速;截屏:快捷键、保存位置、保存格式、放大镜、截图历史与保留数量;录屏:三个快捷键、帧率、分辨率、编码、容器、光标、系统声音、麦克风与设备、最长时长、GIF 帧率/宽度/复制到剪贴板;录屏 v2:倒计时、窗口跟随、标记快捷键、产品演示参数、点击涟漪(开关/时长/颜色)、摄像头(开关/设备/位置/尺寸/镜像)、水印(开关/文字/位置/不透明度)、导出(自动导出/目标宽度/质量/容器/复制到剪贴板) |
 | 工具条 | 动作与排序(拖拽调整)、应用规则 |
 | 关于 | 版本号、配置目录 |
 
@@ -284,6 +329,14 @@ flowchart TD
 - **工具条**:`toolbar.items` 按 `{id, visible}` 排序;`maxVisible` 控制主条按钮数(默认 12,可调 4–24),其余进溢出菜单;`contextPosition` 取 `afterEdit / front / back`;`order` 取 `manual / perApp`(perApp 按该应用的使用统计把常用动作提前)
 - **首次启动预置**:没有配置时会写入模板,内含 2 个停用状态的 provider 模板(DeepSeek、硅基流动)、1 个 GitHub 搜索扩展,以及 5 条预置应用禁用规则(1Password / Bitwarden / 钥匙串访问 / 屏幕共享 / Windows App)
 - **截屏**:`snap`,`saveDir` ⌘S 保存目录;`format` `png / jpg`;`showMagnifier` 放大镜开关;`history.enabled / limit` 截图历史(默认关,保留 1–200 张);`lastColor / lastWidth` 记住上次的标注颜色与字号档(0/1/2)
+- **录屏**:`snap.record`,`fps` `30 / 60`;`scale` `1 / 2`;`codec` `h264 / hevc`;`container` `mov / mp4`;`showsCursor`、`systemAudio`、`microphone`(默认关)、`microphoneDevice`;`maxDuration` 秒(0 = 不限);`gif.fps / width / copyToClipboard`;`lastRects` 按屏幕 UUID 记忆选区
+- **录屏 v2**:`countdown` `0 / 3 / 5 / 10`;`windowFollow`;`copyToClipboard`(录完复制文件);
+  `click.enabled / radius / duration / color`(点击涟漪);`camera.enabled / device / size / mirror / position`(画中画);
+  `watermark.enabled / text / imagePath / opacity / position / size`;
+  `export.autoExport / quality / width / container / systemVolume / micVolume / copyToClipboard`;
+  `hotkeys.recordMarker`
+- **录制旁挂数据**:点击与标记存在 `~/Library/Application Support/PopBar/RecordData/<稳定哈希>/`,
+  导出面板据此烧录涟漪;视频被删除时目录自动清理
 - **其余**:`clipboardHistory`、`ocr.after`、`usage.enabled`、`hotkeys`、`privacy` 等都可缺省手写
 - `targetLanguage` 为 `auto` 时按原文自动判断方向(中文→英文,其它→中文)
 - 面板里的语言下拉可以临时改方向,改动只对本次生效,不写回配置
@@ -301,7 +354,7 @@ flowchart TD
 
 App 每次先删后增干净重建；同名 dmg 直接覆盖；打包暂存目录用完自动清理。打开 DMG，把 `PopBar.app` 拖到 `Applications` 文件夹，再从「应用程序」启动。应用只在菜单栏显示图标，不占用 Dock。也可直接运行本地构建：`open build.noindex/PopBar.app`。构建与打包暂存目录采用 `.noindex` 后缀，避免开发副本出现在系统应用搜索结果中。
 
-要求:macOS 14+；源码构建需要 Swift 工具链（Xcode 或 Command Line Tools）。
+要求:macOS 15+（录屏使用 ScreenCaptureKit 的 `SCRecordingOutput`）;源码构建需要 Swift 工具链（Xcode 或 Command Line Tools）。
 
 > 从 GitHub Release 下载的 DMG 未经 Apple 公证,首次打开会提示"已损坏,无法打开"。
 > 把 App 拖入 `Applications` 后在终端执行一次 `xattr -cr /Applications/PopBar.app` 即可正常启动。
@@ -314,8 +367,9 @@ App 每次先删后增干净重建；同名 dmg 直接覆盖；打包暂存目�
 - 读取选中文字
 - 模拟按键(`Cmd+C/X/V`)
 
-另外,**截屏**与**截图翻译(OCR)**需要「系统设置 → 隐私与安全性 → 屏幕录制」,首次使用会引导授权。
-macOS 15+ 会定期要求第三方应用重新确认屏幕录制权限——这是系统行为,所有截图工具都会遇到。
+另外,**截屏**、**截图翻译(OCR)**与**录屏**需要「系统设置 → 隐私与安全性 → 屏幕录制」,首次使用会引导授权。
+macOS 15+ 会定期要求第三方应用重新确认屏幕录制权限——这是系统行为,所有截图/录屏工具都会遇到。
+录屏默认关闭麦克风;只有开启麦克风时才需要「麦克风」权限。
 
 > AI 翻译面板需要网络访问(出站 HTTPS);其余动作全部离线。只有你主动使用搜索、在线翻译或 AI 翻译时,选中的文字才会被发送到对应服务。
 
@@ -365,6 +419,15 @@ popbar/
 │   ├── SnapScroll.swift              # 长截图:行哈希拼接器 + 抓取循环
 │   ├── SnapScrollUI.swift            # 长截图虚线框与控制面板
 │   ├── SnapHistory.swift             # 截图历史存储、清理与菜单
+│   ├── RecordSession.swift           # 录屏会话:倒计时、窗口跟随、SCStream + SCRecordingOutput,分段/合并/命名/通知
+│   ├── RecordUI.swift                # 录屏红框、倒计时与控制面板(计时 / 暂停 / 标记 / 隐藏 / 停止)
+│   ├── RecordData.swift              # 旁挂数据(点击/标记/摄像头)、稳定哈希索引、点击全局监听
+│   ├── RecordExport.swift            # 导出管线:裁剪/缩放/压缩/混音/点击涟漪/摄像头 PiP/水印
+│   ├── RecordExportUI.swift          # 统一导出面板(区间、分辨率、质量、混音、涟漪、水印、进度)
+│   ├── RecordCamera.swift            # 摄像头画中画:权限、旁挂录制、预览窗与布局计算
+│   ├── RecordHistory.swift           # 「最近录制」元数据存储、清理与菜单
+│   ├── RecordGIF.swift               # GIF 导出(抽帧 + ImageIO 写 GIF)与导出面板
+│   ├── RecordPanelKit.swift          # 导出面板共用的卡片 / 行 / 分组样式(与偏好设置一致)
 │   ├── L10n.swift                    # 中/英双语界面字符串
 │   ├── Actions.swift                 # CGEvent 按键模拟(含 flagsChanged)
 │   ├── AppActivation.swift           # accessory 应用激活前台 / Esc 可关窗口
@@ -375,7 +438,7 @@ popbar/
 ├── icon/make_icon.swift              # 图标生成器(矢量绘制 → iconset)
 ├── Resources/AppIcon.icns
 ├── Info.plist                        # LSUIElement / 版本 / 权限用途声明
-├── docs/                             # README 截图
+├── docs/                             # 落地页(index.html)、README 截图与宣传片
 ├── build.sh                          # App/DMG 打包
 ├── restart.sh                        # 杀旧进程 → 构建 → 启动开发副本
 ├── build/                            # 编译产物与 DMG（不入库）
@@ -398,7 +461,7 @@ swift icon/make_icon.swift icon/PopBar.iconset icon/preview.png
 iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 
 # 重新生成 README 里的弹条截图(浅色+深色)
-swiftc -O -target $(uname -m)-apple-macos14.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
+swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
 ./build/shot docs/popbar-bar-light.png docs/popbar-bar-dark.png
 
 # 生成截屏功能展示图(离线合成 docs/index.html 作背景,无需屏幕录制权限)

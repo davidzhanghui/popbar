@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PopBar — 选中文字，事就办了</title>
-<meta name="description" content="PopBar 是一个 macOS 划词工具条：选中文字，浮动菜单即刻出现在选区上方。上下文感知、AI 翻译面板、隐私脱敏，纯 Swift + AppKit。">
+<meta name="description" content="PopBar 是一个 macOS 划词工具条：选中文字，浮动菜单即刻出现在选区上方。上下文感知、AI 翻译面板、隐私脱敏，外加微信式截屏与录屏导出，纯 Swift + AppKit。">
 <meta property="og:title" content="PopBar — 选中文字，事就办了">
-<meta property="og:description" content="macOS 划词工具条：划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏">
+<meta property="og:description" content="macOS 划词工具条：划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏 · 录屏">
 <meta property="og:image" content="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-og.png">
 <link rel="icon" href="popbar-icon.png">
 <style>
@@ -118,6 +118,7 @@
 
   /* install */
   .install { display:grid; grid-template-columns:1fr 1fr; gap:22px; align-items:stretch; }
+  .install > .card { min-width:0; }
   .install .card h3 { display:flex; align-items:center; gap:10px; }
   .install .card h3 .num { width:30px; height:30px; border-radius:9px; background:var(--accent);
     color:#fff; font-size:15px; display:inline-flex; align-items:center; justify-content:center;
@@ -181,11 +182,11 @@
     <img class="icon" src="popbar-icon.png" alt="PopBar 图标">
     <div class="kicker en">MACOS 划词工具条</div>
     <h1>选中文字，事就办了</h1>
-    <p class="sub">选中文字，浮动工具条即刻出现在选区上方 —— 复制、搜索、AI 翻译、上下文操作，一步到位，也能像微信一样截屏标注。纯 Swift + AppKit，无 Xcode 工程依赖，单文件编译打包。</p>
+    <p class="sub">选中文字，浮动工具条即刻出现在选区上方 —— 复制、搜索、AI 翻译、上下文操作，一步到位；还能像微信一样截屏标注，录屏后一键导出带点击涟漪的视频或 GIF。纯 Swift + AppKit，无 Xcode 工程依赖，单文件编译打包。</p>
     <div class="badges">
       <span class="badge">开源</span>
       <span class="badge en">Swift + AppKit</span>
-      <span class="badge en">macOS 14+</span>
+      <span class="badge en">macOS 15+</span>
       <span class="badge">无 Dock 图标 · 空闲 CPU ≈ 0</span>
     </div>
     <div class="cta">
@@ -199,15 +200,15 @@
   <div class="wrap">
     <div class="sec-head reveal">
       <div class="kicker en">PROMO</div>
-      <h2>52 秒，看懂 PopBar</h2>
+      <h2>69 秒，看懂 PopBar</h2>
     </div>
     <div class="video-shell reveal">
       <video controls muted playsinline preload="metadata" poster="popbar-promo-poster.png">
-        <source src="popbar-promo-v1.0.mp4" type="video/mp4">
-        <source src="https://github.com/user-attachments/assets/1857be08-837e-4c7e-bb0b-44d6773929cd" type="video/mp4">
+        <source src="popbar-promo-v2.0.mp4" type="video/mp4">
+        <source src="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-promo-v2.0.mp4" type="video/mp4">
       </video>
     </div>
-    <p class="video-note">划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏</p>
+    <p class="video-note">划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏 · 截屏标注 · 录屏导出</p>
   </div>
 </section>
 
@@ -242,7 +243,7 @@
       <div class="card reveal">
         <div class="glyph"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="2" width="10" height="14" rx="2" opacity=".45"/></svg></div>
         <h3>剪贴板历史</h3>
-        <p>可选开启，默认只在内存、不落盘；密码类剪贴板标记一律跳过。菜单栏选择即可粘贴或追加。</p>
+        <p>可选开启，记录文字、图片和文件（最多 10 条，可置顶）；默认只在内存、不落盘，密码类剪贴板标记一律跳过。</p>
       </div>
       <div class="card reveal">
         <div class="glyph"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/><path d="M12 8v8M8 12h8"/></svg></div>
@@ -255,6 +256,11 @@
         <p>ctrl+opt+p 冻结画面、自动识别窗口、放大镜取色；矩形/箭头/画笔/文字/马赛克/序号标注，贴图、文字识别、长截图一气呵成。</p>
       </div>
       <div class="card reveal">
+        <div class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M17 10l4-2.5v9L17 14"/><circle cx="10" cy="12" r="2.5"/></svg></div>
+        <h3>录屏导出</h3>
+        <p>ctrl+opt+r 选区或跟随窗口录制，倒计时开录、暂停、标记点；统一导出面板一次烧进点击涟漪、摄像头画中画与水印，也能导出 GIF。</p>
+      </div>
+      <div class="card reveal">
         <div class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M7 10v4M11 10v4M15 10v4M19 10v4"/></svg></div>
         <h3>键盘模式</h3>
         <p>可配置全局快捷键唤起工具条；键盘模式期间 ←/→ 移动高亮、Enter 执行、Esc 关闭，拦截自动限时摘除。</p>
@@ -265,6 +271,9 @@
       <span class="chip">按应用规则</span>
       <span class="chip">截图 OCR 翻译</span>
       <span class="chip">长截图</span>
+      <span class="chip">点击涟漪</span>
+      <span class="chip">摄像头画中画</span>
+      <span class="chip">导出 GIF</span>
       <span class="chip">贴图</span>
       <span class="chip">开发者工具箱</span>
       <span class="chip">二维码生成</span>
@@ -300,10 +309,14 @@
         <figcaption>截屏 —— 冻结画面、框选、标注、马赛克、长截图，一气呵成</figcaption>
       </figure>
       <figure class="reveal">
+        <img src="popbar-record-export.png" alt="录屏导出面板：裁剪、分辨率、质量、点击涟漪、摄像头画中画、水印">
+        <figcaption>录屏导出面板 —— 裁剪、压缩、点击涟漪、画中画、水印一次导出</figcaption>
+      </figure>
+      <figure class="reveal">
         <img src="popbar-prefs.png" alt="偏好设置窗口">
         <figcaption>偏好设置 —— 工具条排序、应用规则、快捷键、截屏</figcaption>
       </figure>
-      <figure class="reveal">
+      <figure class="wide reveal">
         <img src="popbar-settings.png" alt="AI 翻译设置窗口">
         <figcaption>AI 翻译设置 —— provider 管理与状态</figcaption>
       </figure>
@@ -337,7 +350,7 @@ open https://github.com/davidzhanghui/popbar/releases</code>
 cd popbar
 ./build.sh   <span class="cm"># 编译 → 打包 → 生成 build/PopBar-*.dmg</span></code>
         </div>
-        <p class="note">运行需要 macOS 14+，首次使用按引导授予「辅助功能」权限；截屏 / 截图翻译还需「屏幕录制」权限。</p>
+        <p class="note">运行需要 macOS 15+，首次使用按引导授予「辅助功能」权限；截屏 / 截图翻译 / 录屏还需「屏幕录制」权限，录屏开启麦克风或摄像头时另需对应权限。</p>
       </div>
     </div>
   </div>

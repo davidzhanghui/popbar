@@ -19,8 +19,8 @@
 </p>
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/1857be08-837e-4c7e-bb0b-44d6773929cd" poster="docs/popbar-promo-poster.png" width="720" controls muted></video><br>
-  <a href="docs/popbar-promo-v1.0.mp4">▶ Watch the promo</a> · <sub>52s: select-to-pop · context-aware actions · AI translation panel · privacy masking</sub>
+  <a href="docs/popbar-promo-v2.0.mp4"><img src="docs/popbar-promo-poster.png" width="720" alt="PopBar promo video"></a><br>
+  <a href="docs/popbar-promo-v2.0.mp4">▶ Watch the promo</a> · <sub>69s: select-to-pop · context-aware actions · AI translation · privacy masking · screenshots · screen recording</sub>
 </p>
 
 ## Features
@@ -36,6 +36,7 @@
 - **Screenshot**: WeChat-style capture (`ctrl+opt+p`) — frozen screen, window detection, pixel magnifier and color picker, rectangle/ellipse/arrow/pen/text/mosaic/number annotations, pin to screen, OCR, scrolling capture, optional local history
 - **Menu bar translation entries**: screenshot OCR / input / clipboard — three ways to open the translation panel; screenshots and clipboard images are also scanned for QR codes
 - **Clipboard history**: opt-in; records text/images/files (up to 10 items, pinnable) with per-item submenu — paste / copy only / append / pin; off by default and memory-only, concealed clipboard markers always skipped
+- **Screen Recording**: region / window-following / full-screen capture (`ctrl+opt+r`, macOS 15+) — countdown before capture, H.264/HEVC, MOV/MP4, 30/60fps, system audio + microphone, pause, markers, camera picture-in-picture, click ripples, watermark, one export panel (trim / compress / mix), GIF export
 - **Keyboard control**: configurable global hotkey; in keyboard mode ←/→ moves the highlight, Enter runs, Esc closes; the interceptor tap is auto-removed on timeout
 - **Bilingual UI**: menu bar, floating bar, translation panel and both settings windows switch between Chinese and English instantly
 - **Smart ordering suggestion**: driven by local usage stats (action counts only), suggests pinning a frequent action to the main bar at most once a week
@@ -174,6 +175,57 @@ It needs the Screen Recording permission, shared with Screenshot Translate, and 
 **Pin window**: floats where the region was captured and can be dragged; scroll to zoom 10%–500% (anchored at the cursor);
 double-click or `Esc` closes; `⌘C` copies; right-click menu: Copy / Save / OCR / Opacity (100% 80% 60% 40%) / Close.
 
+## Screen Recording
+
+Menu bar → "Screen Recording" or the global hotkey `ctrl+opt+r`: the same selection overlay as Screenshot.
+Click the **red record button** (or press `Return`) to start; **clicking without dragging records the whole screen**.
+**If the selection lands exactly on a window, PopBar records that window and follows it** — moving, resizing
+and occlusion are all handled automatically.
+By default a 3-second countdown runs before capture starts (0/3/5/10 in Preferences), so you have time to switch
+apps and set the scene; the countdown never makes it into the video.
+The selection gets a red border and a panel shows the mm:ss timer with **pause / marker / hide / stop**;
+the menu bar icon turns into a red timer.
+
+<p align="center">
+  <img src="docs/popbar-record-export.png" width="420" alt="Export panel: trim, resolution, quality, click ripples, camera PiP, watermark">
+</p>
+
+- **Output**: H.264 / MOV / 30fps / 2x native pixels by default, saved to the same folder as screenshots as
+  `PopBar-Rec-yyyyMMdd-HHmmss` (with `-2`, `-3` suffixes on collisions); `SCRecordingOutput` writes to disk as it
+  records, so an interrupted session still keeps what was captured
+- **Stop**: the panel button, the hotkey again, or the menu item — all equivalent; a notification reports length and
+  size and offers **Play / Edit & Export / Export GIF** (a GIF's notification only offers **Play**)
+- **Pause**: `ctrl+opt+shift+r` or the panel button; the border turns orange and the timer stops; segments are
+  stitched into a single file when you stop
+- **Markers**: `ctrl+opt+shift+m` or the panel button; the export panel can jump the trim range to any marker,
+  so you do not have to scrub a timeline
+- **Follow window**: recording a window keeps the whole window in frame no matter how you move or resize it
+- **Click ripples**: clicks are only *recorded* while recording (via a global mouse monitor — **no Accessibility
+  permission needed**; clicks on PopBar's own control panel and camera preview are ignored) and baked into the picture on export, so the ring appears exactly where and when you clicked.
+  Colour and duration live in Preferences
+- **Camera PiP**: turn it on in Preferences (needs Camera permission); a preview window shows the framing while
+  recording, and the camera footage is composited into the export
+- **Watermark**: text or image, four corners, adjustable opacity
+- **Export video**: "Recent Recordings" → "Edit & Export…" opens one panel — trim range, target width
+  (Original/1920/1280/854), quality (High/Medium/Low), MP4/MOV, separate system-audio and microphone volumes,
+  click ripples, camera PiP and watermark, all applied in a single pass. Output is written with the moov atom first,
+  so it plays straight from a web page or chat app
+- **Sharing preset**: Preferences → "Apply demo preset" switches to 1x + MP4 + H.264 + 30fps + 3s countdown in one click
+- **Record GIF**: ⌥-click the record button to record straight to GIF (≤30s, 10fps, ≤800 wide) and the intermediate
+  .mov is deleted; "Recent Recordings" or the notification's "Export GIF" action opens the GIF panel
+  (fps / width / range / size estimate / progress / cancel), optionally copying to the clipboard
+- **Safety nets**: quitting while recording finalises the file synchronously; a max-duration limit is available;
+  the selection is remembered per screen (press `R`)
+
+| Action | Description |
+|---|---|
+| `ctrl+opt+r` | Start recording / stop while recording / cancel the countdown (configurable) |
+| `ctrl+opt+shift+r` | Pause / resume while recording |
+| `ctrl+opt+shift+m` | Drop a marker while recording (configurable) |
+| `Return` | Start recording the current selection in record mode |
+| `R` | Restore the last recording region on this screen |
+| `Esc` | Cancel the selection / cancel the countdown |
+
 ### Settings window
 
 <p align="center">
@@ -201,7 +253,7 @@ tab content (a tab scrolls internally when it exceeds the available screen heigh
 | Tab | Content |
 |---|---|
 | General | Appearance, language, tray icon, panel position, trigger, clipboard fallback, privacy guard, launch at login |
-| Features | Clipboard history, history persistence, OCR result, usage stats, summon hotkey; Screenshot: hotkey, save folder, format, magnifier, history and limit |
+| Features | Clipboard history, history persistence, OCR result, usage stats, summon hotkey; Speech: voice (grouped by language, previewable) and rate; Screenshot: hotkey, save folder, format, magnifier, history and limit |
 | Toolbar | Actions & ordering (drag), per-app rules |
 | About | Version, config folder |
 
@@ -234,6 +286,13 @@ Config lives in `~/Library/Application Support/PopBar/config.json` (auto-created
 
 - **Loaded at launch, auto-reloaded at runtime**: PopBar watches the file; external edits take effect in ~0.3 s, no restart needed
 - If the JSON is broken, the last valid config is kept and the settings window shows the error
+- **Screen recording**: `snap.record` — `fps` (30/60), `scale` (1/2), `codec` (h264/hevc), `container` (mov/mp4),
+  `showsCursor`, `systemAudio`, `microphone`, `microphoneDevice`, `maxDuration`, `gif.*`, `lastRects`;
+  v2 adds `countdown` (0/3/5/10), `windowFollow`, `copyToClipboard`, `click.*` (ripples),
+  `camera.*` (PiP), `watermark.*`, `export.*` (autoExport/quality/width/container/volumes/copyToClipboard)
+  and `hotkeys.recordMarker`
+- **Recording sidecar data** (clicks and markers) lives in `~/Library/Application Support/PopBar/RecordData/<stable-hash>/`
+  and is pruned automatically once the video is gone
 - You can also write it by hand:
 
 ```json
@@ -307,7 +366,7 @@ Config lives in `~/Library/Application Support/PopBar/config.json` (auto-created
 
 The app bundle is deleted and rebuilt cleanly every time; a same-name DMG is overwritten; the DMG staging directory is cleaned up automatically. Open the DMG, drag `PopBar.app` into `Applications`, and launch it from Applications. The app only shows a menu bar icon — no Dock icon. You can also run the local build directly: `open build.noindex/PopBar.app`. The build and staging directories use the `.noindex` suffix so the dev copy stays out of Spotlight app results.
 
-Requirements: macOS 14+; building from source needs the Swift toolchain (Xcode or Command Line Tools).
+Requirements: macOS 15+ (screen recording uses ScreenCaptureKit's `SCRecordingOutput`); building from source needs the Swift toolchain (Xcode or Command Line Tools).
 
 > DMGs downloaded from GitHub Releases are not notarized by Apple, so the first launch reports
 > "damaged and can't be opened". After dragging the app into `Applications`, run once in Terminal:
@@ -321,8 +380,10 @@ On first launch, grant **System Settings → Privacy & Security → Accessibilit
 - Reading selected text
 - Simulating keystrokes (`Cmd+C/X/V`)
 
-Separately, **Screenshot** and **Screenshot Translate (OCR)** need **System Settings → Privacy & Security → Screen Recording**; the app guides you through it on first use.
-On macOS 15+, the system periodically asks you to re-confirm screen-recording access for third-party apps — that's system behaviour every screenshot tool gets.
+Separately, **Screenshot**, **Screenshot Translate (OCR)** and **Screen Recording** need **System Settings → Privacy & Security → Screen Recording**; the app guides you through it on first use.
+On macOS 15+, the system periodically asks you to re-confirm screen-recording access for third-party apps — that's system behaviour every capture tool gets.
+The microphone is off by default; Microphone permission is only needed once you turn it on for recordings.
+Camera permission is likewise only needed if you turn on camera picture-in-picture for recordings.
 
 > The AI translation panel needs network access (outbound HTTPS); every other action works fully offline. Selected text is only sent to a service when you actively use search, online lookup or AI translation.
 
@@ -372,6 +433,15 @@ popbar/
 │   ├── SnapScroll.swift              # Scrolling capture: row-hash stitcher + capture loop
 │   ├── SnapScrollUI.swift            # Scrolling capture dashed frame and control panel
 │   ├── SnapHistory.swift             # Screenshot history storage, pruning and menu
+│   ├── RecordSession.swift           # Recording session: countdown, window follow, SCStream + SCRecordingOutput
+│   ├── RecordUI.swift                # Recording border, countdown and control panel
+│   ├── RecordData.swift              # Sidecar data (clicks/markers/camera), stable-hash store, click monitor
+│   ├── RecordExport.swift            # Export pipeline: trim/resize/compress/mix/ripples/PiP/watermark
+│   ├── RecordExportUI.swift          # Unified export panel
+│   ├── RecordCamera.swift            # Camera PiP: permission, side recording, preview window and layout
+│   ├── RecordHistory.swift           # Recent recordings metadata, pruning and menu
+│   ├── RecordGIF.swift               # GIF export (frame extraction + ImageIO) and its panel
+│   ├── RecordPanelKit.swift          # Shared card / row / section styling for the export panels (matches Preferences)
 │   ├── L10n.swift                    # Chinese/English UI strings
 │   ├── Actions.swift                 # CGEvent keystroke simulation (incl. flagsChanged)
 │   ├── AppActivation.swift           # Accessory-app foreground activation / Esc-closable window
@@ -382,7 +452,7 @@ popbar/
 ├── icon/make_icon.swift              # Icon generator (vector drawing → iconset)
 ├── Resources/AppIcon.icns
 ├── Info.plist                        # LSUIElement / version / permission usage strings
-├── docs/                             # README screenshots
+├── docs/                             # Landing page (index.html), README screenshots and promo video
 ├── build.sh                          # App/DMG packaging
 ├── restart.sh                        # Kill old process → build → launch dev copy
 ├── build/                            # Build artifacts & DMG (not committed)
@@ -407,7 +477,7 @@ swift icon/make_icon.swift icon/PopBar.iconset icon/preview.png
 iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 
 # Regenerate the bar screenshots used in the README (light + dark)
-swiftc -O -target $(uname -m)-apple-macos14.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
+swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
 ./build/shot docs/popbar-bar-light.png docs/popbar-bar-dark.png
 
 # Screenshot-feature showcase image (offline composite over docs/index.html, no Screen Recording needed)

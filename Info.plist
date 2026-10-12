@@ -13,13 +13,17 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>2.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>PopBar uses automation to read the browser's current URL for clipping and to create Calendar events.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>PopBar records microphone audio into screen recordings when you turn on the microphone option.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>PopBar records a camera picture-in-picture into screen recordings when you turn on the camera option.</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>15.0</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIconName</key>

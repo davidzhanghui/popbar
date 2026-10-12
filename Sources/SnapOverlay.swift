@@ -3,7 +3,7 @@ import Cocoa
 final class SnapOverlayWindow: NSPanel {
     let overlayView: SnapOverlayView
 
-    init(shot: SnapDisplayShot, windowRects: [CGRect]) {
+    init(shot: SnapDisplayShot, windowRects: [(rect: CGRect, id: CGWindowID)]) {
         overlayView = SnapOverlayView(shot: shot, windowRects: windowRects)
         super.init(contentRect: shot.screen.frame, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
@@ -48,6 +48,7 @@ final class SnapTextView: NSTextView {
 final class SnapOverlayView: NSView, NSTextViewDelegate {
     let shot: SnapDisplayShot
     private let windowRects: [CGRect]          // 本屏局部坐标,前→后
+    private var windowIDs: [CGWindowID] = []   // 与 windowRects 一一对应
     private(set) var selection: CGRect?
     private var hoverRect: CGRect?
     private var mouse = CGPoint.zero
@@ -72,7 +73,7 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
     private static let accent = NSColor(srgbRed: 0x1A / 255, green: 0xAD / 255, blue: 0x19 / 255, alpha: 1)
     private static let handleSize: CGFloat = 7
 
-    init(shot: SnapDisplayShot, windowRects: [CGRect]) {
+    init(shot: SnapDisplayShot, windowRects: [(rect: CGRect, id: CGWindowID)]) {
         self.shot = shot
         let cfg = ConfigStore.shared.config.snap
         let tier = Int(cfg.lastWidth)
@@ -80,10 +81,16 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
                           tier: (0...2).contains(tier) ? tier : 1)
         let origin = shot.screen.frame.origin
         let local = CGRect(origin: .zero, size: shot.screen.frame.size)
-        self.windowRects = windowRects.compactMap {
-            let r = $0.offsetBy(dx: -origin.x, dy: -origin.y).intersection(local)
-            return r.isNull || r.isEmpty ? nil : r
+        var rects: [CGRect] = []
+        var ids: [CGWindowID] = []
+        for w in windowRects {
+            let r = w.rect.offsetBy(dx: -origin.x, dy: -origin.y).intersection(local)
+            guard !r.isNull, !r.isEmpty else { continue }
+            rects.append(r)
+            ids.append(w.id)
         }
+        self.windowRects = rects
+        windowIDs = ids
         super.init(frame: local)
         addTrackingArea(NSTrackingArea(rect: .zero,
             options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
@@ -202,7 +209,16 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func drawSizeLabel(_ r: CGRect) {
-        let text = "\(Int((r.width * shot.scale).rounded())) × \(Int((r.height * shot.scale).rounded()))"
+        let w = Int((r.width * shot.scale).rounded())
+        let h = Int((r.height * shot.scale).rounded())
+        var text = "\(w) × \(h)"
+        // 录屏模式追加体积预估:录之前就知道会录出多大
+        if SnapController.shared.mode == .record {
+            let cfg = ConfigStore.shared.config.snap.record
+            let perSecond = RecordUtil.estimatedBytesPerSecond(width: w, height: h,
+                                                              fps: cfg.fps, codec: cfg.codec)
+            text += " · ≈ " + RecordUtil.byteText(Int64((perSecond * 60).rounded())) + L10n.t("/分", "/min")
+        }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.white,
@@ -289,13 +305,13 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
         if let sel = selection {
             if isLocked {
                 if sel.contains(mouse), event.clickCount >= 2 {
-                    SnapController.shared.complete(from: self, action: .copy)
+                    SnapController.shared.complete(from: self, action: SnapController.shared.defaultAction)
                 }
                 return
             }
             guard let h = SnapGeometry.hitHandle(mouse, rect: sel) else { return }
             if h == .inside {
-                if event.clickCount >= 2 { SnapController.shared.complete(from: self, action: .copy); return }
+                if event.clickCount >= 2 { SnapController.shared.complete(from: self, action: SnapController.shared.defaultAction); return }
                 drag = .move(mouse)
             } else {
                 drag = .resize(h, sel)
@@ -393,7 +409,9 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         switch event.keyCode {
         case 53: SnapController.shared.cancel()
-        case 36, 76: target().commit(.copy)
+        case 36, 76: target().commit(SnapController.shared.defaultAction)
+        case 15 where mods.isEmpty && SnapController.shared.mode == .record:
+            restoreLastRecordRect()     // R:恢复上次录屏选区(仅录屏模式)
         case 123, 124, 125, 126:
             let step: CGFloat = mods.contains(.shift) ? 10 : 1
             let d: CGVector
@@ -414,6 +432,18 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
     private func commit(_ action: SnapAction) {
         guard selection != nil else { return }
         SnapController.shared.complete(from: self, action: action)
+    }
+
+    /// R 键:回到上次在这块屏幕上录过的区域(M2 FR-16)
+    private func restoreLastRecordRect() {
+        guard !isLocked, let global = RecordRectMemory.rect(for: shot.screen) else { return }
+        let local = global.offsetBy(dx: -shot.screen.frame.minX, dy: -shot.screen.frame.minY)
+        let clamped = local.intersection(bounds)
+        guard !clamped.isNull, clamped.width >= 2, clamped.height >= 2 else { return }
+        selection = clamped
+        hoverRect = nil
+        showToolbar()
+        needsDisplay = true
     }
 
     private func nudge(_ d: CGVector) {
@@ -440,6 +470,21 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
     private func toolbarItems() -> [SnapToolbarItem] {
         let c = SnapController.shared
         func act(_ a: SnapAction) -> () -> Void { { [weak self] in self.map { c.complete(from: $0, action: a) } } }
+        // 录屏模式:不提供标注/长截图/贴图等截屏动作,只留「录制 + 取消」
+        if c.mode == .record {
+            return [
+                .button(id: "record", symbol: "record.circle",
+                        tooltip: L10n.t("录屏(⌥ 直接录 GIF)", "Record (⌥ for GIF)"), tint: .systemRed,
+                        action: { [weak self] in
+                            guard let self else { return }
+                            let gif = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+                            c.beginRecord(from: self, gif: gif)
+                        }),
+                .separator,
+                .button(id: "cancel", symbol: "xmark", tooltip: L10n.t("取消", "Cancel"), tint: .systemRed,
+                        action: { c.cancel() }),
+            ]
+        }
         let toolInfo: [SnapTool: (String, String, NSColor)] = [
             .rect: ("rectangle", L10n.t("矩形", "Rectangle"), .systemBlue),
             .ellipse: ("circle", L10n.t("椭圆", "Ellipse"), .systemIndigo),
@@ -467,6 +512,14 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
             .button(id: "scroll", symbol: "arrow.up.and.down.text.horizontal",
                     tooltip: L10n.t("长截图", "Scrolling Capture"), tint: .systemCyan,
                     action: { [weak self] in self.map { c.beginScroll(from: $0) } }),
+            // 录屏:⌥+点击 = 直接录成 GIF
+            .button(id: "record", symbol: "record.circle",
+                    tooltip: L10n.t("录屏(⌥ 直接录 GIF)", "Record (⌥ for GIF)"), tint: .systemRed,
+                    action: { [weak self] in
+                        guard let self else { return }
+                        let gif = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+                        c.beginRecord(from: self, gif: gif)
+                    }),
             .button(id: "pin", symbol: "pin", tooltip: L10n.t("贴图", "Pin"), tint: .systemMint, action: act(.pin)),
             .button(id: "ocr", symbol: "text.viewfinder", tooltip: L10n.t("文字识别", "OCR"), tint: .systemGreen, action: act(.ocr)),
             .button(id: "save", symbol: "square.and.arrow.down", tooltip: L10n.t("保存", "Save"), tint: .systemBlue, action: act(.save)),
@@ -523,7 +576,25 @@ final class SnapOverlayView: NSView, NSTextViewDelegate {
         toolbar?.setSelected(currentTool?.id)
         toolbar?.setEnabled("undo", annotations.canUndo)
         toolbar?.setEnabled("redo", annotations.canRedo)
-        toolbar?.setEnabled("scroll", currentTool == nil && annotations.items.isEmpty)
+        /// 长截图与录屏都要求:无标注工具在手上、无标注内容、选区够大
+        let plain = currentTool == nil && annotations.items.isEmpty && selectionIsRecordable
+        toolbar?.setEnabled("scroll", plain)
+        toolbar?.setEnabled("record", plain)
+    }
+
+    /// 选区至少 2×2 pt,否则录制/长截图按钮禁用
+    private var selectionIsRecordable: Bool {
+        guard let sel = selection else { return false }
+        return sel.width >= 2 && sel.height >= 2
+    }
+
+    /// 选区正好等于某个窗口时,返回它的 windowID —— 用来做「跟随窗口录制」
+    func windowID(matching selection: CGRect) -> CGWindowID? {
+        for (i, r) in windowRects.enumerated()
+        where SnapGeometry.matchesWindow(selection, window: r) {
+            return i < windowIDs.count ? windowIDs[i] : nil
+        }
+        return nil
     }
 
     private func undo() {

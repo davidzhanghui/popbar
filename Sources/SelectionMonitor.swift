@@ -60,6 +60,31 @@ final class SelectionMonitor {
             DispatchQueue.main.async { SnapController.shared.start() }
             return
         }
+        if type == .keyDown, let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.record),
+           Hotkey.matches(event, spec), !SnapController.shared.isActive {
+            // 录制中按下 = 停止,而不是再弹一次选区
+            Task { @MainActor in AppDelegate.recordToggle() }
+            return
+        }
+        if type == .keyDown, let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.recordPause),
+           Hotkey.matches(event, spec) {
+            Task { @MainActor in
+                guard RecordSession.shared.isRecording else { return }
+                RecordSession.shared.togglePause()
+            }
+            return
+        }
+        if type == .keyDown, let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.recordMarker),
+           Hotkey.matches(event, spec) {
+            Task { @MainActor in RecordSession.shared.addMarker() }
+            return
+        }
+        // 倒计时里的 Esc = 取消(倒计时面板不接收键盘,只能在这里拦)
+        if type == .keyDown, event.getIntegerValueField(.keyboardEventKeycode) == 53,
+           MainActor.assumeIsolated({ RecordSession.shared.isCountingDown }) {
+            Task { @MainActor in RecordSession.shared.cancelCountdown() }
+            return
+        }
         if SnapController.shared.isScrolling {
             if type == .keyDown {
                 switch event.getIntegerValueField(.keyboardEventKeycode) {
@@ -87,7 +112,7 @@ final class SelectionMonitor {
             didDrag = false
             clickState = event.getIntegerValueField(.mouseEventClickState)
             if !downInsideBar && !downInsidePanel && FloatingBarController.shared.isVisible {
-                FloatingBarController.shared.hide()
+                FloatingBarController.shared.hideUnlessSpeaking()
             }
 
         case .leftMouseDragged:
@@ -147,7 +172,7 @@ final class SelectionMonitor {
                 if !translation.isPinned { translation.close() }
             }
             if FloatingBarController.shared.isVisible {
-                FloatingBarController.shared.hide()
+                FloatingBarController.shared.hideUnlessSpeaking()
             }
 
         case .scrollWheel:
@@ -157,7 +182,7 @@ final class SelectionMonitor {
             if translation.isVisible, translation.frame.contains(point) { return }
             if SnapPinWindow.contains(point) || Self.insideSettings(point) { return }
             if FloatingBarController.shared.isVisible {
-                FloatingBarController.shared.hide()
+                FloatingBarController.shared.hideUnlessSpeaking()
             }
 
         case .keyDown:
@@ -186,6 +211,13 @@ final class SelectionMonitor {
             if FloatingBarController.shared.isVisible,
                FloatingBarController.shared.keyboardMode { return }
             if FloatingBarController.shared.isVisible {
+                // 朗读中:Esc 停止朗读并收条,其他按键不打断朗读
+                if FloatingBarController.shared.isSpeaking {
+                    if Int(code) == 53 {
+                        DispatchQueue.main.async { FloatingBarController.shared.hide() }
+                    }
+                    return
+                }
                 FloatingBarController.shared.hide()
             }
 

@@ -1,4 +1,5 @@
 import Cocoa
+import AVFoundation
 import ServiceManagement
 
 /// 「偏好设置」窗口:分组列表样式,每个改动立即写入 config.json 并生效。
@@ -11,6 +12,17 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
     private var switches: [NSSwitch] = []
     private var textFields: [NSTextField] = []
     private var textFieldKeys: [ObjectIdentifier: String] = [:]
+    private var micDevicePopup: NSPopUpButton?
+    private let micMonitor = MicLevelMonitor()
+    private var micLevelMeter: WaveBarsView?
+    private var micTestButton: NSButton?
+    private var speakVoicePopup: NSPopUpButton?
+    private var speakRateSlider: NSSlider?
+    private var speakRateLabel: NSTextField?
+    private let previewSpeech = AVSpeechSynthesizer()
+    private var cameraDevicePopup: NSPopUpButton?
+    private var watermarkOpacitySlider: NSSlider?
+    private var watermarkOpacityLabel: NSTextField?
 
     private let lightTheme = PanelTheme(dark: false)
     private let darkTheme = PanelTheme(dark: true)
@@ -33,22 +45,37 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
     var isVisible: Bool { window?.isVisible ?? false }
     var frame: CGRect { window?.frame ?? .zero }
 
+    /// 「AI 翻译」在 tab 栏里的位置(通用/功能/AI 翻译/工具条/关于)
+    static let aiTabIndex = 2
+    /// 窗口宽高固定,与旧的「AI 翻译设置」窗口一致
+    static let contentWidth: CGFloat = 780
+
     // MARK: - 显示
 
-    func show() {
+    /// tab 传 nil 时保持上次停留的 tab;显式传入则切到该 tab
+    func show(tab: Int? = nil) {
+        if let tab { tabIndex = tab }
         if window == nil { buildWindow() }
         rebuild()          // 语言切换后重建界面,文字即时生效
         syncControls()
+        SettingsWindowController.shared.windowShown()
         NSApp.activateForUI()
         window?.center()
         window?.makeKeyAndOrderFront(nil)
     }
 
     private func buildWindow() {
-        let w = EscClosableWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
+        let w = EscClosableWindow(contentRect: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 560),
                          styleMask: [.titled, .closable, .miniaturizable],
                          backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
+        // AI 翻译 tab 的未保存草稿关闭确认由它处理
+        w.delegate = SettingsWindowController.shared
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+                                               object: w, queue: .main) { [weak self] _ in
+            self?.stopMicTest()   // 测试中的采集随窗口关闭停止
+            self?.previewSpeech.stopSpeaking(at: .immediate)
+        }
         window = w
     }
 
@@ -56,7 +83,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
 
     private func rebuild() {
         guard let w = window else { return }
-        w.title = L10n.t("偏好设置", "Preferences")
+        w.title = L10n.t("设置", "Settings")
+        stopMicTest()   // 重建界面时控件对象换新,顺手把测试停掉
         segs.removeAll()
         switches.removeAll()
         segKeys.removeAll()
@@ -80,6 +108,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         let tabs: [(String, [NSView])] = [
             (L10n.t("通用", "General"), generalTab()),
             (L10n.t("功能", "Features"), featuresTab()),
+            (L10n.t("AI 翻译", "AI"), [SettingsWindowController.shared.buildContent(in: w)]),
             (L10n.t("工具条", "Toolbar"), toolbarTab()),
             (L10n.t("关于", "About"), aboutTab()),
         ]
@@ -119,10 +148,10 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             tabHeights.append(contentH)
         }
 
-        root.widthAnchor.constraint(equalToConstant: 560).isActive = true
+        root.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
         w.contentView = root
         root.layoutSubtreeIfNeeded()
-        applyWindowHeight()
+        applyFixedSize()
     }
 
     // MARK: - 各 tab 内容
@@ -191,6 +220,142 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         dirButton.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         dirButton.target = self
         dirButton.action = #selector(chooseSnapDir(_:))
+
+        let recordHotkeyField = makeHotkeyField(placeholder: "ctrl+opt+r", key: "hotkeys.record",
+                                                value: ConfigStore.shared.config.hotkeys.record)
+        let recordPauseField = makeHotkeyField(placeholder: "ctrl+opt+shift+r", key: "hotkeys.recordPause",
+                                               value: ConfigStore.shared.config.hotkeys.recordPause)
+        let maxDurationField = NSTextField()
+        maxDurationField.placeholderString = "0"
+        maxDurationField.stringValue = String(ConfigStore.shared.config.snap.record.maxDuration)
+        maxDurationField.alignment = .right
+        maxDurationField.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        maxDurationField.delegate = self
+        textFieldKeys[ObjectIdentifier(maxDurationField)] = "snap.record.maxDuration"
+        textFields.append(maxDurationField)
+
+        // 麦克风设备:第一项是「系统默认」,后面是 DiscoverySession 列出的输入设备
+        let micPop = NSPopUpButton()
+        micPop.addItem(withTitle: L10n.t("系统默认", "System Default"))
+        micPop.menu?.items.first?.representedObject = ""
+        for d in MicPermission.devices() {
+            micPop.addItem(withTitle: d.name)
+            micPop.menu?.items.last?.representedObject = d.id
+        }
+        micPop.font = .systemFont(ofSize: 12)
+        micPop.target = self
+        micPop.action = #selector(micDeviceChanged(_:))
+        micPop.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        micDevicePopup = micPop
+
+        // 麦克风测试:点「测试」后按所选设备采集,电平条实时显示输入音量
+        let meter = WaveBarsView()
+        meter.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        meter.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        micLevelMeter = meter
+        let testButton = ClosureButton(title: L10n.t("测试", "Test")) { [weak self] in
+            self?.toggleMicTest()
+        }
+        testButton.bezelStyle = .rounded
+        testButton.controlSize = .small
+        micTestButton = testButton
+        let micTest = NSStackView(views: [meter, testButton])
+        micTest.spacing = 8
+        micTest.alignment = .centerY
+
+        // MARK: 录屏 v2:倒计时 / 标记 / 涟漪 / 摄像头 / 水印 / 导出
+        let markerHotkeyField = makeHotkeyField(placeholder: "ctrl+opt+shift+m",
+                                                key: "hotkeys.recordMarker",
+                                                value: ConfigStore.shared.config.hotkeys.recordMarker)
+
+        // 摄像头设备:第一项「系统默认」
+        let cameraPop = NSPopUpButton()
+        cameraPop.addItem(withTitle: L10n.t("系统默认", "System Default"))
+        cameraPop.menu?.items.first?.representedObject = ""
+        for d in CameraPermission.devices() {
+            cameraPop.addItem(withTitle: d.name)
+            cameraPop.menu?.items.last?.representedObject = d.id
+        }
+        cameraPop.font = .systemFont(ofSize: 12)
+        cameraPop.target = self
+        cameraPop.action = #selector(cameraDeviceChanged(_:))
+        cameraPop.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        cameraDevicePopup = cameraPop
+
+        // 水印文字
+        let wmField = NSTextField()
+        wmField.placeholderString = "PopBar"
+        wmField.stringValue = ConfigStore.shared.config.snap.record.watermark.text
+        wmField.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        wmField.delegate = self
+        textFieldKeys[ObjectIdentifier(wmField)] = "snap.record.watermark.text"
+        textFields.append(wmField)
+
+        // 水印不透明度
+        let wmOpacity = NSSlider(value: ConfigStore.shared.config.snap.record.watermark.opacity,
+                                 minValue: 0.05, maxValue: 1,
+                                 target: self, action: #selector(watermarkOpacityChanged(_:)))
+        wmOpacity.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        watermarkOpacitySlider = wmOpacity
+        let wmOpacityLabel = NSTextField(labelWithString:
+            "\(Int((ConfigStore.shared.config.snap.record.watermark.opacity * 100).rounded()))%")
+        wmOpacityLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        wmOpacityLabel.textColor = .secondaryLabelColor
+        watermarkOpacityLabel = wmOpacityLabel
+
+        // 一键套用「产品演示」参数:贴近 1080p、体积可控、兼容性最好
+        let demoButton = ClosureButton(title: L10n.t("套用产品演示参数", "Apply demo preset")) { [weak self] in
+            self?.applyDemoPreset()
+        }
+        demoButton.bezelStyle = .rounded
+        demoButton.controlSize = .small
+
+        // 朗读声音:第一项「自动」,后面按语言分组列出已安装语音
+        let voicePop = NSPopUpButton()
+        voicePop.addItem(withTitle: L10n.t("自动(跟随语言)", "Auto (follow language)"))
+        voicePop.menu?.items.first?.representedObject = ""
+        var lastLang = ""
+        for v in AVSpeechSynthesisVoice.speechVoices()
+            .sorted(by: { ($0.language, $0.name) < ($1.language, $1.name) }) {
+            if v.language != lastLang {
+                lastLang = v.language
+                let header = NSMenuItem(
+                    title: Locale.current.localizedString(
+                        forIdentifier: v.language.replacingOccurrences(of: "-", with: "_")) ?? v.language,
+                    action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                voicePop.menu?.addItem(header)
+            }
+            var title = v.name
+            if v.quality == .enhanced { title += " · " + L10n.t("增强", "Enhanced") }
+            else if v.quality == .premium { title += " · " + L10n.t("极致", "Premium") }
+            voicePop.addItem(withTitle: title)
+            voicePop.menu?.items.last?.representedObject = v.identifier
+        }
+        voicePop.font = .systemFont(ofSize: 12)
+        voicePop.target = self
+        voicePop.action = #selector(speakVoiceChanged(_:))
+        voicePop.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        speakVoicePopup = voicePop
+
+        let previewButton = ClosureButton(title: L10n.t("试听", "Preview")) { [weak self] in
+            self?.previewVoice()
+        }
+        previewButton.bezelStyle = .rounded
+        previewButton.controlSize = .small
+
+        let rateSlider = NSSlider(value: ConfigStore.shared.config.speak.rate, minValue: 0.5, maxValue: 2,
+                                  target: self, action: #selector(speakRateChanged(_:)))
+        rateSlider.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        speakRateSlider = rateSlider
+        let rateLabel = NSTextField(labelWithString: String(format: "%.2f×", ConfigStore.shared.config.speak.rate))
+        rateLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        rateLabel.textColor = .secondaryLabelColor
+        speakRateLabel = rateLabel
+        let rateStack = NSStackView(views: [rateSlider, rateLabel])
+        rateStack.spacing = 6
+        rateStack.alignment = .centerY
+
         return [sectionHeader(L10n.t("功能", "Features")), card([
             row(L10n.t("剪贴板历史", "Clipboard History"),
                 L10n.t("记录最近剪贴板,菜单栏可选粘贴;跳过密码类标记",
@@ -221,6 +386,14 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 L10n.t("格式 ctrl+opt+space;键盘选中后按它呼出工具条",
                        "Format: ctrl+opt+space; press after selecting via keyboard"),
                 hotkeyField),
+        ]), sectionHeader(L10n.t("朗读", "Speech")), card([
+            row(L10n.t("朗读声音", "Voice"),
+                L10n.t("划词朗读与翻译面板共用;「自动」跟随文本语言",
+                       "Shared by the bar and translation panel; Auto follows the text language"),
+                NSStackView(views: [voicePop, previewButton])),
+            row(L10n.t("语速", "Rate"),
+                L10n.t("1.0 = 系统默认语速", "1.0 = system default rate"),
+                rateStack),
         ]), sectionHeader(L10n.t("截屏", "Screenshot")), card([
             row(L10n.t("截屏快捷键", "Screenshot Hotkey"),
                 L10n.t("格式 ctrl+opt+p;全局唤起截屏", "Format: ctrl+opt+p; starts a screenshot anywhere"),
@@ -241,7 +414,154 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             row(L10n.t("保留数量", "History Limit"),
                 L10n.t("1–200,超出自动删除最旧的", "1–200; oldest are removed beyond this"),
                 limitField),
+        ]), sectionHeader(L10n.t("录屏", "Screen Recording")), card([
+            row(L10n.t("录屏快捷键", "Record Hotkey"),
+                L10n.t("格式 ctrl+opt+r;录制中再按一次即停止", "Format: ctrl+opt+r; press again while recording to stop"),
+                recordHotkeyField),
+            row(L10n.t("暂停快捷键", "Pause Hotkey"),
+                L10n.t("格式 ctrl+opt+shift+r;录制中暂停/继续", "Format: ctrl+opt+shift+r; pause/resume while recording"),
+                recordPauseField),
+            row(L10n.t("帧率", "Frame Rate"),
+                L10n.t("60fps 更流畅,文件与占用也更大", "60fps is smoother but larger and heavier"),
+                seg("recordFps", "30", "60", values: ["30", "60"])),
+            row(L10n.t("分辨率", "Resolution"),
+                L10n.t("1x 逻辑像素,2x 原生像素", "1x logical pixels, 2x native pixels"),
+                seg("recordScale", "1x", "2x", values: ["1", "2"])),
+            row(L10n.t("编码", "Codec"),
+                L10n.t("H.264 兼容性最好;HEVC 文件更小", "H.264 is most compatible; HEVC is smaller"),
+                seg("recordCodec", "H.264", "HEVC", values: ["h264", "hevc"])),
+            row(L10n.t("容器", "Container"),
+                L10n.t("MOV 与 MP4 均可被 QuickTime 直接播放", "Both MOV and MP4 play directly in QuickTime"),
+                seg("recordContainer", "MOV", "MP4", values: ["mov", "mp4"])),
+            row(L10n.t("显示光标", "Show Cursor"),
+                L10n.t("录制画面里保留鼠标指针", "Keep the mouse pointer in the recording"),
+                toggle("recordCursor")),
+            row(L10n.t("系统声音", "System Audio"),
+                L10n.t("录制电脑内部声音;PopBar 自己的声音始终排除",
+                       "Record internal audio; PopBar's own audio is always excluded"),
+                toggle("recordSystemAudio")),
+            row(L10n.t("麦克风", "Microphone"),
+                L10n.t("默认关闭;开启需要「麦克风」权限", "Off by default; needs Microphone permission"),
+                toggle("recordMic")),
+            row(L10n.t("麦克风设备", "Microphone Device"),
+                L10n.t("录制时使用的输入设备", "Input device used for recordings"),
+                micPop),
+            row(L10n.t("麦克风测试", "Mic Test"),
+                L10n.t("对着麦克风说话,电平条实时显示输入音量",
+                       "Speak to see live input level"),
+                micTest),
+            row(L10n.t("最长时长", "Max Duration"),
+                L10n.t("秒,0 = 不限;到时自动停止并保存", "Seconds, 0 = unlimited; stops and saves automatically"),
+                maxDurationField),
+            row(L10n.t("GIF 帧率", "GIF FPS"),
+                L10n.t("导出 GIF 时的帧率", "Frame rate when exporting GIF"),
+                seg("gifFps", "5", "10", "15", values: ["5", "10", "15"])),
+            row(L10n.t("GIF 宽度", "GIF Width"),
+                L10n.t("宽度越小体积越小;「原始」不缩放", "Smaller width = smaller file; Original keeps size"),
+                seg("gifWidth", L10n.t("原始", "Original"), "800", "480", values: ["0", "800", "480"])),
+            row(L10n.t("GIF 到剪贴板", "Copy GIF"),
+                L10n.t("导出后自动复制 GIF 文件,可直接粘贴", "Copy the GIF file after export, ready to paste"),
+                toggle("gifClipboard")),
+        ]), sectionHeader(L10n.t("录屏:开录与跟随", "Recording: Start & Follow")), card([
+            row(L10n.t("倒计时", "Countdown"),
+                L10n.t("确认选区后先倒数几秒再开始录,留出切换窗口的时间",
+                       "Wait a few seconds before capturing, so you can switch to the app"),
+                seg("recordCountdown", "0", "3", "5", "10", values: ["0", "3", "5", "10"])),
+            row(L10n.t("跟随窗口", "Follow Window"),
+                L10n.t("选区正好选中一个窗口时,窗口移动/缩放自动跟随",
+                       "When the selection is exactly a window, follow it as it moves and resizes"),
+                toggle("recordWindowFollow")),
+            row(L10n.t("标记快捷键", "Marker Hotkey"),
+                L10n.t("格式 ctrl+opt+shift+m;录制中打标记点,导出时可一键跳到该时刻",
+                       "Format: ctrl+opt+shift+m; drop a marker while recording, jump to it when exporting"),
+                markerHotkeyField),
+            row(L10n.t("产品演示参数", "Demo Preset"),
+                L10n.t("一键改成 1x + MP4 + H.264 + 30fps + 倒计时 3 秒",
+                       "Set 1x + MP4 + H.264 + 30fps + 3s countdown in one click"),
+                demoButton),
+        ]), sectionHeader(L10n.t("录屏:点击涟漪", "Recording: Click Ripple")), card([
+            row(L10n.t("点击涟漪", "Click Ripple"),
+                L10n.t("录制时记录每次点击,导出时在点击处画扩散圆环",
+                       "Record every click and draw a ripple at that spot when exporting"),
+                toggle("recordClick")),
+            row(L10n.t("涟漪时长", "Ripple Duration"),
+                L10n.t("单次圆环扩散的持续时间", "How long one ripple takes to expand"),
+                seg("recordClickDuration", L10n.t("短", "Short"), L10n.t("标准", "Normal"), L10n.t("长", "Long"),
+                    values: ["0.3", "0.6", "1.0"])),
+            row(L10n.t("涟漪颜色", "Ripple Color"),
+                L10n.t("深色与浅色画面上都看得清的颜色", "Pick one that stands out on both light and dark screens"),
+                seg("recordClickColor", L10n.t("红", "Red"), L10n.t("蓝", "Blue"), L10n.t("黄", "Yellow"),
+                    values: ["#FF3B30", "#0A84FF", "#FFD60A"])),
+        ]), sectionHeader(L10n.t("录屏:摄像头画中画", "Recording: Camera PiP")), card([
+            row(L10n.t("摄像头", "Camera"),
+                L10n.t("开启后需要「摄像头」权限;录制时显示预览窗,导出时叠加到成品上",
+                       "Needs Camera permission; shows a preview while recording and is composited on export"),
+                toggle("recordCamera")),
+            row(L10n.t("摄像头设备", "Camera Device"),
+                L10n.t("录制时使用的摄像头", "Camera used for recordings"),
+                cameraPop),
+            row(L10n.t("位置", "Position"),
+                L10n.t("预览窗与成品里画中画的位置一致", "The preview matches where it lands in the exported video"),
+                seg("recordCameraPos", L10n.t("右下", "BR"), L10n.t("左下", "BL"),
+                    L10n.t("右上", "TR"), L10n.t("左上", "TL"),
+                    values: ["bottomRight", "bottomLeft", "topRight", "topLeft"])),
+            row(L10n.t("尺寸", "Size"),
+                L10n.t("预览窗宽度,高度按摄像头画幅比", "Preview width; height follows the camera aspect"),
+                seg("recordCameraSize", "120", "160", "220", values: ["120", "160", "220"])),
+            row(L10n.t("镜像", "Mirror"),
+                L10n.t("像照镜子一样左右翻转,自拍时更自然", "Flip horizontally like a mirror; natural for self-view"),
+                toggle("recordCameraMirror")),
+        ]), sectionHeader(L10n.t("录屏:水印", "Recording: Watermark")), card([
+            row(L10n.t("水印", "Watermark"),
+                L10n.t("导出时在画面上打一个标识", "Stamp a mark onto the exported video"),
+                toggle("recordWatermark")),
+            row(L10n.t("文字", "Text"),
+                L10n.t("成品上显示的文字", "Text shown on the exported video"),
+                wmField),
+            row(L10n.t("位置", "Position"),
+                L10n.t("贴在哪一个角", "Which corner to place it in"),
+                seg("recordWatermarkPos", L10n.t("右上", "TR"), L10n.t("左上", "TL"),
+                    L10n.t("右下", "BR"), L10n.t("左下", "BL"),
+                    values: ["topRight", "topLeft", "bottomRight", "bottomLeft"])),
+            row(L10n.t("不透明度", "Opacity"),
+                L10n.t("越低越不打扰画面", "Lower is less intrusive"),
+                NSStackView(views: [wmOpacity, wmOpacityLabel])),
+        ]), sectionHeader(L10n.t("录屏:导出与分发", "Recording: Export")), card([
+            row(L10n.t("录完自动导出", "Auto Export"),
+                L10n.t("录制结束后直接按下面的参数出成品,省一步手工操作",
+                       "Export with the settings below right after recording stops"),
+                toggle("recordAutoExport")),
+            row(L10n.t("目标宽度", "Target Width"),
+                L10n.t("越小越省体积;「原始」不缩放", "Smaller is lighter; Original keeps the recorded size"),
+                seg("recordExportWidth", L10n.t("原始", "Original"), "1920", "1280", "854",
+                    values: ["0", "1920", "1280", "854"])),
+            row(L10n.t("质量", "Quality"),
+                L10n.t("高 = 保留原画质;中/低 明显更小", "High keeps the original quality; Medium/Low are much smaller"),
+                seg("recordExportQuality", L10n.t("高", "High"), L10n.t("中", "Medium"), L10n.t("低", "Low"),
+                    values: ["high", "medium", "low"])),
+            row(L10n.t("容器", "Container"),
+                L10n.t("MP4 最通用,微信/网页/剪辑软件都吃", "MP4 is the most compatible for sharing and editing"),
+                seg("recordExportContainer", "MP4", "MOV", values: ["mp4", "mov"])),
+            row(L10n.t("录完复制到剪贴板", "Copy on Finish"),
+                L10n.t("录制完成后直接 ⌘V 就能把文件发给别人",
+                       "Press ⌘V right after recording to paste the file"),
+                toggle("recordCopyClipboard")),
+            row(L10n.t("导出后复制到剪贴板", "Copy After Export"),
+                L10n.t("导出成品后自动复制文件", "Copy the exported file automatically"),
+                toggle("recordExportClipboard")),
         ])]
+    }
+
+    /// 快捷键输入框:提交即写配置
+    private func makeHotkeyField(placeholder: String, key: String, value: String) -> NSTextField {
+        let f = NSTextField()
+        f.placeholderString = placeholder
+        f.stringValue = value
+        f.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        f.delegate = self
+        textFieldKeys[ObjectIdentifier(f)] = key
+        textFields.append(f)
+        return f
     }
 
     @objc private func chooseSnapDir(_ sender: NSButton) {
@@ -322,7 +642,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             doc.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             doc.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
             doc.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            doc.widthAnchor.constraint(equalToConstant: 560),
+            doc.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             doc.heightAnchor.constraint(equalToConstant: contentH),
             main.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: 20),
             main.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -20),
@@ -332,25 +652,18 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         return (scroll, contentH)
     }
 
-    /// 高度取「当前 tab 内容高度」与「屏幕可用高度 - 40」中较小者;切换 tab 时顶部位置不动
-    private func applyWindowHeight() {
-        guard let w = window, tabHeights.indices.contains(tabIndex) else { return }
-        // tab 栏与上下留白不参与滚动
+    /// 窗口宽高固定:与旧的「AI 翻译设置」窗口一致,多出的只有顶部 tab 栏;
+    /// 其他 tab 内容更高时在区域内滚动
+    private func applyFixedSize() {
+        guard let w = window, tabHeights.indices.contains(Self.aiTabIndex) else { return }
         let chrome = 14 + (tabBarControl?.frame.height ?? 24) + 12
-        let maxH = (NSScreen.main?.visibleFrame.height ?? 800) - 40
-        let contentH = min(max(tabHeights[tabIndex] + chrome, 240), maxH)
-        // setFrame 用的是含标题栏的窗口尺寸,所以要换算一次
-        let frameH = w.frameRect(forContentRect: NSRect(x: 0, y: 0, width: 560, height: contentH)).height
-        var f = w.frame
-        f.origin.y = f.maxY - frameH
-        f.size.height = frameH
-        w.setFrame(f, display: true, animate: false)
+        w.setContentSize(NSSize(width: Self.contentWidth,
+                                height: chrome + tabHeights[Self.aiTabIndex]))
     }
 
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
         tabIndex = max(0, min(sender.selectedSegment, tabScrolls.count - 1))
         for (i, s) in tabScrolls.enumerated() { s.isHidden = i != tabIndex }
-        applyWindowHeight()
     }
 
     private func sectionHeader(_ text: String) -> NSView {
@@ -468,6 +781,22 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             case "privacyGuard":  current = c.privacy.guardMode
             case "ocrAfter":      current = c.ocr.after
             case "snapFormat":    current = c.snap.format
+            case "recordFps":     current = String(c.snap.record.fps)
+            case "recordScale":   current = String(c.snap.record.scale)
+            case "recordCodec":   current = c.snap.record.codec
+            case "recordContainer": current = c.snap.record.container
+            case "gifFps":        current = String(c.snap.record.gif.fps)
+            case "gifWidth":      current = String(c.snap.record.gif.width)
+            case "recordCountdown": current = String(c.snap.record.countdown)
+            case "recordClickDuration":
+                current = String(format: "%.1f", c.snap.record.click.duration)
+            case "recordClickColor": current = c.snap.record.click.color
+            case "recordCameraPos":  current = c.snap.record.camera.position
+            case "recordCameraSize": current = String(c.snap.record.camera.size)
+            case "recordWatermarkPos": current = c.snap.record.watermark.position
+            case "recordExportWidth":  current = String(c.snap.record.export.width)
+            case "recordExportQuality": current = c.snap.record.export.quality
+            case "recordExportContainer": current = c.snap.record.export.container
             default: continue
             }
             s.selectedSegment = max(0, values.firstIndex(of: current) ?? 0)
@@ -482,12 +811,155 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             case "usageEnabled": s.state = c.usage.enabled ? .on : .off
             case "snapMagnifier": s.state = c.snap.showMagnifier ? .on : .off
             case "snapHistory":   s.state = c.snap.history.enabled ? .on : .off
+            case "recordCursor":  s.state = c.snap.record.showsCursor ? .on : .off
+            case "recordSystemAudio": s.state = c.snap.record.systemAudio ? .on : .off
+            case "recordMic":     s.state = c.snap.record.microphone ? .on : .off
+            case "gifClipboard":  s.state = c.snap.record.gif.copyToClipboard ? .on : .off
+            case "recordWindowFollow": s.state = c.snap.record.windowFollow ? .on : .off
+            case "recordClick":   s.state = c.snap.record.click.enabled ? .on : .off
+            case "recordCamera":  s.state = c.snap.record.camera.enabled ? .on : .off
+            case "recordCameraMirror": s.state = c.snap.record.camera.mirror ? .on : .off
+            case "recordWatermark": s.state = c.snap.record.watermark.enabled ? .on : .off
+            case "recordAutoExport": s.state = c.snap.record.export.autoExport ? .on : .off
+            case "recordCopyClipboard": s.state = c.snap.record.copyToClipboard ? .on : .off
+            case "recordExportClipboard": s.state = c.snap.record.export.copyToClipboard ? .on : .off
             case "launchAtLogin":
                 // 以系统实际登录项状态为准(用户可能在系统设置里关过)
                 s.state = SMAppService.mainApp.status == .enabled ? .on : .off
             default: break
             }
         }
+        // 麦克风设备:config 里存的可能是 uniqueID 或设备名,按 representedObject/标题双匹配
+        if let pop = micDevicePopup, let items = pop.menu?.items {
+            let want = ConfigStore.shared.config.snap.record.microphoneDevice
+            var idx = 0
+            if !want.isEmpty {
+                for (i, item) in items.enumerated() {
+                    if (item.representedObject as? String) == want || item.title == want {
+                        idx = i
+                        break
+                    }
+                }
+            }
+            pop.selectItem(at: idx)
+        }
+        if let pop = cameraDevicePopup, let items = pop.menu?.items {
+            let want = ConfigStore.shared.config.snap.record.camera.device
+            var idx = 0
+            if !want.isEmpty {
+                for (i, item) in items.enumerated() {
+                    if (item.representedObject as? String) == want || item.title == want {
+                        idx = i
+                        break
+                    }
+                }
+            }
+            pop.selectItem(at: idx)
+        }
+        if let s = watermarkOpacitySlider {
+            let v = ConfigStore.shared.config.snap.record.watermark.opacity
+            s.doubleValue = v
+            watermarkOpacityLabel?.stringValue = "\(Int((v * 100).rounded()))%"
+        }
+        // 朗读声音:按 identifier 匹配;配置的声音已卸载时回落「自动」
+        if let pop = speakVoicePopup, let items = pop.menu?.items {
+            let want = ConfigStore.shared.config.speak.voice
+            var idx = 0
+            if !want.isEmpty {
+                for (i, item) in items.enumerated() where (item.representedObject as? String) == want {
+                    idx = i
+                    break
+                }
+            }
+            pop.selectItem(at: idx)
+        }
+        if let slider = speakRateSlider {
+            slider.doubleValue = ConfigStore.shared.config.speak.rate
+            speakRateLabel?.stringValue = String(format: "%.2f×", ConfigStore.shared.config.speak.rate)
+        }
+    }
+
+    @objc private func micDeviceChanged(_ sender: NSPopUpButton) {
+        var c = ConfigStore.shared.config
+        c.snap.record.microphoneDevice = sender.selectedItem?.representedObject as? String ?? ""
+        try? ConfigStore.shared.save(c)
+    }
+
+    @objc private func cameraDeviceChanged(_ sender: NSPopUpButton) {
+        var c = ConfigStore.shared.config
+        c.snap.record.camera.device = sender.selectedItem?.representedObject as? String ?? ""
+        try? ConfigStore.shared.save(c)
+    }
+
+    @objc private func watermarkOpacityChanged(_ sender: NSSlider) {
+        var c = ConfigStore.shared.config
+        c.snap.record.watermark.opacity = (sender.doubleValue * 100).rounded() / 100
+        watermarkOpacityLabel?.stringValue = "\(Int((c.snap.record.watermark.opacity * 100).rounded()))%"
+        try? ConfigStore.shared.save(c)
+    }
+
+    /// 「产品演示」一键参数:分辨率贴近 1080p、MP4、兼容性最好、留出倒计时
+    private func applyDemoPreset() {
+        var c = ConfigStore.shared.config
+        c.snap.record.scale = 1
+        c.snap.record.container = "mp4"
+        c.snap.record.codec = "h264"
+        c.snap.record.fps = 30
+        c.snap.record.countdown = 3
+        c.snap.record.showsCursor = true
+        c.snap.record.export.width = 1920
+        c.snap.record.export.quality = "medium"
+        c.snap.record.export.container = "mp4"
+        try? ConfigStore.shared.save(c)
+        syncControls()
+    }
+
+    @objc private func speakVoiceChanged(_ sender: NSPopUpButton) {
+        var c = ConfigStore.shared.config
+        c.speak.voice = sender.selectedItem?.representedObject as? String ?? ""
+        try? ConfigStore.shared.save(c)
+    }
+
+    @objc private func speakRateChanged(_ sender: NSSlider) {
+        var c = ConfigStore.shared.config
+        c.speak.rate = (sender.doubleValue * 100).rounded() / 100
+        speakRateLabel?.stringValue = String(format: "%.2f×", c.speak.rate)
+        try? ConfigStore.shared.save(c)
+    }
+
+    /// 试听:用当前下拉选中的声音念一句;「自动」时按中文默认声音
+    private func previewVoice() {
+        let id = speakVoicePopup?.selectedItem?.representedObject as? String ?? ""
+        let v = id.isEmpty ? nil : AVSpeechSynthesisVoice(identifier: id)
+        let zh = v?.language.hasPrefix("zh") ?? true
+        let utt = AVSpeechUtterance(string: zh
+            ? "你好,这是 PopBar 的朗读试听。"
+            : "Hello, this is the PopBar voice preview.")
+        utt.voice = v ?? AVSpeechSynthesisVoice(language: "zh-CN")
+        let r = ConfigStore.shared.config.speak.rate
+        if r != 1.0 { utt.rate = AVSpeechUtteranceDefaultSpeechRate * Float(r) }
+        previewSpeech.stopSpeaking(at: .immediate)
+        previewSpeech.speak(utt)
+    }
+
+    /// 麦克风测试:再点一次停止;没授权先走授权流程,被拒则 MicPermission 自己弹引导
+    private func toggleMicTest() {
+        if micMonitor.running { return stopMicTest() }
+        micTestButton?.title = L10n.t("停止", "Stop")
+        Task { @MainActor in
+            guard await MicPermission.ensure() else { return self.stopMicTest() }
+            self.micMonitor.onLevel = { [weak self] v in
+                self?.micLevelMeter?.doubleValue = Double(v)
+            }
+            self.micMonitor.start(deviceUID: ConfigStore.shared.config.snap.record.microphoneDevice)
+        }
+    }
+
+    private func stopMicTest() {
+        micMonitor.stop()
+        micMonitor.onLevel = nil
+        micTestButton?.title = L10n.t("测试", "Test")
+        micLevelMeter?.doubleValue = 0
     }
 
     @objc private func segChanged(_ sender: NSSegmentedControl) {
@@ -504,6 +976,21 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         case "ocrAfter":      c.ocr.after = v
         case "snapFormat":    c.snap.format = v
         case "privacyGuard":  c.privacy.guardMode = v
+        case "recordFps":     c.snap.record.fps = Int(v) ?? 30
+        case "recordScale":   c.snap.record.scale = Int(v) ?? 2
+        case "recordCodec":   c.snap.record.codec = v
+        case "recordContainer": c.snap.record.container = v
+        case "gifFps":        c.snap.record.gif.fps = Int(v) ?? 10
+        case "gifWidth":      c.snap.record.gif.width = Int(v) ?? 800
+        case "recordCountdown": c.snap.record.countdown = Int(v) ?? 3
+        case "recordClickDuration": c.snap.record.click.duration = Double(v) ?? 0.6
+        case "recordClickColor": c.snap.record.click.color = v
+        case "recordCameraPos": c.snap.record.camera.position = v
+        case "recordCameraSize": c.snap.record.camera.size = Int(v) ?? 160
+        case "recordWatermarkPos": c.snap.record.watermark.position = v
+        case "recordExportWidth": c.snap.record.export.width = Int(v) ?? 0
+        case "recordExportQuality": c.snap.record.export.quality = v
+        case "recordExportContainer": c.snap.record.export.container = v
         default: return
         }
         try? ConfigStore.shared.save(c)
@@ -535,6 +1022,30 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         case "usageEnabled":  c.usage.enabled = sender.state == .on
         case "snapMagnifier": c.snap.showMagnifier = sender.state == .on
         case "snapHistory":   c.snap.history.enabled = sender.state == .on
+        case "recordCursor":  c.snap.record.showsCursor = sender.state == .on
+        case "recordSystemAudio": c.snap.record.systemAudio = sender.state == .on
+        case "recordWindowFollow": c.snap.record.windowFollow = sender.state == .on
+        case "recordClick":   c.snap.record.click.enabled = sender.state == .on
+        case "recordCamera":  c.snap.record.camera.enabled = sender.state == .on
+        case "recordCameraMirror": c.snap.record.camera.mirror = sender.state == .on
+        case "recordWatermark": c.snap.record.watermark.enabled = sender.state == .on
+        case "recordAutoExport": c.snap.record.export.autoExport = sender.state == .on
+        case "recordCopyClipboard": c.snap.record.copyToClipboard = sender.state == .on
+        case "recordExportClipboard": c.snap.record.export.copyToClipboard = sender.state == .on
+        case "gifClipboard":  c.snap.record.gif.copyToClipboard = sender.state == .on
+        case "recordMic":
+            c.snap.record.microphone = sender.state == .on
+            if c.snap.record.microphone {       // 首次开启:顺带触发系统授权
+                Task { @MainActor in
+                    let ok = await MicPermission.ensure()
+                    if !ok {
+                        var off = ConfigStore.shared.config
+                        off.snap.record.microphone = false
+                        try? ConfigStore.shared.save(off)
+                        self.syncControls()
+                    }
+                }
+            }
         default: return
         }
         try? ConfigStore.shared.save(c)
@@ -572,8 +1083,90 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 NSSound.beep()
                 return
             }
+        case "hotkeys.record":
+            let v = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if v.isEmpty || Hotkey.parse(v) != nil {
+                c.hotkeys.record = v.isEmpty ? "ctrl+opt+r" : v
+            } else {
+                field.stringValue = c.hotkeys.record
+                NSSound.beep()
+                return
+            }
+        case "hotkeys.recordPause":
+            let v = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if v.isEmpty || Hotkey.parse(v) != nil {
+                c.hotkeys.recordPause = v.isEmpty ? "ctrl+opt+shift+r" : v
+            } else {
+                field.stringValue = c.hotkeys.recordPause
+                NSSound.beep()
+                return
+            }
+        case "hotkeys.recordMarker":
+            let v = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if v.isEmpty || Hotkey.parse(v) != nil {
+                c.hotkeys.recordMarker = v.isEmpty ? "ctrl+opt+shift+m" : v
+            } else {
+                field.stringValue = c.hotkeys.recordMarker
+                NSSound.beep()
+                return
+            }
+        case "snap.record.watermark.text":
+            c.snap.record.watermark.text = field.stringValue
+        case "snap.record.maxDuration":
+            if let n = Int(field.stringValue.trimmingCharacters(in: .whitespaces)), n >= 0 {
+                c.snap.record.maxDuration = n
+            } else {
+                field.stringValue = String(c.snap.record.maxDuration)
+                NSSound.beep()
+                return
+            }
         default: return
         }
         try? ConfigStore.shared.save(c)
+    }
+}
+
+
+/// 麦克风测试的柱状波浪:每来一个电平就把历史整体左移一格,新值从右侧进入,
+/// 柱子以中线对称绘制;低电平灰绿、接近削波变黄/红。value 归零时回落成一排小圆点。
+final class WaveBarsView: NSView {
+    private let barCount = 26
+    private var history: [CGFloat]
+    private var smoothed: CGFloat = 0
+
+    override init(frame: NSRect) {
+        history = Array(repeating: 0, count: barCount)
+        super.init(frame: frame)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 0...1;和原 NSLevelIndicator.doubleValue 同名,调用方不用改
+    var doubleValue: Double = 0 {
+        didSet {
+            let v = CGFloat(min(max(doubleValue, 0), 1))
+            // 简单平滑:上升快、下降慢,避免柱子抖得太碎
+            smoothed = v > smoothed ? v : smoothed * 0.6 + v * 0.4
+            if v == 0 { smoothed = 0; history = Array(repeating: 0, count: barCount) }
+            else {
+                history.removeFirst()
+                // 加一点随机起伏,让相邻柱子高度有错落,更像声波
+                history.append(min(1, smoothed * CGFloat.random(in: 0.75...1.0)))
+            }
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let gap: CGFloat = 2
+        let w = (bounds.width - gap * CGFloat(barCount - 1)) / CGFloat(barCount)
+        let minH: CGFloat = w   // 静音时是圆点
+        for (i, v) in history.enumerated() {
+            let h = max(minH, v * bounds.height)
+            let r = NSRect(x: CGFloat(i) * (w + gap), y: (bounds.height - h) / 2, width: w, height: h)
+            let color: NSColor = v == 0 ? .tertiaryLabelColor
+                : v > 0.9 ? .systemRed : v > 0.7 ? .systemYellow : .systemGreen
+            color.setFill()
+            NSBezierPath(roundedRect: r, xRadius: w / 2, yRadius: w / 2).fill()
+        }
     }
 }

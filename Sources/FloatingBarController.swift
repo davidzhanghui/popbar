@@ -13,6 +13,8 @@ final class FloatingBarController: NSObject {
     private var overflowActions: [BarAction] = []
     private var buttons: [BarButton] = []
     private let speech = AVSpeechSynthesizer()
+    /// 朗读状态(显式标志:AVSpeechSynthesizer.isSpeaking 异步生效,刚 speak 完仍为 false)
+    private(set) var isSpeaking = false
     /// 键盘模式:←/→ 移动高亮、Enter 执行(M8)
     private(set) var keyboardMode = false
     private var highlightIndex = -1
@@ -20,6 +22,11 @@ final class FloatingBarController: NSObject {
     var isVisible: Bool { panel?.isVisible ?? false }
     var frame: CGRect { panel?.frame ?? .zero }
     var windowID: Int { panel?.windowNumber ?? 0 }
+
+    override init() {
+        super.init()
+        speech.delegate = self
+    }
 
     /// 仅截图工具用:强制指定浅色/深色外观
     func setAppearance(_ name: NSAppearance.Name) {
@@ -34,6 +41,7 @@ final class FloatingBarController: NSObject {
     }
 
     func show(ctx: SourceContext, keyboard: Bool = false) {
+        stopSpeechSession()   // 新选区/新会话,上一段朗读作废
         self.ctx = ctx
         keyboardMode = keyboard
         highlightIndex = -1
@@ -120,7 +128,14 @@ final class FloatingBarController: NSObject {
         keyboardMode = false
         KeyboardInterceptor.shared.uninstall()
         BarTooltip.shared.hide()
+        stopSpeechSession()   // 工具条是朗读的唯一取消入口,条收了朗读也停,保证永远可取消
         panel?.orderOut(nil)
+    }
+
+    /// 环境性隐藏(点击别处/滚动/普通按键):朗读中保留工具条作为停止入口
+    func hideUnlessSpeaking() {
+        guard !isSpeaking else { return }
+        hide()
     }
 
     // MARK: - 溢出菜单
@@ -262,15 +277,38 @@ final class FloatingBarController: NSObject {
     // MARK: - 供动作调用的辅助
 
     func speak(_ text: String) {
-        if speech.isSpeaking {
-            speech.stopSpeaking(at: .immediate)
+        if isSpeaking || speech.isSpeaking {
+            stopSpeechSession()
             return
         }
         let utt = AVSpeechUtterance(string: text)
-        if text.range(of: "[\\u4e00-\\u9fff]", options: .regularExpression) != nil {
-            utt.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        }
+        let isCJK = text.range(of: "[\\u4e00-\\u9fff]", options: .regularExpression) != nil
+        SpeakVoice.apply(utt, fallbackLanguage: isCJK ? "zh-CN" : nil)
+        isSpeaking = true
+        setSpeakIcon(true)
         speech.speak(utt)
+    }
+
+    private func stopSpeechSession() {
+        guard isSpeaking else { return }
+        isSpeaking = false
+        speech.stopSpeaking(at: .immediate)
+    }
+
+    private func speechEnded() {
+        isSpeaking = false
+        setSpeakIcon(false)
+    }
+
+    /// 朗读中把按钮图标换成停止,给用户明确的「再点一次停止」提示
+    private func setSpeakIcon(_ speaking: Bool) {
+        guard let i = visibleActions.firstIndex(where: { $0.id == "builtin.speak" }),
+              buttons.indices.contains(i) else { return }
+        let b = buttons[i]
+        b.image = NSImage(systemSymbolName: speaking ? "stop.fill" : "speaker.wave.2.fill",
+                          accessibilityDescription: nil)
+        b.toolTip = speaking ? L10n.t("停止朗读", "Stop speaking")
+                             : L10n.t("朗读/停止", "Speak/Stop")
     }
 
     func openURL(_ s: String) {
@@ -376,5 +414,41 @@ class BarButton: NSButton {
             NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
         }
         super.draw(dirtyRect)
+    }
+}
+
+// MARK: - 朗读状态回调
+
+extension FloatingBarController: AVSpeechSynthesizerDelegate {
+    /// delegate 回调不保证在主线程,统一转一手再动 UI
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { [weak self] in self?.speechEnded() }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { [weak self] in self?.speechEnded() }
+    }
+}
+
+/// 朗读声音/语速的统一取值:优先用偏好里选的声音,未设置或已卸载时回落调用方的自动逻辑
+enum SpeakVoice {
+    /// 偏好里配置的声音;空或已卸载返回 nil
+    static func configured() -> AVSpeechSynthesisVoice? {
+        let id = ConfigStore.shared.config.speak.voice
+        guard !id.isEmpty else { return nil }
+        return AVSpeechSynthesisVoice(identifier: id)
+    }
+
+    /// 给 utterance 应用配置的声音与语速;voice 为 nil 时用 fallbackLanguage 的默认声音
+    static func apply(_ utterance: AVSpeechUtterance, fallbackLanguage: String?) {
+        if let v = configured() {
+            utterance.voice = v
+        } else if let lang = fallbackLanguage {
+            utterance.voice = AVSpeechSynthesisVoice(language: lang)
+        }
+        let r = ConfigStore.shared.config.speak.rate
+        if r != 1.0 {
+            utterance.rate = AVSpeechUtteranceDefaultSpeechRate * Float(r)
+        }
     }
 }
