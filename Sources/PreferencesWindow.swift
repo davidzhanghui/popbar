@@ -45,8 +45,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
     var isVisible: Bool { window?.isVisible ?? false }
     var frame: CGRect { window?.frame ?? .zero }
 
-    /// 「AI 翻译」在 tab 栏里的位置(通用/功能/AI 翻译/工具条/关于)
-    static let aiTabIndex = 2
+    /// 「AI 翻译」在 tab 栏里的位置(通用/功能/截屏/录屏/AI 翻译/工具条/关于)
+    static let aiTabIndex = 4
     /// 窗口宽高固定,与旧的「AI 翻译设置」窗口一致
     static let contentWidth: CGFloat = 780
 
@@ -105,9 +105,12 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         ])
 
         // 顶部 tab 栏;每个 tab 一份独立滚动内容,切换时显隐
+        let ft = featuresTabs()
         let tabs: [(String, [NSView])] = [
             (L10n.t("通用", "General"), generalTab()),
-            (L10n.t("功能", "Features"), featuresTab()),
+            (L10n.t("功能", "Features"), ft.features),
+            (L10n.t("截屏", "Screenshot"), ft.snap),
+            (L10n.t("录屏", "Recording"), ft.record),
             (L10n.t("AI 翻译", "AI"), [SettingsWindowController.shared.buildContent(in: w)]),
             (L10n.t("工具条", "Toolbar"), toolbarTab()),
             (L10n.t("关于", "About"), aboutTab()),
@@ -192,7 +195,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
     }
 
     /// 功能(M5/M8):剪贴板历史、OCR、使用统计、快捷键
-    private func featuresTab() -> [NSView] {
+    private func featuresTabs() -> (features: [NSView], snap: [NSView], record: [NSView]) {
         let hotkeyField = NSTextField()
         hotkeyField.placeholderString = "ctrl+opt+space"
         hotkeyField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -356,7 +359,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         rateStack.spacing = 6
         rateStack.alignment = .centerY
 
-        return [sectionHeader(L10n.t("功能", "Features")), card([
+        let features: [NSView] = [sectionHeader(L10n.t("功能", "Features")), card([
             row(L10n.t("剪贴板历史", "Clipboard History"),
                 L10n.t("记录最近剪贴板,菜单栏可选粘贴;跳过密码类标记",
                        "Recent clipboard items from the menu; skips concealed types"),
@@ -394,7 +397,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             row(L10n.t("语速", "Rate"),
                 L10n.t("1.0 = 系统默认语速", "1.0 = system default rate"),
                 rateStack),
-        ]), sectionHeader(L10n.t("截屏", "Screenshot")), card([
+        ])]
+        let snap: [NSView] = [sectionHeader(L10n.t("截屏", "Screenshot")), card([
             row(L10n.t("截屏快捷键", "Screenshot Hotkey"),
                 L10n.t("格式 ctrl+opt+p;全局唤起截屏", "Format: ctrl+opt+p; starts a screenshot anywhere"),
                 snapHotkeyField),
@@ -414,7 +418,8 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             row(L10n.t("保留数量", "History Limit"),
                 L10n.t("1–200,超出自动删除最旧的", "1–200; oldest are removed beyond this"),
                 limitField),
-        ]), sectionHeader(L10n.t("录屏", "Screen Recording")), card([
+        ])]
+        let record: [NSView] = [sectionHeader(L10n.t("录屏", "Screen Recording")), card([
             row(L10n.t("录屏快捷键", "Record Hotkey"),
                 L10n.t("格式 ctrl+opt+r;录制中再按一次即停止", "Format: ctrl+opt+r; press again while recording to stop"),
                 recordHotkeyField),
@@ -550,6 +555,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 L10n.t("导出成品后自动复制文件", "Copy the exported file automatically"),
                 toggle("recordExportClipboard")),
         ])]
+        return (features, snap, record)
     }
 
     /// 快捷键输入框:提交即写配置
