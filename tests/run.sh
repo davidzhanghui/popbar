@@ -12,7 +12,10 @@
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p build
-swiftc -O -target $(uname -m)-apple-macos15.0 -o build/popbar-tests $(ls Sources/*.swift | grep -v '/main.swift$') tests/main.swift tests/export.swift
+clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o build/metrics.o
+swiftc -O -target $(uname -m)-apple-macos15.0 -o build/popbar-tests \
+    -import-objc-header Native/CMetrics.h -framework IOKit \
+    $(ls Sources/*.swift | grep -v '/main.swift$') tests/main.swift tests/export.swift build/metrics.o
 POPBAR_CONFIG_DIR=$(mktemp -d) ./build/popbar-tests
 
 echo ""

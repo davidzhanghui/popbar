@@ -839,6 +839,105 @@ expect(ccfgD.images && ccfgD.files, "images/files default true")
 expectEqual(ccfgD.imageSizeMB, 50, "imageSizeMB default")
 expectEqual(ccfgD.imageMaxMB, 10, "imageMaxMB default")
 
+// MARK: - 系统监控:进程分组 / 来源判定
+
+section("AppIdentity.bundlePath")
+let cursorHelper = "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Renderer).app/Contents/MacOS/Cursor Helper (Renderer)"
+expectEqual(AppIdentity.bundlePath(forExecutable: cursorHelper), "/Applications/Cursor.app", "嵌套 Helper 归到最外层 App")
+expectEqual(AppIdentity.bundlePath(forExecutable: "/Applications/WeChat.app/Contents/MacOS/WeChatAppEx.app/Contents/MacOS/WeChatAppEx"),
+            "/Applications/WeChat.app", "WeChat 内嵌 .app 归到 WeChat")
+expect(AppIdentity.bundlePath(forExecutable: "/usr/local/bin/python3") == nil, "非 App 路径返回 nil")
+expect(AppIdentity.bundlePath(forExecutable: "/opt/homebrew/bin/mysqld") == nil, "homebrew 程序不是 App")
+expect(AppIdentity.isMainExecutable("/Applications/Cursor.app/Contents/MacOS/Cursor", bundle: "/Applications/Cursor.app"), "主可执行文件")
+expect(!AppIdentity.isMainExecutable(cursorHelper, bundle: "/Applications/Cursor.app"), "Helper 不是主可执行文件")
+
+section("ProcessGrouping")
+func prow(_ pid: Int, _ name: String, _ mem: UInt64, _ cpu: Double) -> ProcessRow {
+    ProcessRow(pid: pid, name: name, memoryBytes: mem, cpuPercent: cpu, powerScore: cpu)
+}
+let grows = [prow(300, "Cursor Helper", 500, 1.0), prow(100, "Cursor", 200, 0.5), prow(301, "Cursor Helper (Renderer)", 900, 2.0),
+             prow(50, "python3", 70, 0.1), prow(51, "python3", 30, 0.2), prow(7, "mystery", 5, 9.0)]
+let gpaths: [Int: String] = [
+    300: "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper",
+    100: "/Applications/Cursor.app/Contents/MacOS/Cursor",
+    301: cursorHelper,
+    50: "/usr/local/bin/python3", 51: "/usr/local/bin/python3",
+]
+let groups = ProcessGrouping.group(grows, paths: gpaths)
+expectEqual(groups.count, 4, "4 行:Cursor 合并为 1 行,其余 3 个独立进程各 1 行")
+let gCursor = groups.first { $0.id == "app:/Applications/Cursor.app" }
+expectEqual(gCursor?.count ?? 0, 3, "Cursor 合并 3 个进程")
+expectEqual(gCursor?.mainPID ?? 0, 100, "Cursor 主进程取 Contents/MacOS 下的可执行文件")
+expectEqual(gCursor?.memoryBytes ?? 0, 1600, "内存求和")
+expect(abs((gCursor?.cpuPercent ?? 0) - 3.5) < 1e-9, "CPU 求和")
+expectEqual(gCursor?.members.first?.pid ?? 0, 301, "成员按内存降序")
+let gPy = groups.filter { $0.name == "python3" }
+expectEqual(gPy.count, 2, "同一程序的两个实例各占一行(终止不会连带)")
+expect(gPy.allSatisfy { $0.count == 1 }, "非 App 进程组只含自己")
+expectEqual(groups.first?.id ?? "", "pid:7", "按能耗(CPU 合计)降序:读不到路径的 mystery(9.0)排第一")
+expectEqual(groups.first?.exePath ?? "-", "-", "读不到路径的进程 exePath 为空")
+
+section("ProcessText")
+expectEqual(ProcessText.compactDuration(45), "45s", "时长:秒")
+expectEqual(ProcessText.compactDuration(3 * 3600 + 7 * 60), "3h 7m", "时长:时分")
+expectEqual(ProcessText.compactDuration(2 * 86400 + 5 * 3600), "2d 5h", "时长:天时")
+expect(ProcessText.isSystemPath("/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"), "系统路径")
+expect(!ProcessText.isSystemPath("/Applications/Cursor.app/Contents/MacOS/Cursor"), "非系统路径")
+
+section("ProcessText.classify(来源判定)")
+func cn(_ pid: Int, _ name: String, _ app: String? = nil) -> ChainNode { ChainNode(pid: pid, name: name, appName: app) }
+let launchd = cn(1, "launchd")
+expectEqual(ProcessText.classify(chain: [launchd, cn(45525, "Cursor", "Cursor")], label: nil, hasPlist: false).kind,
+            .launchd, "父进程是 launchd")
+expectEqual(ProcessText.classify(chain: [launchd, cn(758, "mysqld")], label: "homebrew.mxcl.mysql", hasPlist: true).kind,
+            .launchdLabel, "有 plist 的 launchd 服务")
+expectEqual(ProcessText.classify(chain: [launchd, cn(10, "sshd"), cn(11, "sshd-session"), cn(12, "zsh"), cn(13, "vim")],
+                                 label: nil, hasPlist: false).kind, .ssh, "祖先含 sshd")
+let shellChain = [launchd, cn(900, "ghostty", "Ghostty"), cn(901, "login"), cn(902, "zsh"), cn(903, "node")]
+let shellInfo = ProcessText.classify(chain: shellChain, label: nil, hasPlist: false)
+expectEqual(shellInfo.kind, .shell, "祖先含 shell")
+expect(shellInfo.summary.contains("Ghostty"), "终端名取 shell 之上、跳过 login 的那个祖先")
+expectEqual(ProcessText.classify(chain: [launchd, cn(5, "Cursor", "Cursor"), cn(6, "node")], label: nil, hasPlist: false).kind,
+            .parent, "普通父进程")
+expectEqual(ProcessText.classify(chain: [cn(6, "orphan")], label: nil, hasPlist: false).kind, .unknown, "没有任何祖先 → 来源未知")
+
+section("ProcessText.ownership(归属与可信度)")
+let appG = ProcessGroup(id: "app:/Applications/Cursor.app", name: "Cursor", appPath: "/Applications/Cursor.app",
+                        exePath: nil, mainPID: 1, members: [], memoryBytes: 0, cpuPercent: 0, powerScore: 0)
+let exeG = ProcessGroup(id: "pid:2", name: "node", appPath: nil, exePath: "/usr/local/bin/node",
+                        mainPID: 2, members: [], memoryBytes: 0, cpuPercent: 0, powerScore: 0)
+let oApp = ProcessText.ownership(group: appG, chain: [launchd, cn(1, "Cursor")], source: ProcessText.classify(chain: [launchd, cn(1, "Cursor")], label: nil, hasPlist: false), plistPath: nil)
+expectEqual(oApp.confidence, .high, "App 包内 → 高可信度")
+expectEqual(oApp.evidence, "/Applications/Cursor.app", "识别依据是 App 路径")
+let childChain = [launchd, cn(5, "Cursor", "Cursor"), cn(2, "node")]
+let oChild = ProcessText.ownership(group: exeG, chain: childChain, source: ProcessText.classify(chain: childChain, label: nil, hasPlist: false), plistPath: nil)
+expectEqual(oChild.confidence, .medium, "祖先是 App 的子进程 → 中可信度")
+expectEqual(oChild.owner ?? "", "Cursor", "归属到祖先 App")
+let oShell = ProcessText.ownership(group: exeG, chain: shellChain + [cn(2, "node")], source: shellInfo, plistPath: nil)
+expectEqual(oShell.confidence, .possible, "经 shell 启动 → 只能说「可能」")
+let oPlist = ProcessText.ownership(group: exeG, chain: [launchd, cn(2, "node")], source: ProcessText.classify(chain: [launchd, cn(2, "node")], label: "x", hasPlist: true), plistPath: "/Library/LaunchDaemons/x.plist")
+expectEqual(oPlist.confidence, .high, "有 launchd plist → 高可信度")
+
+section("SystemMonitorActions.isProtected")
+let selfG = ProcessGroup(id: "pid:self", name: "self", appPath: nil, exePath: nil, mainPID: Int(getpid()),
+                         members: [ProcessRow(pid: Int(getpid()), name: "self", memoryBytes: 0, cpuPercent: 0, powerScore: 0)],
+                         memoryBytes: 0, cpuPercent: 0, powerScore: 0)
+expect(SystemMonitorActions.isProtected(selfG), "不能结束自己")
+let initG = ProcessGroup(id: "pid:1", name: "launchd", appPath: nil, exePath: "/sbin/launchd", mainPID: 1,
+                         members: [ProcessRow(pid: 1, name: "launchd", memoryBytes: 0, cpuPercent: 0, powerScore: 0)],
+                         memoryBytes: 0, cpuPercent: 0, powerScore: 0)
+expect(SystemMonitorActions.isProtected(initG), "不能结束 PID 1")
+
+section("LibProc(对当前进程做真实调用)")
+let me = Int(getpid())
+expect(LibProc.path(me) != nil, "proc_pidpath 能读到自己的路径")
+expect(LibProc.startKey(me) != nil, "能读到自己的启动时刻")
+expect((LibProc.taskInfo(me)?.pti_threadnum ?? 0) > 0, "线程数 > 0")
+expect(LibProc.fdCount(me) > 0, "打开文件数 > 0")
+expect(LibProc.cwd(me) != nil, "能读到工作目录")
+expect(LibProc.args(me)?.argv.isEmpty == false, "能读到启动参数")
+expect(LibProc.parentMap()[me] != nil, "父进程表包含自己")
+
 // 录屏导出管线:合成视频 → 真跑导出 → 抽帧验收(tests/export.swift)
 await runExportPipelineTests()
 

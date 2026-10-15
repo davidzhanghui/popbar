@@ -4,6 +4,7 @@ import WebKit
 
 // 截图工具:真实显示浮动条并用 ScreenCaptureKit 抓窗口图像(含毛玻璃材质)。
 // 用法: ./build/shot <浅色输出.png> <深色输出.png>
+//       ./build/shot --monitor [输出目录]  生成系统监控面板图(浅色 popbar-monitor.png)与进程详情图(popbar-monitor-detail.png),只展示系统自带进程
 //       ./build/shot --snap [输出目录]   生成截屏功能展示图(离线合成,不需要屏幕录制权限)
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
@@ -11,8 +12,8 @@ app.setActivationPolicy(.regular)
 let lightPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "docs/popbar-bar-light.png"
 let darkPath  = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "docs/popbar-bar-dark.png"
 
-func capture(_ path: String) async {
-    let wid = CGWindowID(FloatingBarController.shared.windowID)
+func capture(_ path: String, windowID: Int = FloatingBarController.shared.windowID) async {
+    let wid = CGWindowID(windowID)
     do {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true)
@@ -188,7 +189,33 @@ func scaled(_ cg: CGImage, to size: CGSize) -> CGImage {
 
 // MARK: - 入口
 
-if CommandLine.arguments.contains("--snap") {
+if CommandLine.arguments.contains("--monitor") {
+    let idx = CommandLine.arguments.firstIndex(of: "--monitor")!
+    let outDir = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "docs"
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        Task { @MainActor in
+            NSApp.appearance = NSAppearance(named: .aqua)
+            let monitor = SystemMonitorPanel.shared
+            // 只留系统自带进程与 PopBar 自己,文档图里不出现个人安装的应用
+            let allowed: Set<String> = ["WindowServer", "Finder", "Dock", "SystemUIServer", "ControlCenter",
+                                        "loginwindow", "launchd", "mds_stores", "mds", "coreaudiod",
+                                        "Spotlight", "Safari", "Terminal", "Activity Monitor", "Notes",
+                                        "Mail", "Preview", "cfprefsd", "distnoted", "trustd", "PopBar",
+                                        "kernel_task", "fseventsd", "powerd", "airportd", "bluetoothd",
+                                        "WindowManager", "NotificationCenter", "Siri", "diskarbitrationd"]
+            monitor.groupFilter = { allowed.contains($0.name) }
+            monitor.show()
+            try? await Task.sleep(nanoseconds: 4_000_000_000)   // 等采样稳定、曲线有数据
+            await capture(outDir + "/popbar-monitor.png", windowID: monitor.windowID)
+            // 进程详情:选系统自带的 Finder,避免出现个人应用
+            monitor.openDetail(named: "Finder")
+            try? await Task.sleep(nanoseconds: 3_500_000_000)   // 等 launchctl / lsof 采集完成
+            await capture(outDir + "/popbar-monitor-detail.png", windowID: monitor.windowID)
+            NSApp.terminate(nil)
+        }
+    }
+    app.run()
+} else if CommandLine.arguments.contains("--snap") {
     let idx = CommandLine.arguments.firstIndex(of: "--snap")!
     let outDir = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "docs"
     DispatchQueue.main.async {

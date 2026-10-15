@@ -36,6 +36,7 @@
 - **录屏**:选区 / 窗口跟随 / 整屏录制(`ctrl+opt+r`,macOS 15+)——倒计时开录、H.264/HEVC、MOV/MP4、30/60fps、系统声音与麦克风、暂停、标记点、摄像头画中画、点击涟漪、水印、统一导出面板(裁剪 / 压缩 / 混音)、可导出 GIF
 - **截屏**:微信式截屏(`ctrl+opt+p`)——冻结画面、自动识别窗口、像素放大镜与取色、矩形/椭圆/箭头/画笔/文字/马赛克/序号标注、贴图、文字识别、长截图,可选本地截图历史
 - **菜单栏翻译入口**:截图 OCR / 输入 / 剪贴板三种方式直接唤起翻译面板;截图与剪贴板图片还会识别二维码
+- **系统监控**:菜单栏「系统监控」弹出实时面板——健康评分、CPU(含每核)/ GPU / 内存 / 电池 / 磁盘 / 网络 / 温度,以及按**应用分组**、可**滚动、搜索**的进程表;点击任意一行弹出**进程详情**(来源链、launchd 触发原因、置信度、警告、成员进程…),右键 / 「…」菜单可固定行、在访达中显示、复制名称 / PID、终止、强制退出。样式与翻译面板一致,仅在面板打开时采样
 - **剪贴板历史**:可选开启,记录文字/图片/文件(最多 10 条,可置顶),菜单栏条目子菜单提供粘贴/仅复制/追加/置顶;默认关闭、默认内存存储不落盘,密码类剪贴板标记一律跳过
 - **键盘操作**:可配置全局快捷键唤起;键盘模式期间 ←/→ 移动高亮、Enter 执行、Esc 关闭,自动限时摘除拦截
 - **中英双语界面**:菜单栏、浮动条、翻译面板、两个设置窗口均即时切换
@@ -134,12 +135,63 @@ flowchart TD
 |---|---|
 | 截屏 | 唤起截屏(同全局快捷键,默认 `ctrl+opt+p`);详见下方「截屏」 |
 | 录屏 / 停止录屏 | 唤起录屏选区或停止当前录制(默认 `ctrl+opt+r`);详见下方「录屏」 |
+| 系统监控 | 打开 / 关闭系统监控面板;详见下方「系统监控」 |
 | 最近录制 | 有录制记录时显示;每条可打开 / 在 Finder 中显示 / 复制路径或文件 / 导出 GIF / 移到废纸篓 |
 | 截图历史 | 偏好设置里开启且有记录时显示;每条带缩略图,可复制 / 贴图 / 在 Finder 中显示,底部可打开文件夹、清空历史 |
 
 菜单里的其他条目:启用/停用划词弹条总开关、对当前 App 一键禁用/启用、
 剪贴板历史(开启后显示)、AI 翻译设置、偏好设置、辅助功能设置、退出。
 左键点菜单栏图标的行为可在偏好设置里改为「输入翻译 / 剪贴板翻译」,右键始终弹菜单。
+
+## 系统监控
+
+菜单栏 →「系统监控」弹出一个与翻译面板同款外观(毛玻璃 + 淡紫渐变,明暗自适应)的实时面板,Esc 或右上角 ✕ 关闭,可拖动。
+
+| 区块 | 内容 |
+|---|---|
+| 健康评分 | 综合 CPU 负载、内存压力、磁盘空间、电池健康与循环、温度、磁盘读写、开机时长、硬盘故障风险,给出分数、评级和影响项 |
+| CPU / GPU | 占用率与温度、每核柱状条(CPU)/ 曲线(GPU)、芯片功耗(CPU / GPU / ANE / DRAM) |
+| 内存 | 占用率与压力等级、曲线、已用 / 总量、交换用量 |
+| 电池 | 电量与充电状态、健康度环、循环次数、最耗电进程(台式机显示「无内置电池」) |
+| 磁盘 / 网络 / 温度 | 可用空间与占用条;实时上下行速率与曲线;CPU / GPU 温度与 5 分钟峰值、散热状态 |
+| 进程 | 按**应用分组**(一个 App 的主进程与全部 Helper 合成一行,名称后的小数字是进程数,内存 / CPU 为合计),非 App 进程各占一行;按能耗排序,**可滚动**;搜索框按应用名、路径或任一成员 PID 过滤并显示「匹配数 / 总数」,Esc 先清空搜索再关闭面板;**点击一行打开详情** |
+
+### 进程详情
+
+<p align="center">
+  <img src="docs/popbar-monitor-detail.png" width="460" alt="进程详情:指标小卡、启动链、来源与置信度、launchd plist、资源与环境、成员进程">
+</p>
+
+点击进程行(或菜单里的「为什么在运行?」)弹出详情窗;Esc 先关详情、再按一次才关面板,× / 点击窗外也可关闭:
+
+| 区块 | 内容 |
+|---|---|
+| 摘要 | 进程数 · CPU · 内存 · 用户 · 一句话来源(如「由系统后台服务管理」) |
+| 启动链 | `launchd 1 › Cursor 45525`,可展开完整链路;下方一句话说明来源(launchd 服务 / SSH 登录 / 由终端 X 启动 / 由 X 启动 / 来源未知) |
+| 警告 | 以 root 运行、监听公开网络接口、阻止系统睡眠、设置了 DYLD 注入变量、程序文件被替换、连续运行超 90 天、进程已暂停、僵尸进程、来源未知 |
+| 字段 | 置信度(高 / 中 / 可能)与识别依据、归属(子进程:某 App)、launchd 触发原因(`launchctl blame`)与服务 label、Plist / 自动保活 / 触发条件、线程数、打开文件、监听端口、阻止睡眠、磁盘 I/O、用户、启动时间、工作目录、Git 仓库、组外子进程、可执行文件 |
+| 成员进程 | 组内按内存排序的前 6 个(PID / CPU / 内存,带「阻止睡眠 / 公开端口」标记),其余合并为「其余 N 个进程」 |
+| 原始路径与命令 | 折叠区:可执行文件路径与完整启动命令 |
+| 操作 | 复制摘要、在访达中显示、终止、强制退出 |
+
+终止 / 强制退出会先确认,并校验 PID 没有被系统复用(详情打开期间进程换成了别的程序会提示「进程在查看过程中已变化」);系统关键进程(PID 1、PopBar 自己、系统目录下由 root 运行的程序)不可终止;无权限、进程已退出都有明确提示。App 的「终止」等同 ⌘Q(允许保存),「强制退出」对该 App 的全部进程发 SIGKILL。
+
+进程的上下文菜单(右键整行,或点行尾「…」):
+
+| 菜单项 | 说明 |
+|---|---|
+| 固定行 / 取消固定 | 把进程固定在列表最前(仅内存保存,退出 PopBar 后清除) |
+| 为什么在运行? | 打开上面的进程详情 |
+| 在访达中显示 | 在 Finder 中选中该进程的可执行文件 |
+| 复制进程名称 / 复制 PID | 写入剪贴板(不进剪贴板历史) |
+| 终止 / 强制退出 | 确认后结束该行(App 为整个应用);规则见上 |
+
+<p align="center">
+  <img src="docs/popbar-monitor.png" width="460" alt="系统监控面板:健康评分、CPU / GPU / 内存 / 电池 / 磁盘 / 网络 / 温度与可搜索的进程表">
+</p>
+
+采样(IOReport / IOKit / libproc,不需要额外权限)只在面板可见时运行,关闭即停,不影响 PopBar 空闲时 CPU ≈ 0。
+采集层是 `Native/metrics.c`(C),经桥接头文件 `Native/CMetrics.h` 供 Swift 调用。温度与分项功耗读数仅 Apple Silicon 有,Intel 机器上相应项显示 0 或「—」。
 
 ## 截屏
 
@@ -349,12 +401,12 @@ flowchart TD
 ## 构建与安装
 
 ```bash
-./build.sh    # 一条命令:编译 → 打包 build.noindex/PopBar.app → 生成 build/PopBar-<版本>-<架构>.dmg
+./build.sh    # 一条命令:编译(含 Native/metrics.c 的 C 采集层)→ 打包 build.noindex/PopBar.app → 生成 build/PopBar-<版本>-<架构>.dmg
 ```
 
 App 每次先删后增干净重建；同名 dmg 直接覆盖；打包暂存目录用完自动清理。打开 DMG，把 `PopBar.app` 拖到 `Applications` 文件夹，再从「应用程序」启动。应用只在菜单栏显示图标，不占用 Dock。也可直接运行本地构建：`open build.noindex/PopBar.app`。构建与打包暂存目录采用 `.noindex` 后缀，避免开发副本出现在系统应用搜索结果中。
 
-要求:macOS 15+（录屏使用 ScreenCaptureKit 的 `SCRecordingOutput`）;源码构建需要 Swift 工具链（Xcode 或 Command Line Tools）。
+要求:macOS 15+（录屏使用 ScreenCaptureKit 的 `SCRecordingOutput`）;源码构建需要 Swift 工具链与 clang（Xcode 或 Command Line Tools 均自带）。
 
 > 从 GitHub Release 下载的 DMG 未经 Apple 公证,首次打开会提示"已损坏,无法打开"。
 > 把 App 拖入 `Applications` 后在终端执行一次 `xattr -cr /Applications/PopBar.app` 即可正常启动。
@@ -428,11 +480,18 @@ popbar/
 │   ├── RecordHistory.swift           # 「最近录制」元数据存储、清理与菜单
 │   ├── RecordGIF.swift               # GIF 导出(抽帧 + ImageIO 写 GIF)与导出面板
 │   ├── RecordPanelKit.swift          # 导出面板共用的卡片 / 行 / 分组样式(与偏好设置一致)
+│   ├── SystemMonitorPanel.swift      # 系统监控面板外壳(毛玻璃 + 渐变 + SwiftUI 内容),打开才采样
+│   ├── SystemMonitorView.swift       # 系统监控 SwiftUI 内容:指标卡片、按应用分组的可滚动可搜索进程表、右键菜单
+│   ├── SystemMonitorDetailView.swift # 进程详情窗:摘要 / 启动链 / 警告 / 字段 / 成员进程 / 操作
+│   ├── SystemMonitorProcess.swift    # 进程层:libproc 封装、按应用分组、来源判定与可信度、详情采集(launchctl / lsof / IOPM)
+│   ├── SystemMonitorModel.swift      # 采样模型(CMetrics 快照 → 展示数据)与健康评分
+│   ├── SystemMonitorActions.swift    # 进程动作:访达 / 复制 / 终止 / 强制退出(含系统进程保护与 PID 复用校验)
 │   ├── L10n.swift                    # 中/英双语界面字符串
 │   ├── Actions.swift                 # CGEvent 按键模拟(含 flagsChanged)
 │   ├── AppActivation.swift           # accessory 应用激活前台 / Esc 可关窗口
 │   ├── BarTooltip.swift              # 悬停提示(非激活面板下自绘 toolTip)
 │   └── Screen.swift                  # CG/AX ↔ Cocoa 坐标系转换
+├── Native/                           # 系统监控的 C 采集层:metrics.c(IOReport / IOKit / libproc)+ CMetrics.h(桥接头文件)
 ├── tests/                            # 纯逻辑测试 + 弹窗可见性静态检查(tests/run.sh)
 ├── shot/main.swift                   # 截图工具(独立可执行,复用 Sources)
 ├── icon/make_icon.swift              # 图标生成器(矢量绘制 → iconset)
@@ -461,7 +520,9 @@ swift icon/make_icon.swift icon/PopBar.iconset icon/preview.png
 iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 
 # 重新生成 README 里的弹条截图(浅色+深色)
-swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
+clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o build/metrics.o   # 系统监控的 C 采集层
+swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header Native/CMetrics.h -framework IOKit \
+    $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift build/metrics.o
 ./build/shot docs/popbar-bar-light.png docs/popbar-bar-dark.png
 
 # 生成截屏功能展示图(离线合成 docs/index.html 作背景,无需屏幕录制权限)
@@ -475,6 +536,8 @@ swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot $(ls Sources/*.swift
 - OCR 走 Vision 离线识别,长段落/小字体识别率有限
 - 扩展系统为轻量三类(URL/Shell/Shortcut),暂不支持 YAML+JS 形式的插件
 - 长截图只支持向下滚动,依靠固定页头/页脚的启发式检测,大面积空白或动画区域可能提示「请慢一点滚动」;长截图结果不能再标注
+- 系统监控的进程详情依赖 `launchctl`(trigger 原因 / 服务 label)与 `lsof`(监听端口);`launchctl procinfo` 需要 root,所以不读取。读不到路径的受保护系统进程只能显示「来源未知」
+- 系统监控的温度 / 分项功耗读数依赖 Apple Silicon 的 IOReport,Intel 机器上为 0 或「—」;进程列表每秒按能耗重排,行位置会跳动;「为什么在运行?」是基于路径与启动链的规则判断,对少见的后台程序只给笼统说明
 - 截屏快捷键经 listen-only event tap 触发,按键同时会传给前台应用;截屏选区不能跨屏
 - 当前没有 Developer ID 签名和 Apple 公证；DMG 适合本机安装/内部测试，公开分发需按 Apple 要求签名、公证
 

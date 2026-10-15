@@ -146,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (L10n.t("截图翻译(OCR)", "Screenshot Translate"), #selector(screenshotTranslateAction), hk.ocr),
             (L10n.t("输入翻译", "Input Translate"), #selector(inputTranslateAction), ""),
             (L10n.t("剪贴板翻译", "Clipboard Translate"), #selector(clipboardTranslateAction), ""),
+            (L10n.t("系统监控", "System Monitor"), #selector(systemMonitorAction), ""),
         ] {
             let mi = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             if let eq = Hotkey.menuEquivalent(hotkey) {
@@ -306,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func screenshotTranslateAction() { TranslateTriggers.screenshot() }
     @objc private func inputTranslateAction() { TranslateTriggers.input() }
     @objc private func clipboardTranslateAction() { TranslateTriggers.clipboard() }
+    @objc @MainActor private func systemMonitorAction() { SystemMonitorPanel.shared.toggle() }
 
     @objc private func openPreferencesAction() {
         PreferencesWindowController.shared.show()

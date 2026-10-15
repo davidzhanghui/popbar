@@ -35,6 +35,7 @@
 - **More built-in tools**: QR code generation, developer toolbox (HTML/Unicode escape, SHA256/MD5, JWT decode, JSON processing)
 - **Screenshot**: WeChat-style capture (`ctrl+opt+p`) — frozen screen, window detection, pixel magnifier and color picker, rectangle/ellipse/arrow/pen/text/mosaic/number annotations, pin to screen, OCR, scrolling capture, optional local history
 - **Menu bar translation entries**: screenshot OCR / input / clipboard — three ways to open the translation panel; screenshots and clipboard images are also scanned for QR codes
+- **System Monitor**: menu bar → "System Monitor" opens a live panel — health score, CPU (per core) / GPU / memory / battery / disk / network / temperature, plus a process table **grouped by app**, scrollable and searchable; click any row for a **process detail** window (launch chain, launchd reason, confidence, warnings, member processes…), and use the right-click / "…" menu to pin a row, show in Finder, copy name / PID, terminate or force quit. Styled like the translation panel; samples only while the panel is open
 - **Clipboard history**: opt-in; records text/images/files (up to 10 items, pinnable) with per-item submenu — paste / copy only / append / pin; off by default and memory-only, concealed clipboard markers always skipped
 - **Screen Recording**: region / window-following / full-screen capture (`ctrl+opt+r`, macOS 15+) — countdown before capture, H.264/HEVC, MOV/MP4, 30/60fps, system audio + microphone, pause, markers, camera picture-in-picture, click ripples, watermark, one export panel (trim / compress / mix), GIF export
 - **Keyboard control**: configurable global hotkey; in keyboard mode ←/→ moves the highlight, Enter runs, Esc closes; the interceptor tap is auto-removed on timeout
@@ -134,6 +135,7 @@ Screenshot entries in the menu bar:
 | Entry | Description |
 |---|---|
 | Screenshot | Starts a capture (same as the global hotkey, default `ctrl+opt+p`); see "Screenshot" below |
+| System Monitor | Open / close the System Monitor panel; see "System Monitor" below |
 | Screenshot History | Shown when enabled in Preferences and there are records; each item has a thumbnail with Copy / Pin / Show in Finder, plus Open Folder and Clear History at the bottom |
 
 Other menu items: master switch for the selection bar, one-click disable/enable for the
@@ -141,6 +143,56 @@ current app, clipboard history (shown when enabled), AI translation settings, Pr
 Accessibility settings, Quit.
 The left-click action on the menu bar icon can be changed to "Input Translate / Clipboard
 Translate" in Preferences; right-click always opens the menu.
+
+## System Monitor
+
+Menu bar → "System Monitor" opens a live panel styled like the translation panel (frosted glass + soft purple gradient, light/dark aware). Esc or the ✕ closes it; it can be dragged.
+
+| Section | Content |
+|---|---|
+| Health score | Combines CPU load, memory pressure, disk space, battery health and cycles, temperature, disk I/O, uptime and drive failure risk into a score, a rating and the contributing factors |
+| CPU / GPU | Usage and temperature, per-core bars (CPU) / sparkline (GPU), chip power (CPU / GPU / ANE / DRAM) |
+| Memory | Usage and pressure level, sparkline, used / total, swap |
+| Battery | Level and charging state, health ring, cycle count, top power consumer (desktops show "No built-in battery") |
+| Disk / Network / Temperature | Free space and usage bar; live up/down rates with sparklines; CPU / GPU temperature with 5-minute peaks and thermal state |
+| Processes | **Grouped by app** (an app's main process and all its helpers form one row; the small number is the process count, memory / CPU are totals); non-app processes get a row each; sorted by energy impact and **scrollable**; the search box filters by app name, path or any member PID and shows "matches / total"; Esc clears the search first, then closes the panel; **click a row for details** |
+
+### Process detail
+
+<p align="center">
+  <img src="docs/popbar-monitor-detail.png" width="460" alt="Process detail: stat tiles, launch chain, source and confidence, launchd plist, resources and environment, member processes">
+</p>
+
+Click a process row (or "Why Is This Running?" in the menu) to open the detail window; Esc closes the detail first and a second Esc closes the panel; × or clicking outside also closes it:
+
+| Section | Content |
+|---|---|
+| Summary | Process count · CPU · memory · user · one-line source (e.g. "Managed by launchd") |
+| Launch chain | `launchd 1 › Cursor 45525`, expandable to the full chain; a sentence below explains the source (launchd service / SSH login / started from terminal X / started by X / unknown) |
+| Warnings | Running as root, listening on a public interface, preventing sleep, DYLD injection variables, program file replaced, running over 90 days, stopped, zombie, unknown source |
+| Fields | Confidence (high / medium / possible) and evidence, owner (child of an app), launchd reason (`launchctl blame`) and service label, plist / keep-alive / triggers, threads, open files, listening ports, sleep prevention, disk I/O, user, start time, working directory, Git repo, children outside the group, executable |
+| Member processes | Top 6 in the group by memory (PID / CPU / memory, with "prevents sleep / public port" markers); the rest are summarized as "N more processes" |
+| Raw path and command | Collapsible: executable path and the full command line |
+| Actions | Copy Summary, Show in Finder, Terminate, Force Quit |
+
+Terminate / Force Quit confirm first and verify the PID wasn't reused by the system (if the process turned into something else while the window was open, you get "The process changed while you were looking at it"). Critical system processes (PID 1, PopBar itself, root-owned programs under system directories) can't be terminated; permission failures and already-exited processes get clear messages. For an app, Terminate is the same as ⌘Q (it can save), Force Quit sends SIGKILL to all of the app's processes.
+
+Per-process context menu (right-click a row, or the "…" at the end of the row):
+
+| Item | Description |
+|---|---|
+| Pin Row / Unpin Row | Keep the process at the top of the list (in memory only; cleared when PopBar quits) |
+| Why Is This Running? | Opens the process detail above |
+| Show in Finder | Selects the process's executable in Finder |
+| Copy Process Name / Copy PID | Writes to the clipboard (kept out of clipboard history) |
+| Terminate / Force Quit | Ends that row after confirmation (the whole app for an app); rules above |
+
+<p align="center">
+  <img src="docs/popbar-monitor.png" width="460" alt="System Monitor panel: health score, CPU / GPU / memory / battery / disk / network / temperature and a searchable process table">
+</p>
+
+Sampling (IOReport / IOKit / libproc — no extra permissions) runs only while the panel is visible and stops on close, so PopBar's idle CPU stays ≈ 0.
+The collector is `Native/metrics.c` (C), exposed to Swift through the bridging header `Native/CMetrics.h`. Temperature and per-component power readings exist on Apple Silicon only; on Intel Macs those items show 0 or "—".
 
 ## Screenshot
 
@@ -361,12 +413,12 @@ Config lives in `~/Library/Application Support/PopBar/config.json` (auto-created
 ## Build & install
 
 ```bash
-./build.sh    # one command: compile → package build.noindex/PopBar.app → generate build/PopBar-<version>-<arch>.dmg
+./build.sh    # one command: compile (including the C collector in Native/metrics.c) → package build.noindex/PopBar.app → generate build/PopBar-<version>-<arch>.dmg
 ```
 
 The app bundle is deleted and rebuilt cleanly every time; a same-name DMG is overwritten; the DMG staging directory is cleaned up automatically. Open the DMG, drag `PopBar.app` into `Applications`, and launch it from Applications. The app only shows a menu bar icon — no Dock icon. You can also run the local build directly: `open build.noindex/PopBar.app`. The build and staging directories use the `.noindex` suffix so the dev copy stays out of Spotlight app results.
 
-Requirements: macOS 15+ (screen recording uses ScreenCaptureKit's `SCRecordingOutput`); building from source needs the Swift toolchain (Xcode or Command Line Tools).
+Requirements: macOS 15+ (screen recording uses ScreenCaptureKit's `SCRecordingOutput`); building from source needs the Swift toolchain and clang (both ship with Xcode or Command Line Tools).
 
 > DMGs downloaded from GitHub Releases are not notarized by Apple, so the first launch reports
 > "damaged and can't be opened". After dragging the app into `Applications`, run once in Terminal:
@@ -442,11 +494,18 @@ popbar/
 │   ├── RecordHistory.swift           # Recent recordings metadata, pruning and menu
 │   ├── RecordGIF.swift               # GIF export (frame extraction + ImageIO) and its panel
 │   ├── RecordPanelKit.swift          # Shared card / row / section styling for the export panels (matches Preferences)
+│   ├── SystemMonitorPanel.swift      # System Monitor panel shell (glass + gradient + SwiftUI content); samples only while open
+│   ├── SystemMonitorView.swift       # System Monitor SwiftUI content: metric cards, app-grouped scrollable/searchable process table, context menu
+│   ├── SystemMonitorDetailView.swift # Process detail window: summary / launch chain / warnings / fields / members / actions
+│   ├── SystemMonitorProcess.swift    # Process layer: libproc wrappers, app grouping, source and confidence, detail collection (launchctl / lsof / IOPM)
+│   ├── SystemMonitorModel.swift      # Sampling model (CMetrics snapshot → display data) and health score
+│   ├── SystemMonitorActions.swift    # Process actions: Finder / copy / terminate / force quit (system-process protection and PID-reuse check)
 │   ├── L10n.swift                    # Chinese/English UI strings
 │   ├── Actions.swift                 # CGEvent keystroke simulation (incl. flagsChanged)
 │   ├── AppActivation.swift           # Accessory-app foreground activation / Esc-closable window
 │   ├── BarTooltip.swift              # Hover tooltip (custom-drawn for non-activating panels)
 │   └── Screen.swift                  # CG/AX ↔ Cocoa coordinate conversion
+├── Native/                           # System Monitor C collector: metrics.c (IOReport / IOKit / libproc) + CMetrics.h (bridging header)
 ├── tests/                            # Pure-logic tests + popup-visibility lint (tests/run.sh)
 ├── shot/main.swift                   # Screenshot tool (standalone binary, reuses Sources)
 ├── icon/make_icon.swift              # Icon generator (vector drawing → iconset)
@@ -477,7 +536,9 @@ swift icon/make_icon.swift icon/PopBar.iconset icon/preview.png
 iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 
 # Regenerate the bar screenshots used in the README (light + dark)
-swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift
+clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o build/metrics.o   # System Monitor's C collector
+swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header Native/CMetrics.h -framework IOKit \
+    $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift build/metrics.o
 ./build/shot docs/popbar-bar-light.png docs/popbar-bar-dark.png
 
 # Screenshot-feature showcase image (offline composite over docs/index.html, no Screen Recording needed)
@@ -491,6 +552,8 @@ swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot $(ls Sources/*.swift
 - OCR uses offline Vision recognition; accuracy is limited for long passages and small fonts
 - The extension system has three lightweight types (URL/Shell/Shortcut); YAML+JS-style plugins are not supported
 - Scrolling capture only supports scrolling down; it relies on heuristics for fixed headers/footers, and large blank or animated areas may trigger the "scroll slower" hint; the result cannot be annotated
+- System Monitor process details rely on `launchctl` (trigger reason / service label) and `lsof` (listening ports); `launchctl procinfo` needs root so it isn't used. Protected system processes whose path can't be read can only show "unknown source"
+- System Monitor temperature / per-component power readings rely on Apple Silicon IOReport and show 0 or "—" on Intel Macs; the process list re-sorts by energy every second so rows move; "Why Is This Running?" is a rule-based guess from path and launch chain and stays generic for unusual background programs
 - The screenshot hotkey fires through a listen-only event tap, so the key also reaches the frontmost app; the selection can't span screens
 - No Developer ID signing or Apple notarization yet; the DMG is fine for local installs/internal testing — public distribution needs proper signing and notarization per Apple requirements
 

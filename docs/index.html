@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PopBar — 选中文字，事就办了</title>
-<meta name="description" content="PopBar 是一个 macOS 划词工具条：选中文字，浮动菜单即刻出现在选区上方。上下文感知、AI 翻译面板、隐私脱敏，外加微信式截屏与录屏导出，纯 Swift + AppKit。">
+<meta name="description" content="PopBar 是一个 macOS 划词工具条：选中文字，浮动菜单即刻出现在选区上方。上下文感知、AI 翻译面板、隐私脱敏，外加微信式截屏、录屏导出与系统监控面板，纯 Swift + AppKit。">
 <meta property="og:title" content="PopBar — 选中文字，事就办了">
-<meta property="og:description" content="macOS 划词工具条：划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏 · 录屏">
+<meta property="og:description" content="macOS 划词工具条：划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏 · 录屏 · 系统监控">
 <meta property="og:image" content="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-og.png">
 <link rel="icon" href="popbar-icon.png">
 <style>
@@ -261,6 +261,21 @@
         <p>ctrl+opt+r 选区或跟随窗口录制，倒计时开录、暂停、标记点；统一导出面板一次烧进点击涟漪、摄像头画中画与水印，也能导出 GIF。</p>
       </div>
       <div class="card reveal">
+        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4-5"/><circle cx="12" cy="16" r="1.2"/></svg></div>
+        <h3>系统监控</h3>
+        <p>菜单栏一点即开：健康评分、CPU（含每核）/ GPU / 内存 / 电池 / 磁盘 / 网络 / 温度实时面板，外观与翻译面板一致；只在打开时采样，空闲零开销。</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg></div>
+        <h3>进程管理</h3>
+        <p>按应用分组、可滚动可搜索；点击任意一行查看进程详情（启动链、launchd 原因、置信度、警告）；右键菜单可固定行、终止、强制退出。</p>
+      </div>
+      <div class="card reveal">
+        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></svg></div>
+        <h3>开发者工具箱</h3>
+        <p>HTML / Unicode 转义、SHA256 / MD5、JWT 解码、JSON 格式化与压缩，外加二维码生成；Dev 菜单里的「→ 替换」直接改写原文。</p>
+      </div>
+      <div class="card reveal">
         <div class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M7 10v4M11 10v4M15 10v4M19 10v4"/></svg></div>
         <h3>键盘模式</h3>
         <p>可配置全局快捷键唤起工具条；键盘模式期间 ←/→ 移动高亮、Enter 执行、Esc 关闭，拦截自动限时摘除。</p>
@@ -275,8 +290,8 @@
       <span class="chip">摄像头画中画</span>
       <span class="chip">导出 GIF</span>
       <span class="chip">贴图</span>
-      <span class="chip">开发者工具箱</span>
-      <span class="chip">二维码生成</span>
+      <span class="chip">进程搜索 / 终止</span>
+      <span class="chip">每核 CPU 曲线</span>
       <span class="chip">明暗双主题</span>
       <span class="chip">中英双语界面</span>
       <span class="chip">智能排序建议</span>
@@ -315,6 +330,14 @@
       <figure class="reveal">
         <img src="popbar-prefs.png" alt="偏好设置窗口">
         <figcaption>偏好设置 —— 工具条排序、应用规则、快捷键、截屏</figcaption>
+      </figure>
+      <figure class="reveal">
+        <img src="popbar-monitor.png" alt="系统监控面板：健康评分、CPU / GPU / 内存 / 电池 / 磁盘 / 网络 / 温度与按应用分组的进程表">
+        <figcaption>系统监控 —— 实时指标 + 按应用分组、可滚动可搜索的进程表</figcaption>
+      </figure>
+      <figure class="reveal">
+        <img src="popbar-monitor-detail.png" alt="进程详情：启动链、来源与置信度、launchd plist、资源与环境、成员进程">
+        <figcaption>进程详情 —— 为什么在运行、谁启动的、占了什么资源，可直接终止</figcaption>
       </figure>
       <figure class="wide reveal">
         <img src="popbar-settings.png" alt="AI 翻译设置窗口">

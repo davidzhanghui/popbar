@@ -8,7 +8,11 @@ mkdir -p build build.noindex
 # 先删后增:避免改名/删除的源码或资源在包里留下幽灵文件
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O -target $(uname -m)-apple-macos15.0 -o "build/PopBar" Sources/*.swift
+# 系统监控的 C 采集层(IOReport / SMC / libproc),经桥接头文件暴露给 Swift
+clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o build/metrics.o
+swiftc -O -target $(uname -m)-apple-macos15.0 -o "build/PopBar" \
+    -import-objc-header Native/CMetrics.h -framework IOKit \
+    Sources/*.swift build/metrics.o
 
 cp build/PopBar "$APP/Contents/MacOS/PopBar"
 cp Info.plist "$APP/Contents/Info.plist"
