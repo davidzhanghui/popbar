@@ -37,6 +37,7 @@
 - **截屏**:微信式截屏(`ctrl+opt+p`)——冻结画面、自动识别窗口、像素放大镜与取色、矩形/椭圆/箭头/画笔/文字/马赛克/序号标注、贴图、文字识别、长截图,可选本地截图历史
 - **菜单栏翻译入口**:截图 OCR / 输入 / 剪贴板三种方式直接唤起翻译面板;截图与剪贴板图片还会识别二维码
 - **系统监控**:菜单栏「系统监控」弹出实时面板——健康评分、CPU(含每核)/ GPU / 内存 / 电池 / 磁盘 / 网络 / 温度,以及按**应用分组**、可**滚动、搜索**的进程表;点击任意一行弹出**进程详情**(来源链、launchd 触发原因、置信度、警告、成员进程…),右键 / 「…」菜单可固定行、在访达中显示、复制名称 / PID、终止、强制退出。样式与翻译面板一致,仅在面板打开时采样
+- **磁盘清理**:菜单栏「磁盘清理」扫描 App 缓存与旧日志、开发工具(Xcode / Homebrew / Cargo / Gradle …)、AI 工具缓存与卸载残留,按大小排序、分类勾选,**一律移入废纸篓**(可放回原处);运行中的 App 自动加锁,只清理用户目录、不需要管理员权限
 - **剪贴板历史**:可选开启,记录文字/图片/文件(最多 10 条,可置顶),菜单栏条目子菜单提供粘贴/仅复制/追加/置顶;默认关闭、默认内存存储不落盘,密码类剪贴板标记一律跳过
 - **键盘操作**:可配置全局快捷键唤起;键盘模式期间 ←/→ 移动高亮、Enter 执行、Esc 关闭,自动限时摘除拦截
 - **中英双语界面**:菜单栏、浮动条、翻译面板、两个设置窗口均即时切换
@@ -136,6 +137,7 @@ flowchart TD
 | 截屏 | 唤起截屏(同全局快捷键,默认 `ctrl+opt+p`);详见下方「截屏」 |
 | 录屏 / 停止录屏 | 唤起录屏选区或停止当前录制(默认 `ctrl+opt+r`);详见下方「录屏」 |
 | 系统监控 | 打开 / 关闭系统监控面板;详见下方「系统监控」 |
+| 磁盘清理 | 打开 / 关闭磁盘清理面板;详见下方「磁盘清理」 |
 | 最近录制 | 有录制记录时显示;每条可打开 / 在 Finder 中显示 / 复制路径或文件 / 导出 GIF / 移到废纸篓 |
 | 截图历史 | 偏好设置里开启且有记录时显示;每条带缩略图,可复制 / 贴图 / 在 Finder 中显示,底部可打开文件夹、清空历史 |
 
@@ -192,6 +194,32 @@ flowchart TD
 
 采样(IOReport / IOKit / libproc,不需要额外权限)只在面板可见时运行,关闭即停,不影响 PopBar 空闲时 CPU ≈ 0。
 采集层是 `Native/metrics.c`(C),经桥接头文件 `Native/CMetrics.h` 供 Swift 调用。温度与分项功耗读数仅 Apple Silicon 有,Intel 机器上相应项显示 0 或「—」。
+
+## 磁盘清理
+
+菜单栏 →「磁盘清理」弹出与系统监控同款外观的面板,打开即自动扫描(`du` 并发测量),Esc 或 ✕ 关闭;**只清理用户目录,不需要管理员权限,不装任何特权助手**。
+
+<p align="center">
+  <img src="docs/popbar-clean.png" width="460" alt="磁盘清理面板:按分类列出缓存、日志、构建产物与卸载残留,勾选后移入废纸篓">
+</p>
+
+| 分类 | 扫描范围 | 默认 |
+|---|---|---|
+| App 缓存与日志 | `~/Library/Caches/*`、`~/Library/Logs/*`、`~/.cache` 中不在已知工具表里的目录 | 缓存与日志勾选;`com.apple.*` 与未知目录需确认(不勾) |
+| 开发工具 | Xcode DerivedData / DeviceSupport / SourcePackages、CoreSimulator 缓存、Cargo、Gradle、Maven、pub、Go 模块、Homebrew、`~/.cache` 下 pnpm / uv / pip / playwright 等,以及 npm 缓存 | 可再生的勾选;Swift 包缓存与 Go 模块需确认 |
+| AI 工具 | `~/.cache` 下 claude / codex / cursor-agent / ollama / torch 等 | 模型缓存(torch / ollama)需确认 |
+| 卸载残留 | `~/Library/Containers`、`~/Library/Application Support` 中找不到宿主 App 的 bundle id 目录 | 一律不勾选 |
+| 手动管理 | Claude 虚拟机镜像、Ollama 模型、Hugging Face 模型 | 只显示占用,不参与清理 |
+
+安全设计:
+
+- **移入废纸篓,可恢复**。清理前会确认;进了废纸篓的空间要清倒废纸篓后才真正释放,面板里的结果条带「打开废纸篓」。唯一例外是 **npm 缓存**:它是内容寻址缓存,粗暴删除会毁掉全部有效缓存,所以只做**引用图分析**——扫描 `index-v5` 找出所有被引用的内容,只直接删除无引用的孤儿 blob 与 `tmp/` 残留(有效缓存保留,npm / node 运行中跳过)
+- **路径复核**:执行时对每一项重新校验——必须是绝对路径、无 `..`、不是符号链接、位于允许的清理根之下且不能是根本身、不碰系统目录;评审阶段的勾选状态不被信任
+- **占用检测**:所属 App 正在运行的条目加锁(显示「使用中」),不可勾选;执行时再复核一次
+- PopBar 自己的缓存与日志、Safari 数据永不进入清单
+- 操作记录写入 `~/Library/Logs/PopBar/clean.log`(时间 / 操作 / RAN 或 SKIPPED / 条目数 / 详情)
+- 面板按分类分 tab;底栏的「已选 / 全选 / 全不选 / 推荐 / 移入废纸篓」只作用于**当前 tab**,其他 tab 里的勾选不会被统计,也不会被清理
+- 每一行有「移到废纸篓」与「在访达中显示」按钮,可只处理单项
 
 ## 截屏
 
@@ -486,6 +514,14 @@ popbar/
 │   ├── SystemMonitorProcess.swift    # 进程层:libproc 封装、按应用分组、来源判定与可信度、详情采集(launchctl / lsof / IOPM)
 │   ├── SystemMonitorModel.swift      # 采样模型(CMetrics 快照 → 展示数据)与健康评分
 │   ├── SystemMonitorActions.swift    # 进程动作:访达 / 复制 / 终止 / 强制退出(含系统进程保护与 PID 复用校验)
+│   ├── CleanPanel.swift              # 磁盘清理面板外壳(毛玻璃 + 渐变 + SwiftUI 内容),打开即扫描
+│   ├── CleanView.swift               # 磁盘清理 SwiftUI 内容:分类卡片、勾选、结果条、手动管理区
+│   ├── CleanViewModel.swift          # 扫描 → 并发测量 → 勾选 → 执行(进废纸篓)→ 记账的编排
+│   ├── CleanScanner.swift            # 扫描器:按规则枚举缓存 / 日志 / 构建产物 / 卸载残留,解析所属 App
+│   ├── CleanRules.swift              # 内置规则表:AI / 开发工具目录、固定路径、手动管理项、保护名单
+│   ├── CleanModel.swift              # 清理数据模型:分类、安全分级、条目、结果汇总
+│   ├── CleanCore.swift               # 路径复核(CleanPathGuard)、大小探测、移入废纸篓、操作日志
+│   ├── CleanNpmGC.swift              # npm cacache 引用图分析:只删无引用的孤儿 blob
 │   ├── L10n.swift                    # 中/英双语界面字符串
 │   ├── Actions.swift                 # CGEvent 按键模拟(含 flagsChanged)
 │   ├── AppActivation.swift           # accessory 应用激活前台 / Esc 可关窗口
@@ -527,6 +563,9 @@ swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header 
 
 # 生成截屏功能展示图(离线合成 docs/index.html 作背景,无需屏幕录制权限)
 ./build/shot --snap docs
+
+# 生成磁盘清理面板图(数据来自临时沙箱目录,不含个人数据)
+./build/shot --clean docs
 ```
 
 ## 已知限制
@@ -536,6 +575,7 @@ swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header 
 - OCR 走 Vision 离线识别,长段落/小字体识别率有限
 - 扩展系统为轻量三类(URL/Shell/Shortcut),暂不支持 YAML+JS 形式的插件
 - 长截图只支持向下滚动,依靠固定页头/页脚的启发式检测,大面积空白或动画区域可能提示「请慢一点滚动」;长截图结果不能再标注
+- 磁盘清理读取 `~/Library/Caches` 等目录的大小,部分受保护目录需要「完全磁盘访问权限」才能测量,读不到的条目显示「—」并提示「部分条目未能测量」;不清理需要 root 的系统级目录(`/Library/Caches`、系统日志等)
 - 系统监控的进程详情依赖 `launchctl`(trigger 原因 / 服务 label)与 `lsof`(监听端口);`launchctl procinfo` 需要 root,所以不读取。读不到路径的受保护系统进程只能显示「来源未知」
 - 系统监控的温度 / 分项功耗读数依赖 Apple Silicon 的 IOReport,Intel 机器上为 0 或「—」;进程列表每秒按能耗重排,行位置会跳动;「为什么在运行?」是基于路径与启动链的规则判断,对少见的后台程序只给笼统说明
 - 截屏快捷键经 listen-only event tap 触发,按键同时会传给前台应用;截屏选区不能跨屏

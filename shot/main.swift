@@ -5,6 +5,7 @@ import WebKit
 // 截图工具:真实显示浮动条并用 ScreenCaptureKit 抓窗口图像(含毛玻璃材质)。
 // 用法: ./build/shot <浅色输出.png> <深色输出.png>
 //       ./build/shot --monitor [输出目录]  生成系统监控面板图(浅色 popbar-monitor.png)与进程详情图(popbar-monitor-detail.png),只展示系统自带进程
+//       ./build/shot --clean [输出目录]  生成磁盘清理面板图(popbar-clean.png),数据来自临时沙箱目录
 //       ./build/shot --snap [输出目录]   生成截屏功能展示图(离线合成,不需要屏幕录制权限)
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
@@ -211,6 +212,44 @@ if CommandLine.arguments.contains("--monitor") {
             monitor.openDetail(named: "Finder")
             try? await Task.sleep(nanoseconds: 3_500_000_000)   // 等 launchctl / lsof 采集完成
             await capture(outDir + "/popbar-monitor-detail.png", windowID: monitor.windowID)
+            NSApp.terminate(nil)
+        }
+    }
+    app.run()
+} else if CommandLine.arguments.contains("--clean") {
+    let idx = CommandLine.arguments.firstIndex(of: "--clean")!
+    let outDir = CommandLine.arguments.count > idx + 1 ? CommandLine.arguments[idx + 1] : "docs"
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        Task { @MainActor in
+            NSApp.appearance = NSAppearance(named: .aqua)
+            // 沙箱 home:造一批常见缓存目录(MB 级,用完即删),图里不出现任何个人数据
+            let fm = FileManager.default
+            let home = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("popbar-clean-shot-\(UUID().uuidString.prefix(6))")
+            func fill(_ rel: String, mb: Int) {
+                let dir = home.appendingPathComponent(rel)
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                try? Data((0..<(mb * 1_048_576)).map { _ in UInt8.random(in: 0...255) })
+                    .write(to: dir.appendingPathComponent("data.bin"))
+            }
+            fill("Library/Developer/Xcode/DerivedData", mb: 220)
+            fill("Library/Caches/Homebrew", mb: 90)
+            fill("Library/Caches/com.figma.Desktop", mb: 150)
+            fill("Library/Caches/com.tinyspeck.slackmacgap", mb: 60)
+            fill("Library/Logs/SomeApp", mb: 12)
+            fill(".cache/uv", mb: 80)
+            fill(".cache/claude", mb: 30)
+            fill(".cache/torch", mb: 120)
+            fill(".cache/huggingface", mb: 200)
+            fill("Library/Containers/com.old.unused.tool", mb: 40)
+            let panel = CleanPanel.shared
+            panel.useHome(home)
+            panel.show()
+            var waited = 0
+            while !panel.viewModel.hasScanned && waited < 300 { try? await Task.sleep(nanoseconds: 100_000_000); waited += 1 }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await capture(outDir + "/popbar-clean.png", windowID: panel.windowID)
+            try? fm.removeItem(at: home)
             NSApp.terminate(nil)
         }
     }

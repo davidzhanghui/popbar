@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PopBar — 选中文字，事就办了</title>
-<meta name="description" content="PopBar 是一个 macOS 划词工具条：选中文字，浮动菜单即刻出现在选区上方。上下文感知、AI 翻译面板、隐私脱敏，外加微信式截屏、录屏导出与系统监控面板，纯 Swift + AppKit。">
+<meta name="description" content="PopBar 是一个 macOS 划词工具条：选中文字，浮动菜单即刻出现在选区上方。上下文感知、AI 翻译面板、隐私脱敏，外加微信式截屏、录屏导出、系统监控与磁盘清理，纯 Swift + AppKit。">
 <meta property="og:title" content="PopBar — 选中文字，事就办了">
-<meta property="og:description" content="macOS 划词工具条：划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏 · 录屏 · 系统监控">
+<meta property="og:description" content="macOS 划词工具条：划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏 · 录屏 · 系统监控 · 磁盘清理">
 <meta property="og:image" content="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-og.png">
 <link rel="icon" href="popbar-icon.png">
 <style>
@@ -271,6 +271,11 @@
         <p>按应用分组、可滚动可搜索；点击任意一行查看进程详情（启动链、launchd 原因、置信度、警告）；右键菜单可固定行、终止、强制退出。</p>
       </div>
       <div class="card reveal">
+        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12"/><path d="M10 11v5M14 11v5"/></svg></div>
+        <h3>磁盘清理</h3>
+        <p>扫描 App 缓存、Xcode / Homebrew / npm 等开发缓存、AI 工具缓存与卸载残留，按大小分类勾选；一律移入废纸篓可恢复，运行中的 App 自动加锁，不需要管理员权限。</p>
+      </div>
+      <div class="card reveal">
         <div class="glyph"><svg viewBox="0 0 24 24"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></svg></div>
         <h3>开发者工具箱</h3>
         <p>HTML / Unicode 转义、SHA256 / MD5、JWT 解码、JSON 格式化与压缩，外加二维码生成；Dev 菜单里的「→ 替换」直接改写原文。</p>
@@ -338,6 +343,10 @@
       <figure class="reveal">
         <img src="popbar-monitor-detail.png" alt="进程详情：启动链、来源与置信度、launchd plist、资源与环境、成员进程">
         <figcaption>进程详情 —— 为什么在运行、谁启动的、占了什么资源，可直接终止</figcaption>
+      </figure>
+      <figure class="reveal">
+        <img src="popbar-clean.png" alt="磁盘清理面板：按分类列出缓存、日志、构建产物与卸载残留，勾选后移入废纸篓">
+        <figcaption>磁盘清理 —— 缓存 / 构建产物 / 卸载残留按分类勾选，一律移入废纸篓可恢复</figcaption>
       </figure>
       <figure class="wide reveal">
         <img src="popbar-settings.png" alt="AI 翻译设置窗口">

@@ -36,6 +36,7 @@
 - **Screenshot**: WeChat-style capture (`ctrl+opt+p`) — frozen screen, window detection, pixel magnifier and color picker, rectangle/ellipse/arrow/pen/text/mosaic/number annotations, pin to screen, OCR, scrolling capture, optional local history
 - **Menu bar translation entries**: screenshot OCR / input / clipboard — three ways to open the translation panel; screenshots and clipboard images are also scanned for QR codes
 - **System Monitor**: menu bar → "System Monitor" opens a live panel — health score, CPU (per core) / GPU / memory / battery / disk / network / temperature, plus a process table **grouped by app**, scrollable and searchable; click any row for a **process detail** window (launch chain, launchd reason, confidence, warnings, member processes…), and use the right-click / "…" menu to pin a row, show in Finder, copy name / PID, terminate or force quit. Styled like the translation panel; samples only while the panel is open
+- **Disk Cleanup**: menu bar → "Disk Cleanup" scans app caches and old logs, developer tools (Xcode / Homebrew / Cargo / Gradle …), AI-tool caches and uninstall leftovers; sorted by size, checked by group, and **always moved to the Trash** (put-back works). Apps that are running are locked; only your user folders are touched and no admin rights are needed
 - **Clipboard history**: opt-in; records text/images/files (up to 10 items, pinnable) with per-item submenu — paste / copy only / append / pin; off by default and memory-only, concealed clipboard markers always skipped
 - **Screen Recording**: region / window-following / full-screen capture (`ctrl+opt+r`, macOS 15+) — countdown before capture, H.264/HEVC, MOV/MP4, 30/60fps, system audio + microphone, pause, markers, camera picture-in-picture, click ripples, watermark, one export panel (trim / compress / mix), GIF export
 - **Keyboard control**: configurable global hotkey; in keyboard mode ←/→ moves the highlight, Enter runs, Esc closes; the interceptor tap is auto-removed on timeout
@@ -136,6 +137,7 @@ Screenshot entries in the menu bar:
 |---|---|
 | Screenshot | Starts a capture (same as the global hotkey, default `ctrl+opt+p`); see "Screenshot" below |
 | System Monitor | Open / close the System Monitor panel; see "System Monitor" below |
+| Disk Cleanup | Open / close the Disk Cleanup panel; see "Disk Cleanup" below |
 | Screenshot History | Shown when enabled in Preferences and there are records; each item has a thumbnail with Copy / Pin / Show in Finder, plus Open Folder and Clear History at the bottom |
 
 Other menu items: master switch for the selection bar, one-click disable/enable for the
@@ -193,6 +195,32 @@ Per-process context menu (right-click a row, or the "…" at the end of the row)
 
 Sampling (IOReport / IOKit / libproc — no extra permissions) runs only while the panel is visible and stops on close, so PopBar's idle CPU stays ≈ 0.
 The collector is `Native/metrics.c` (C), exposed to Swift through the bridging header `Native/CMetrics.h`. Temperature and per-component power readings exist on Apple Silicon only; on Intel Macs those items show 0 or "—".
+
+## Disk Cleanup
+
+Menu bar → "Disk Cleanup" opens a panel styled like System Monitor and scans immediately (sizes measured concurrently with `du`); Esc or ✕ closes it. **It only cleans your user folders — no admin rights and no privileged helper.**
+
+<p align="center">
+  <img src="docs/popbar-clean.png" width="460" alt="Disk Cleanup panel: caches, logs, build products and uninstall leftovers by category, moved to the Trash when checked">
+</p>
+
+| Category | Scanned | Default |
+|---|---|---|
+| App caches & logs | `~/Library/Caches/*`, `~/Library/Logs/*`, and `~/.cache` folders not in the known-tools list | Caches and logs checked; `com.apple.*` and unknown folders need review (unchecked) |
+| Developer tools | Xcode DerivedData / DeviceSupport / SourcePackages, CoreSimulator caches, Cargo, Gradle, Maven, pub, Go modules, Homebrew, `~/.cache` pnpm / uv / pip / playwright …, and the npm cache | Rebuildable items checked; Swift package and Go module caches need review |
+| AI tools | `~/.cache` claude / codex / cursor-agent / ollama / torch … | Model caches (torch / ollama) need review |
+| Uninstall leftovers | Bundle-id folders in `~/Library/Containers` and `~/Library/Application Support` with no matching app | Never checked by default |
+| Manual | Claude VM images, Ollama models, Hugging Face models | Size shown only; not cleaned |
+
+Safety design:
+
+- **Moved to the Trash, recoverable.** A confirmation comes first; space is only freed once you empty the Trash, and the result bar has an "Open Trash" button. The one exception is the **npm cache**: it is content-addressed, so wiping it would destroy every live entry. PopBar does a **reference-graph analysis** instead — it reads `index-v5` for every referenced blob and directly removes only orphan blobs and `tmp/` leftovers (live cache is kept; skipped while npm / node is running)
+- **Path re-check**: every item is re-validated at execution time — absolute path, no `..`, not a symlink, inside an allowed root (never the root itself), never a system directory; the review-time checkbox state is not trusted
+- **In-use detection**: items whose owning app is running are locked ("In use") and can’t be checked; re-checked again at execution
+- PopBar’s own caches and logs, and Safari data, never enter the list
+- Operations are logged to `~/Library/Logs/PopBar/clean.log` (time / action / RAN or SKIPPED / count / detail)
+- The panel is split into one tab per category; the footer ("selected / All / None / Recommended / Move to Trash") acts on the **current tab only** — selections in other tabs are neither counted nor cleaned
+- Each row has "Move to Trash" and "Show in Finder" buttons for single-item cleanup
 
 ## Screenshot
 
@@ -500,6 +528,14 @@ popbar/
 │   ├── SystemMonitorProcess.swift    # Process layer: libproc wrappers, app grouping, source and confidence, detail collection (launchctl / lsof / IOPM)
 │   ├── SystemMonitorModel.swift      # Sampling model (CMetrics snapshot → display data) and health score
 │   ├── SystemMonitorActions.swift    # Process actions: Finder / copy / terminate / force quit (system-process protection and PID-reuse check)
+│   ├── CleanPanel.swift              # Disk Cleanup panel shell (glass + gradient + SwiftUI content); scans on open
+│   ├── CleanView.swift               # Disk Cleanup SwiftUI content: category cards, checkboxes, result bar, manual section
+│   ├── CleanViewModel.swift          # Orchestration: scan → concurrent measure → select → execute (to Trash) → log
+│   ├── CleanScanner.swift            # Scanner: enumerates caches / logs / build products / leftovers by rule, resolves owning app
+│   ├── CleanRules.swift              # Built-in rules: AI / dev-tool folders, fixed paths, manual items, protected names
+│   ├── CleanModel.swift              # Cleanup data model: categories, safety levels, items, result summary
+│   ├── CleanCore.swift               # Path re-check (CleanPathGuard), size probe, move-to-Trash, operation log
+│   ├── CleanNpmGC.swift              # npm cacache reference-graph analysis: removes only unreferenced orphan blobs
 │   ├── L10n.swift                    # Chinese/English UI strings
 │   ├── Actions.swift                 # CGEvent keystroke simulation (incl. flagsChanged)
 │   ├── AppActivation.swift           # Accessory-app foreground activation / Esc-closable window
@@ -543,6 +579,9 @@ swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header 
 
 # Screenshot-feature showcase image (offline composite over docs/index.html, no Screen Recording needed)
 ./build/shot --snap docs
+
+# Disk Cleanup panel image (data comes from a temporary sandbox folder, no personal data)
+./build/shot --clean docs
 ```
 
 ## Known limitations
@@ -552,6 +591,7 @@ swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header 
 - OCR uses offline Vision recognition; accuracy is limited for long passages and small fonts
 - The extension system has three lightweight types (URL/Shell/Shortcut); YAML+JS-style plugins are not supported
 - Scrolling capture only supports scrolling down; it relies on heuristics for fixed headers/footers, and large blank or animated areas may trigger the "scroll slower" hint; the result cannot be annotated
+- Disk Cleanup measures sizes under `~/Library/Caches` etc.; some protected folders need "Full Disk Access" to be measured — unreadable items show "—" and a "Some items couldn’t be measured" hint. System-level folders that need root (`/Library/Caches`, system logs …) are not cleaned
 - System Monitor process details rely on `launchctl` (trigger reason / service label) and `lsof` (listening ports); `launchctl procinfo` needs root so it isn't used. Protected system processes whose path can't be read can only show "unknown source"
 - System Monitor temperature / per-component power readings rely on Apple Silicon IOReport and show 0 or "—" on Intel Macs; the process list re-sorts by energy every second so rows move; "Why Is This Running?" is a rule-based guess from path and launch chain and stays generic for unusual background programs
 - The screenshot hotkey fires through a listen-only event tap, so the key also reaches the frontmost app; the selection can't span screens

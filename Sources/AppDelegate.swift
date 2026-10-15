@@ -147,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (L10n.t("输入翻译", "Input Translate"), #selector(inputTranslateAction), ""),
             (L10n.t("剪贴板翻译", "Clipboard Translate"), #selector(clipboardTranslateAction), ""),
             (L10n.t("系统监控", "System Monitor"), #selector(systemMonitorAction), ""),
+            (L10n.t("磁盘清理", "Disk Cleanup"), #selector(diskCleanAction), ""),
         ] {
             let mi = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             if let eq = Hotkey.menuEquivalent(hotkey) {
@@ -308,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func inputTranslateAction() { TranslateTriggers.input() }
     @objc private func clipboardTranslateAction() { TranslateTriggers.clipboard() }
     @objc @MainActor private func systemMonitorAction() { SystemMonitorPanel.shared.toggle() }
+    @objc @MainActor private func diskCleanAction() { CleanPanel.shared.toggle() }
 
     @objc private func openPreferencesAction() {
         PreferencesWindowController.shared.show()

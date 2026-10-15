@@ -13,11 +13,11 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.1</string>
+    <string>2.2</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>4</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>PopBar uses automation to read the browser's current URL for clipping and to create Calendar events.</string>
+    <string>PopBar uses automation to read the browser's current URL for clipping, to create Calendar events, and to ask Finder to move protected leftover folders (such as app containers) to the Trash in Disk Cleanup.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>PopBar records microphone audio into screen recordings when you turn on the microphone option.</string>
     <key>NSCameraUsageDescription</key>
