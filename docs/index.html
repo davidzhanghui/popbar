@@ -34,8 +34,29 @@
     background:radial-gradient(closest-side,rgba(116,77,242,.15),transparent 70%); }
   body::after { content:""; position:fixed; right:-12%; bottom:-18%; width:56%; height:56%; z-index:-1;
     background:radial-gradient(closest-side,rgba(116,77,242,.11),transparent 70%); }
+  body { padding-left:56px; }
+  section, header.hero { scroll-margin-top:64px; }
   .wrap { max-width:1120px; margin:0 auto; padding:0 40px; }
   .en { font-family:"Helvetica Neue",Helvetica,Arial,sans-serif; }
+
+  /* ---------- left rail ---------- */
+  .rail { position:fixed; left:0; top:0; bottom:0; width:56px; z-index:60; display:flex;
+    flex-direction:column; align-items:center; gap:8px; padding:12px 0;
+    background:rgba(246,244,253,.82); backdrop-filter:blur(24px) saturate(1.6);
+    -webkit-backdrop-filter:blur(24px) saturate(1.6); border-right:1px solid var(--line); }
+  .rail a { position:relative; width:40px; height:40px; border-radius:11px; display:flex;
+    align-items:center; justify-content:center; color:var(--sub); text-decoration:none;
+    transition:background .18s, color .18s; }
+  .rail a svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.7;
+    stroke-linecap:round; stroke-linejoin:round; }
+  .rail a:hover { background:var(--accent-soft); color:var(--accent); }
+  .rail a[aria-current="true"] { background:var(--accent-soft); color:var(--accent); }
+  .rail a::after { content:attr(data-tip); position:absolute; left:50px; top:50%;
+    transform:translate(-4px,-50%); padding:5px 11px; border-radius:8px; white-space:nowrap;
+    font-size:13px; background:var(--ink); color:#fff; opacity:0; pointer-events:none;
+    transition:opacity .16s, transform .16s; }
+  .rail a:hover::after { opacity:1; transform:translate(0,-50%); }
+  .rail .spacer { flex:1; }
 
   /* ---------- nav ---------- */
   nav { position:sticky; top:0; z-index:50; backdrop-filter:blur(24px) saturate(1.6);
@@ -48,6 +69,11 @@
   nav .links { margin-left:auto; display:flex; gap:30px; align-items:center; }
   nav .links a { color:var(--sub); text-decoration:none; font-size:15px; transition:color .2s; }
   nav .links a:hover { color:var(--accent); }
+  nav .links a:not(.gh) { position:relative; display:flex; align-items:center; height:64px; }
+  nav .links a:not(.gh)::after { content:""; position:absolute; left:0; right:0; bottom:-1px;
+    height:2px; background:var(--accent); transform:scaleX(0); transition:transform .22s; }
+  nav .links a[aria-current="true"] { color:var(--ink); font-weight:600; }
+  nav .links a[aria-current="true"]::after { transform:scaleX(1); }
   nav .gh { display:inline-flex; align-items:center; gap:7px; padding:8px 18px;
     border-radius:999px; background:var(--ink); color:#fff !important; font-weight:500;
     transition:transform .2s, box-shadow .2s; }
@@ -83,6 +109,10 @@
   .sec-head .kicker { margin-top:0; }
   .sec-head h2 { margin-top:14px; font-size:44px; font-weight:600; }
   .sec-head p { margin-top:14px; font-size:18px; color:var(--sub); }
+  .sec-head.left { text-align:left; display:flex; align-items:flex-end; justify-content:space-between;
+    gap:20px; border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:0; }
+  .sec-head.left h2 { font-size:52px; line-height:1.1; letter-spacing:-.01em; }
+  .sec-head.left .count { font-size:16px; font-weight:600; white-space:nowrap; padding-bottom:8px; }
 
   /* video */
   .video-shell { max-width:960px; margin:0 auto; border-radius:var(--radius); overflow:hidden;
@@ -104,6 +134,22 @@
     stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .card h3 { margin-top:18px; font-size:20px; font-weight:600; }
   .card p { margin-top:10px; font-size:15px; line-height:1.7; color:var(--sub); }
+  .grid { gap:0; border-left:1px solid var(--line); }
+  .grid .card { border-radius:0; border:0; border-right:1px solid var(--line);
+    border-bottom:1px solid var(--line); box-shadow:none; cursor:pointer; position:relative;
+    transition:opacity .7s ease, transform .7s ease, background .18s; }
+  .grid .card:hover { transform:none; box-shadow:none; background:rgba(255,255,255,.96); }
+  .grid .card.reveal.on:hover { transform:none; }
+  .grid .card .glyph { float:left; margin-right:14px; }
+  .grid .card h3 { margin-top:0; line-height:46px; }
+  .grid .card p { clear:both; padding-top:12px; display:-webkit-box; -webkit-line-clamp:3;
+    -webkit-box-orient:vertical; overflow:hidden; }
+  .grid .card.open p { display:block; -webkit-line-clamp:unset; }
+  .grid .card::after { content:"展开"; position:absolute; right:18px; top:30px; font-size:12px;
+    color:var(--faint); opacity:0; transition:opacity .18s; }
+  .grid .card:hover::after { opacity:1; }
+  .grid .card.open::after { content:"收起"; }
+  @media (min-width:901px) { .grid .card:last-child:nth-child(3n+1) { grid-column:1 / -1; } }
   .chips { margin-top:34px; display:flex; flex-wrap:wrap; gap:10px; justify-content:center; }
   .chip { padding:8px 16px; border-radius:999px; font-size:14px; color:#5b5478;
     background:rgba(255,255,255,.6); border:1px solid var(--line); }
@@ -154,11 +200,25 @@
     .shots { grid-template-columns:1fr; }
     .hero h1 { font-size:46px; }
     nav .links a:not(.gh) { display:none; }
+    .rail { display:none; }
+    body { padding-left:0; }
+    .sec-head.left { flex-direction:column; align-items:flex-start; gap:6px; }
+    .sec-head.left h2 { font-size:36px; }
     .wrap { padding:0 22px; }
   }
 </style>
 </head>
 <body>
+
+<aside class="rail" aria-label="快速导航">
+  <a href="#top" data-tip="顶部" aria-label="顶部"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg></a>
+  <a href="#demo" data-tip="演示" aria-label="演示"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4-2.5z"/></svg></a>
+  <a href="#features" data-tip="特性" aria-label="特性"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></a>
+  <a href="#shots" data-tip="截图" aria-label="截图"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/></svg></a>
+  <a href="#install" data-tip="安装" aria-label="安装"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg></a>
+  <span class="spacer"></span>
+  <a href="https://github.com/davidzhanghui/popbar" target="_blank" rel="noopener" data-tip="GitHub" aria-label="GitHub"><svg viewBox="0 0 24 24"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.800-.3 5.800-1.400 5.800-6.200a4.800 4.800 0 0 0-1.300-3.300 4.500 4.500 0 0 0-.1-3.300s-1-.3-3.500 1.300a12 12 0 0 0-6.200 0C6.400 1.600 5.400 1.900 5.400 1.900a4.500 4.500 0 0 0-.1 3.300A4.800 4.800 0 0 0 4 8.500c0 4.800 3 5.900 5.800 6.200a3 3 0 0 0-.8 2.300V21"/></svg></a>
+</aside>
 
 <nav>
   <div class="wrap">
@@ -177,7 +237,7 @@
   </div>
 </nav>
 
-<header class="hero">
+<header class="hero" id="top">
   <div class="wrap">
     <img class="icon" src="popbar-icon.png" alt="PopBar 图标">
     <div class="kicker en">MACOS 划词工具条</div>
@@ -214,10 +274,12 @@
 
 <section id="features">
   <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker en">FEATURES</div>
-      <h2>认出你选中的是什么</h2>
-      <p>不止复制粘贴 —— PopBar 读懂选区，把对的按钮递到手边</p>
+    <div class="sec-head left reveal">
+      <div>
+        <div class="kicker en">FEATURES</div>
+        <h2>认出你选中的是什么</h2>
+      </div>
+      <div class="count">13 项核心能力</div>
     </div>
     <div class="grid">
       <div class="card reveal">
@@ -400,6 +462,19 @@ cd popbar
     if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); }
   }), { threshold: .12 });
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  // 点击卡片展开 / 收起完整描述
+  document.querySelectorAll('.grid .card').forEach(c => c.addEventListener('click', () => c.classList.toggle('open')));
+
+  // scroll-spy：滚到哪一节，导航与左侧栏对应项高亮
+  const spyLinks = [...document.querySelectorAll('nav .links a[href^="#"], .rail a[href^="#"]')];
+  const spyIds = ['top','demo','features','shots','install'];
+  const spy = new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    const id = e.target.id;
+    spyLinks.forEach(a => a.setAttribute('aria-current', a.getAttribute('href') === '#' + id ? 'true' : 'false'));
+  }), { rootMargin: '-40% 0px -55% 0px' });
+  spyIds.forEach(id => spy.observe(document.getElementById(id)));
 
   document.querySelectorAll('.copy-btn').forEach(btn => btn.addEventListener('click', () => {
     navigator.clipboard.writeText(btn.dataset.copy).then(() => {
