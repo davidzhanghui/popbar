@@ -979,5 +979,169 @@ do {
     expect(StartupItems.parse(bare.path)?.program == nil, "裸命令名不判断")
 }
 
+// MARK: - 今日待办
+
+section("TodoMarkdown")
+do {
+    let doc = TodoMarkdown.parse("""
+    # 2026-10-16
+
+    - [ ] 写周报 <!--src:Safari-->
+    - [x] 回邮件
+    - [>] 已顺延的
+    随手备注
+    """)
+    expectEqual(doc.items.map { $0.text }, ["写周报", "回邮件"], "parse: 任务文本(去掉来源注释)")
+    expectEqual(doc.items.map { $0.done }, [false, true], "parse: 完成状态")
+    expectEqual(doc.items.first?.source, "Safari", "parse: 来源")
+    expectEqual(doc.extras, ["- [>] 已顺延的", "随手备注"], "parse: 无法识别的行原样保留")
+    let out = TodoMarkdown.render(day: "2026-10-16", doc: doc)
+    let again = TodoMarkdown.parse(out)
+    expect(again.items.map { [$0.text, "\($0.done)", $0.source ?? ""] } == doc.items.map { [$0.text, "\($0.done)", $0.source ?? ""] }
+           && again.extras == doc.extras, "render → parse 往返一致")
+    expect(out.hasPrefix("# 2026-10-16\n"), "render: 标题")
+    expectEqual(TodoMarkdown.oneLine("a\n b \n\nc"), "a b c", "多行文本压成一行")
+    expect(TodoMarkdown.isDayFile("2026-10-16.md") && !TodoMarkdown.isDayFile("notes.md"), "按日文件名识别")
+
+    let carried = TodoMarkdown.carry(from: "# d\n\n- [ ] a\n- [x] b\n- [ ] c\n")
+    expectEqual(carried.carried.map { $0.text }, ["a", "c"], "carry: 只取未完成")
+    expect(carried.rewritten.contains("- [>] a") && carried.rewritten.contains("- [x] b"), "carry: 旧文件改写为 [>]")
+    expectEqual(TodoMarkdown.carry(from: carried.rewritten).carried.count, 0, "carry: 不会重复顺延")
+    expectEqual(PomodoroMath.format(1500), "25:00", "番茄钟 25:00")
+    expectEqual(PomodoroMath.format(59), "00:59", "番茄钟 00:59")
+    expectEqual(PomodoroMath.format(-3), "00:00", "番茄钟不为负")
+}
+
+section("TodoMarkdown rid 标记")
+do {
+    let doc = TodoMarkdown.parse("- [ ] 买菜 <!--src:Safari--> <!--rid:ABC-1-->\n- [x] 只有 rid <!--rid:XYZ-->\n- [ ] 正文里有 <!--src:x--> 的注释样子 但不在行尾\n")
+    expectEqual(doc.items[0].text, "买菜", "rid: 正文剥离两个标记")
+    expectEqual(doc.items[0].rid, "ABC-1", "rid: 解析")
+    expectEqual(doc.items[0].source, "Safari", "rid: 来源仍可解析")
+    expectEqual(doc.items[1].rid, "XYZ", "rid: 单独存在")
+    expectEqual(doc.items[2].rid, nil, "rid: 非行尾不当标记")
+    let again = TodoMarkdown.parse(TodoMarkdown.render(day: "2026-10-16", doc: doc))
+    expect(again.items.map { [$0.text, $0.rid ?? "-", $0.source ?? "-"] } == doc.items.map { [$0.text, $0.rid ?? "-", $0.source ?? "-"] }, "rid: render → parse 往返")
+}
+
+section("ReminderSync.plan")
+do {
+    func item(_ t: String, rid: String? = nil, done: Bool = false) -> TodoItem { TodoItem(text: t, done: done, rid: rid) }
+    let mark = { (t: String, d: Bool) in ReminderMark(title: t, done: d) }
+
+    // 本地新增 → 创建;已完成且无 rid → 不创建
+    var p = ReminderSync.plan(items: [item("a"), item("b", done: true)], remote: [], state: [:], deleted: [])
+    expectEqual(p.creates.count, 1, "本地新增 → 创建 1 条")
+    expect(!p.changedLocal, "无本地变化")
+
+    // 两边一致 → 无动作
+    p = ReminderSync.plan(items: [item("a", rid: "r1")], remote: [ReminderSnap(id: "r1", title: "a", done: false)],
+                          state: ["r1": mark("a", false)], deleted: [])
+    expect(p.updates.isEmpty && p.creates.isEmpty && p.deletes.isEmpty && !p.changedLocal, "一致 → 无动作")
+
+    // 远端勾选 → 本地完成
+    p = ReminderSync.plan(items: [item("a", rid: "r1")], remote: [ReminderSnap(id: "r1", title: "a", done: true)],
+                          state: ["r1": mark("a", false)], deleted: [])
+    expectEqual(p.items[0].done, true, "远端勾选 → 本地完成")
+    expect(p.updates.isEmpty && p.changedLocal, "远端勾选:不回推")
+
+    // 本地勾选 → 推到远端
+    p = ReminderSync.plan(items: [item("a", rid: "r1", done: true)], remote: [ReminderSnap(id: "r1", title: "a", done: false)],
+                          state: ["r1": mark("a", false)], deleted: [])
+    expectEqual(p.updates, [ReminderUpdate(rid: "r1", title: "a", done: true)], "本地勾选 → 推送")
+
+    // 远端改名 → 本地跟随
+    p = ReminderSync.plan(items: [item("a", rid: "r1")], remote: [ReminderSnap(id: "r1", title: "a2", done: false)],
+                          state: ["r1": mark("a", false)], deleted: [])
+    expectEqual(p.items[0].text, "a2", "远端改名 → 本地跟随")
+
+    // 两边都改名 → 本地优先
+    p = ReminderSync.plan(items: [item("local", rid: "r1")], remote: [ReminderSnap(id: "r1", title: "remote", done: false)],
+                          state: ["r1": mark("a", false)], deleted: [])
+    expectEqual(p.items[0].text, "local", "双改 → 本地优先")
+    expectEqual(p.updates.first?.title, "local", "双改 → 推送本地")
+
+    // 改名与勾选分别在两边 → 各取所改
+    p = ReminderSync.plan(items: [item("local", rid: "r1")], remote: [ReminderSnap(id: "r1", title: "a", done: true)],
+                          state: ["r1": mark("a", false)], deleted: [])
+    expect(p.items[0].text == "local" && p.items[0].done, "本地改名 + 远端勾选 → 合并")
+
+    // 远端删除(曾同步过)→ 本地删除
+    p = ReminderSync.plan(items: [item("a", rid: "r1"), item("b")], remote: [], state: ["r1": mark("a", false)], deleted: [])
+    expectEqual(p.items.map { $0.text }, ["b"], "远端删除 → 本地删除")
+    expect(p.state["r1"] == nil, "远端删除 → 清状态")
+
+    // 陌生 rid(别的电脑写入)→ 清掉重建
+    p = ReminderSync.plan(items: [item("a", rid: "ghost")], remote: [], state: [:], deleted: [])
+    expect(p.items[0].rid == nil && p.creates.count == 1, "陌生 rid → 重建")
+
+    // 远端新增未完成 → 导入;已完成 → 忽略
+    p = ReminderSync.plan(items: [], remote: [ReminderSnap(id: "n1", title: "新提醒", done: false),
+                                              ReminderSnap(id: "n2", title: "旧的", done: true)], state: [:], deleted: [])
+    expectEqual(p.items.map { $0.text }, ["新提醒"], "远端新增 → 导入(忽略已完成)")
+    expectEqual(p.items.first?.rid, "n1", "导入带 rid")
+
+    // 本地删除 → 删远端未完成;已完成的保留
+    p = ReminderSync.plan(items: [], remote: [ReminderSnap(id: "r1", title: "a", done: false),
+                                              ReminderSnap(id: "r2", title: "b", done: true)],
+                          state: ["r1": mark("a", false), "r2": mark("b", true)], deleted: ["r1", "r2"])
+    expectEqual(p.deletes, ["r1"], "本地删除 → 只删未完成的提醒")
+    expect(p.items.isEmpty, "已删除的不会被再导入")
+
+    // 曾同步过、本地没有(顺延关闭等)→ 不导入也不删
+    p = ReminderSync.plan(items: [], remote: [ReminderSnap(id: "r9", title: "昨天的", done: false)],
+                          state: ["r9": mark("昨天的", false)], deleted: [])
+    expect(p.items.isEmpty && p.deletes.isEmpty, "已关联但本地没有 → 保持原样")
+}
+
+section("TodoConfig 持久化")
+do {
+    var c = PopBarConfig()
+    c.todo.syncReminders = true
+    c.todo.syncCalendar = true
+    c.todo.focusMinutes = 40
+    c.hotkeys.todo = "ctrl+opt+j"
+    let data = try JSONEncoder().encode(c)
+    let back = try JSONDecoder().decode(PopBarConfig.self, from: data)
+    expect(back.todo.syncReminders && back.todo.syncCalendar, "同步开关编码 → 解码保持")
+    expectEqual(back.todo.focusMinutes, 40, "专注时长保持")
+    expectEqual(back.hotkeys.todo, "ctrl+opt+j", "待办快捷键保持")
+    try ConfigStore.shared.save(c)
+    ConfigStore.shared.reload()
+    expect(ConfigStore.shared.config.todo.syncReminders, "ConfigStore 保存后重读仍为开")
+}
+
+section("TodoStore(顺延 / 增删)")
+MainActor.assumeIsolated {
+    let store = TodoStore.shared
+    let dir = TodoStore.directory(for: TodoConfig())
+    try? FileManager.default.removeItem(at: dir)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let old = dir.appendingPathComponent("2020-01-01.md")
+    try? "# 2020-01-01\n\n- [ ] 旧事\n- [x] 已做\n".write(to: old, atomically: true, encoding: .utf8)
+
+    store.reload()
+    expectEqual(store.items.map { $0.text }, ["旧事"], "reload: 旧文件的未完成顺延到今天")
+    let oldText = (try? String(contentsOf: old, encoding: .utf8)) ?? ""
+    expect(oldText.contains("- [>] 旧事") && oldText.contains("- [x] 已做"), "reload: 旧文件被标记为已顺延")
+
+    store.add("新事\n第二行", source: "Notes")
+    expectEqual(store.items.map { $0.text }, ["旧事", "新事 第二行"], "add: 追加且压成一行")
+    store.toggle(store.items[0].id)
+    expectEqual(store.undoneCount, 1, "toggle: 未完成计数")
+    store.moveUndone(from: IndexSet(integer: 0), to: 1)
+    expectEqual(store.undone.map { $0.text }, ["新事 第二行"], "move: 排序不影响已完成")
+    store.rename(store.items[0].id, to: "改名")
+    let file = dir.appendingPathComponent("\(TodoMarkdown.dayKey()).md")
+    let disk = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+    expect(disk.contains("- [ ] 改名") && disk.contains("- [x] 旧事"), "改动已写盘")
+
+    store.reload()
+    expectEqual(store.items.count, 2, "再次 reload 不重复顺延")
+    store.clearDone()
+    expectEqual(store.items.map { $0.done }, [false], "clearDone")
+    try? FileManager.default.removeItem(at: dir)
+}
+
 print("\n========== \(checks) 项检查,\(failures) 项失败 ==========")
 exit(failures == 0 ? 0 : 1)

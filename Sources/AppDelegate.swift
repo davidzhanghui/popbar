@@ -23,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                name: RecordSession.stateChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(recordTicked(_:)),
                                                name: RecordSession.ticked, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(pomodoroTicked),
+                                               name: Pomodoro.ticked, object: nil)
+        RemindersSync.shared.start()
+        ToolPanels.todo.restorePinned()   // 上次钉住的待办面板,启动后原位恢复
         RecordNotify.prepare()   // 尽早装上通知 delegate,重启后点历史通知的 action 才能送达
         if !trusted || !monitor.tapInstalled {
             showPermissionAlert()
@@ -53,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? c.launchAtLogin ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
         }
         ClipboardHistory.shared.applyConfig()   // #8 启停轮询
+        Task { @MainActor in Pomodoro.shared.applyConfig() }
     }
 
     // MARK: - 状态栏
@@ -146,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (L10n.t("截图翻译(OCR)", "Screenshot Translate"), #selector(screenshotTranslateAction), hk.ocr),
             (L10n.t("输入翻译", "Input Translate"), #selector(inputTranslateAction), ""),
             (L10n.t("剪贴板翻译", "Clipboard Translate"), #selector(clipboardTranslateAction), ""),
+            (todoMenuTitle(), #selector(todoAction), hk.todo),
         ] {
             let mi = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             if let eq = Hotkey.menuEquivalent(hotkey) {
@@ -321,6 +327,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func clipboardTranslateAction() { TranslateTriggers.clipboard() }
     @objc @MainActor private func systemMonitorAction() { SystemMonitorPanel.shared.toggle() }
     @objc @MainActor private func diskCleanAction() { CleanPanel.shared.toggle() }
+    @objc @MainActor private func todoAction() { ToolPanels.todo.toggle() }
+
+    /// 「今日待办」菜单标题带未完成数(读当天文件,仅在弹出菜单时算一次)
+    @MainActor private func todoMenuTitle() -> String {
+        TodoStore.shared.reload()
+        let n = TodoStore.shared.undoneCount
+        return n > 0 ? L10n.t("今日待办(\(n))", "To-Do (\(n))") : L10n.t("今日待办", "To-Do")
+    }
+
+    @objc @MainActor private func pomodoroTicked() {
+        guard let item = statusItem, let button = item.button, !RecordSession.shared.isRecording else { return }
+        let p = Pomodoro.shared
+        if p.started {
+            button.imagePosition = .imageLeading
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            button.title = (p.phase == .focus ? "" : "☕ ") + PomodoroMath.format(p.remaining)
+        } else {
+            button.title = ""
+        }
+    }
+
     @objc @MainActor private func maintenanceAction() { ToolPanels.maintenance.toggle() }
     @objc @MainActor private func startupItemsAction() { ToolPanels.startup.toggle() }
 

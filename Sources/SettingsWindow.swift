@@ -83,7 +83,35 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
     var isVisible: Bool { window?.isVisible ?? false }
     var frame: CGRect { window?.frame ?? .zero }
 
-    private var isDirty: Bool { draft != ConfigStore.shared.config }
+    /// AI 翻译页真正拥有的字段。草稿是整份配置的快照,但只有这几项会被本页编辑;
+    /// 脏判断和保存都只看它们——否则在别的页(待办、录屏…)改了设置,
+    /// 这里的旧快照就会被当成「未保存修改」,关闭时点「保存」会把别的页的改动整份覆盖回去
+    private struct AIFields: Equatable {
+        var providers: [LLMProvider]
+        var sourceLanguage: String
+        var targetLanguage: String
+        var timeout: Double
+        var maxCharacters: Int
+        var temperature: Double
+        init(_ c: PopBarConfig) {
+            providers = c.providers; sourceLanguage = c.sourceLanguage; targetLanguage = c.targetLanguage
+            timeout = c.timeout; maxCharacters = c.maxCharacters; temperature = c.temperature
+        }
+    }
+
+    private var isDirty: Bool { AIFields(draft) != AIFields(ConfigStore.shared.config) }
+
+    /// 把本页编辑的字段合并进磁盘上的最新配置,其余字段原样保留
+    private func mergedConfig() -> PopBarConfig {
+        var c = ConfigStore.shared.config
+        c.providers = draft.providers
+        c.sourceLanguage = draft.sourceLanguage
+        c.targetLanguage = draft.targetLanguage
+        c.timeout = draft.timeout
+        c.maxCharacters = draft.maxCharacters
+        c.temperature = draft.temperature
+        return c
+    }
 
     // MARK: - 双语
 
@@ -814,8 +842,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate,
             return
         }
         do {
-            try ConfigStore.shared.save(draft)
-            loadDraft(from: draft)   // 表单重新显示占位符后的值
+            let merged = mergedConfig()
+            try ConfigStore.shared.save(merged)
+            loadDraft(from: merged)   // 表单重新显示占位符后的值
             refreshDirty()
             let time = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
             setStatus(L10n.t("✓ 已保存", "✓ Saved") + " \(time)", .systemGreen)

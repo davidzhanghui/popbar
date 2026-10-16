@@ -149,6 +149,8 @@ struct HotkeysConfig: Codable, Equatable {
     var recordPause: String = "ctrl+opt+shift+r"
     /// 录制中打标记点(v2)
     var recordMarker: String = "ctrl+opt+shift+m"
+    /// 今日待办面板开关
+    var todo: String = "ctrl+opt+t"
 
     init() {}
 
@@ -162,6 +164,40 @@ struct HotkeysConfig: Codable, Equatable {
         record = (try? c.decode(String.self, forKey: .record)) ?? d.record
         recordPause = (try? c.decode(String.self, forKey: .recordPause)) ?? d.recordPause
         recordMarker = (try? c.decode(String.self, forKey: .recordMarker)) ?? d.recordMarker
+        todo = (try? c.decode(String.self, forKey: .todo)) ?? d.todo
+    }
+}
+
+/// 今日待办 + 番茄钟
+struct TodoConfig: Codable, Equatable {
+    /// 待办 Markdown 文件夹;空 = ~/Library/Application Support/PopBar/todo
+    var dir: String = ""
+    /// 昨天没做完的自动带到今天
+    var carryOver: Bool = true
+    /// 面板钉住(常驻、失焦不关、启动时自动恢复)
+    var pinned: Bool = false
+    var focusMinutes: Int = 25
+    var breakMinutes: Int = 5
+    /// 专注 / 休息结束时发系统通知
+    var notify: Bool = true
+    /// 与系统「提醒事项」App 的「PopBar」列表双向同步
+    var syncReminders: Bool = false
+    /// 每完成一轮专注,在系统日历的「PopBar」日历里记一个事件
+    var syncCalendar: Bool = false
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = TodoConfig()
+        syncReminders = (try? c.decode(Bool.self, forKey: .syncReminders)) ?? d.syncReminders
+        syncCalendar = (try? c.decode(Bool.self, forKey: .syncCalendar)) ?? d.syncCalendar
+        dir = (try? c.decode(String.self, forKey: .dir)) ?? d.dir
+        carryOver = (try? c.decode(Bool.self, forKey: .carryOver)) ?? d.carryOver
+        pinned = (try? c.decode(Bool.self, forKey: .pinned)) ?? d.pinned
+        focusMinutes = min(max((try? c.decode(Int.self, forKey: .focusMinutes)) ?? d.focusMinutes, 1), 180)
+        breakMinutes = min(max((try? c.decode(Int.self, forKey: .breakMinutes)) ?? d.breakMinutes, 1), 60)
+        notify = (try? c.decode(Bool.self, forKey: .notify)) ?? d.notify
     }
 }
 
@@ -450,6 +486,7 @@ struct PopBarConfig: Codable, Equatable {
     var speak = SpeakConfig()
     var usage = UsageConfig()
     var snap = SnapConfig()
+    var todo = TodoConfig()
 
     func appRule(for bundleID: String?) -> AppRule? {
         guard let bundleID else { return nil }
@@ -485,6 +522,7 @@ struct PopBarConfig: Codable, Equatable {
         speak = (try? c.decode(SpeakConfig.self, forKey: .speak)) ?? d.speak
         usage = (try? c.decode(UsageConfig.self, forKey: .usage)) ?? d.usage
         snap = (try? c.decode(SnapConfig.self, forKey: .snap)) ?? d.snap
+        todo = (try? c.decode(TodoConfig.self, forKey: .todo)) ?? d.todo
         seedDefaults()
     }
 

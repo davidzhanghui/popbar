@@ -60,6 +60,11 @@ final class SelectionMonitor {
             DispatchQueue.main.async { SnapController.shared.start() }
             return
         }
+        if type == .keyDown, let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.todo),
+           Hotkey.matches(event, spec) {
+            Task { @MainActor in ToolPanels.todo.toggle() }
+            return
+        }
         if type == .keyDown, let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.record),
            Hotkey.matches(event, spec), !SnapController.shared.isActive {
             // 录制中按下 = 停止,而不是再弹一次选区
@@ -101,6 +106,7 @@ final class SelectionMonitor {
         switch type {
         case .leftMouseDown:
             let cocoaLoc = Screen.cocoaPoint(from: event.location)
+            MainActor.assumeIsolated { ToolPanels.todo.dismissIfUnpinned(clickAt: cocoaLoc) }
             let translation = TranslationPanelController.shared
             let insideTranslation = translation.isVisible && translation.frame.contains(cocoaLoc)
             if translation.isVisible && !insideTranslation && !translation.isPinned { translation.close() }

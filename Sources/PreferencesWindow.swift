@@ -1,4 +1,5 @@
 import Cocoa
+import EventKit
 import AVFoundation
 import ServiceManagement
 
@@ -111,6 +112,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             (L10n.t("功能", "Features"), ft.features),
             (L10n.t("截屏", "Screenshot"), ft.snap),
             (L10n.t("录屏", "Recording"), ft.record),
+            (L10n.t("待办", "To-Do"), todoTab()),
             (L10n.t("AI 翻译", "AI"), [SettingsWindowController.shared.buildContent(in: w)]),
             (L10n.t("工具条", "Toolbar"), toolbarTab()),
             (L10n.t("关于", "About"), aboutTab()),
@@ -558,6 +560,83 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         return (features, snap, record)
     }
 
+    /// 今日待办 + 番茄钟
+    private func todoTab() -> [NSView] {
+        let c = ConfigStore.shared.config
+        let hotkey = makeHotkeyField(placeholder: "ctrl+opt+t", key: "hotkeys.todo", value: c.hotkeys.todo)
+        hotkey.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        func numberField(_ key: String, _ value: Int) -> NSTextField {
+            let f = NSTextField()
+            f.stringValue = String(value)
+            f.alignment = .right
+            f.widthAnchor.constraint(equalToConstant: 60).isActive = true
+            f.delegate = self
+            textFieldKeys[ObjectIdentifier(f)] = key
+            textFields.append(f)
+            return f
+        }
+        let dirButton = ClosureButton(title: Self.todoDirTitle(c.todo.dir)) {}
+        dirButton.bezelStyle = .rounded
+        dirButton.lineBreakMode = .byTruncatingMiddle
+        dirButton.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
+        dirButton.target = self
+        dirButton.action = #selector(chooseTodoDir(_:))
+        return [sectionHeader(L10n.t("今日待办", "Today's To-Do")), card([
+            row(L10n.t("面板快捷键", "Panel Hotkey"),
+                L10n.t("格式 ctrl+opt+t;弹出 / 收起待办面板",
+                       "Format: ctrl+opt+t; show / hide the to-do panel"),
+                hotkey),
+            row(L10n.t("存放位置", "Folder"),
+                L10n.t("一天一个 Markdown 文件;可选网盘文件夹。点击更换,按住 ⌥ 点击恢复默认",
+                       "One Markdown file per day; pick a synced folder. Click to change, ⌥-click to reset"),
+                dirButton),
+            row(L10n.t("未完成顺延", "Carry Over"),
+                L10n.t("昨天没做完的,自动带到今天", "Unfinished items move to today automatically"),
+                toggle("todoCarry")),
+        ]), sectionHeader(L10n.t("系统同步", "System Sync")), card([
+            row(L10n.t("同步到提醒事项", "Sync to Reminders"),
+                L10n.t("与「提醒事项」里的 PopBar 列表双向同步:勾选、改名、新增、删除都会互通。首次开启会请求授权",
+                       "Two-way sync with the “PopBar” list in Reminders: check-offs, renames, additions and deletions. Asks for permission the first time"),
+                toggle("todoSyncReminders")),
+            row(L10n.t("专注写入日历", "Log Focus to Calendar"),
+                L10n.t("每完成一轮专注,在日历的 PopBar 日历里记一个时间块。首次开启会请求授权",
+                       "Each completed focus round becomes an event in the “PopBar” calendar. Asks for permission the first time"),
+                toggle("todoSyncCalendar")),
+        ]), sectionHeader(L10n.t("番茄钟", "Pomodoro")), card([
+            row(L10n.t("专注时长", "Focus Minutes"),
+                L10n.t("1–180 分钟", "1–180 minutes"),
+                numberField("todo.focus", c.todo.focusMinutes)),
+            row(L10n.t("休息时长", "Break Minutes"),
+                L10n.t("1–60 分钟", "1–60 minutes"),
+                numberField("todo.break", c.todo.breakMinutes)),
+            row(L10n.t("结束提醒", "Notify"),
+                L10n.t("专注 / 休息结束时发系统通知", "System notification when a round ends"),
+                toggle("todoNotify")),
+        ])]
+    }
+
+    private static func todoDirTitle(_ dir: String) -> String {
+        dir.isEmpty ? L10n.t("默认(Application Support)", "Default (Application Support)") : dir
+    }
+
+    @objc private func chooseTodoDir(_ sender: NSButton) {
+        var c = ConfigStore.shared.config
+        if NSEvent.modifierFlags.contains(.option) {
+            c.todo.dir = ""
+        } else {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            NSApp.activateForUI()
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            c.todo.dir = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        }
+        sender.title = Self.todoDirTitle(c.todo.dir)
+        try? ConfigStore.shared.save(c)
+        Task { @MainActor in TodoStore.shared.reload() }
+    }
+
     /// 快捷键输入框:提交即写配置
     private func makeHotkeyField(placeholder: String, key: String, value: String) -> NSTextField {
         let f = NSTextField()
@@ -636,7 +715,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         }
         // 内容高度:各块高度之和 + 块间距 + 上下留白。行高已固定,这里算出来就是准确值,
         // 不能等布局收敛后再量(卡片高度要过几轮才稳定)
-        let contentH = views.reduce(CGFloat(0)) { $0 + $1.fittingSize.height }
+        var contentH = views.reduce(CGFloat(0)) { $0 + $1.fittingSize.height }
             + CGFloat(max(0, views.count - 1)) * main.spacing + 32
 
         // flipped 容器:内容从顶部开始排,高度显式给出
@@ -644,11 +723,16 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         doc.translatesAutoresizingMaskIntoConstraints = false
         doc.addSubview(main)
         scroll.documentView = doc
+        // 预估偏小时(块多、卡片行数多的 tab)标题块会被竖向压扁、文字被遮住:
+        // 先按预估布局一遍,再用实测的自然高度兜底,取较大者
+        doc.widthAnchor.constraint(equalToConstant: Self.contentWidth).isActive = true
+        main.widthAnchor.constraint(equalToConstant: Self.contentWidth - 40).isActive = true
+        main.layoutSubtreeIfNeeded()
+        contentH = max(contentH, main.fittingSize.height + 32)
         NSLayoutConstraint.activate([
             doc.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             doc.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
             doc.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            doc.widthAnchor.constraint(equalToConstant: Self.contentWidth),
             doc.heightAnchor.constraint(equalToConstant: contentH),
             main.leadingAnchor.constraint(equalTo: doc.leadingAnchor, constant: 20),
             main.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -20),
@@ -829,6 +913,10 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             case "recordAutoExport": s.state = c.snap.record.export.autoExport ? .on : .off
             case "recordCopyClipboard": s.state = c.snap.record.copyToClipboard ? .on : .off
             case "recordExportClipboard": s.state = c.snap.record.export.copyToClipboard ? .on : .off
+            case "todoCarry":  s.state = c.todo.carryOver ? .on : .off
+            case "todoNotify": s.state = c.todo.notify ? .on : .off
+            case "todoSyncReminders": s.state = c.todo.syncReminders ? .on : .off
+            case "todoSyncCalendar":  s.state = c.todo.syncCalendar ? .on : .off
             case "launchAtLogin":
                 // 以系统实际登录项状态为准(用户可能在系统设置里关过)
                 s.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -1038,6 +1126,29 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
         case "recordAutoExport": c.snap.record.export.autoExport = sender.state == .on
         case "recordCopyClipboard": c.snap.record.copyToClipboard = sender.state == .on
         case "recordExportClipboard": c.snap.record.export.copyToClipboard = sender.state == .on
+        case "todoCarry":     c.todo.carryOver = sender.state == .on
+        case "todoNotify":    c.todo.notify = sender.state == .on
+        case "todoSyncReminders", "todoSyncCalendar":
+            let reminders = key == "todoSyncReminders"
+            let on = sender.state == .on
+            if reminders { c.todo.syncReminders = on } else { c.todo.syncCalendar = on }
+            if !on {
+                if reminders { Task { @MainActor in RemindersSync.shared.reset() } }
+            } else {
+                // 开启:先请求授权;被拒就把开关退回去并引导去系统设置
+                let type: EKEntityType = reminders ? .reminder : .event
+                Task { @MainActor in
+                    if await SystemStore.requestAccess(type) {
+                        if reminders { RemindersSync.shared.syncSoon() }
+                    } else {
+                        var off = ConfigStore.shared.config
+                        if reminders { off.todo.syncReminders = false } else { off.todo.syncCalendar = false }
+                        try? ConfigStore.shared.save(off)
+                        self.syncControls()
+                        SystemStore.showDenied(type)
+                    }
+                }
+            }
         case "gifClipboard":  c.snap.record.gif.copyToClipboard = sender.state == .on
         case "recordMic":
             c.snap.record.microphone = sender.state == .on
@@ -1104,6 +1215,31 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 c.hotkeys.recordPause = v.isEmpty ? "ctrl+opt+shift+r" : v
             } else {
                 field.stringValue = c.hotkeys.recordPause
+                NSSound.beep()
+                return
+            }
+        case "hotkeys.todo":
+            let v = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if v.isEmpty || Hotkey.parse(v) != nil {
+                c.hotkeys.todo = v.isEmpty ? "ctrl+opt+t" : v
+            } else {
+                field.stringValue = c.hotkeys.todo
+                NSSound.beep()
+                return
+            }
+        case "todo.focus":
+            if let n = Int(field.stringValue.trimmingCharacters(in: .whitespaces)), (1...180).contains(n) {
+                c.todo.focusMinutes = n
+            } else {
+                field.stringValue = String(c.todo.focusMinutes)
+                NSSound.beep()
+                return
+            }
+        case "todo.break":
+            if let n = Int(field.stringValue.trimmingCharacters(in: .whitespaces)), (1...60).contains(n) {
+                c.todo.breakMinutes = n
+            } else {
+                field.stringValue = String(c.todo.breakMinutes)
                 NSSound.beep()
                 return
             }

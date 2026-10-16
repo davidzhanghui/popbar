@@ -3,18 +3,24 @@ set -e
 cd "$(dirname "$0")"
 
 APP=build.noindex/PopBar.app
+OBJ=build.noindex/metrics.o
+BIN=build.noindex/PopBar
+
+# 每次构建前清空产物目录,build/ 里只留下本次 dmg
+rm -rf build
 mkdir -p build build.noindex
 
 # 先删后增:避免改名/删除的源码或资源在包里留下幽灵文件
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 # 系统监控的 C 采集层(IOReport / SMC / libproc),经桥接头文件暴露给 Swift
-clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o build/metrics.o
-swiftc -O -target $(uname -m)-apple-macos15.0 -o "build/PopBar" \
+# 中间产物放在 build.noindex,不进 build/
+clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o "$OBJ"
+swiftc -O -target $(uname -m)-apple-macos15.0 -o "$BIN" \
     -import-objc-header Native/CMetrics.h -framework IOKit \
-    Sources/*.swift build/metrics.o
+    Sources/*.swift "$OBJ"
 
-cp build/PopBar "$APP/Contents/MacOS/PopBar"
+cp "$BIN" "$APP/Contents/MacOS/PopBar"
 cp Info.plist "$APP/Contents/Info.plist"
 if [ -f Resources/AppIcon.icns ]; then
     mkdir -p "$APP/Contents/Resources"
@@ -34,7 +40,6 @@ echo "Built $APP"
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
 arch=$(uname -m)
 dmg="build/PopBar-${version}-${arch}.dmg"
-rm -f "$dmg"   # 同名版本直接覆盖,保证 dmg 与本次构建一致
 stage=$(mktemp -d "$PWD/build.noindex/dmg-stage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT   # 成功/失败都清理暂存目录
 ditto "$APP" "$stage/PopBar.app"

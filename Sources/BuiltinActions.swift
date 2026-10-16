@@ -8,7 +8,7 @@ enum BuiltinActions {
     static let defaultOrder = [
         "builtin.copy", "builtin.cut", "builtin.case",
         "builtin.google", "builtin.baidu", "builtin.ai",
-        "builtin.speak", "builtin.stats",
+        "builtin.speak", "builtin.stats", "builtin.todo",
         "builtin.qrcode", "builtin.mask",
     ]
 
@@ -64,6 +64,17 @@ enum BuiltinActions {
                 let words = ctx.text.split { $0.isWhitespace }.count
                 bar.showInfo(L10n.t("字符 \(chars) · 词 \(words)",
                                     "\(chars) chars · \(words) words"))
+            },
+            BarAction(id: "builtin.todo", title: L10n.t("加入今日待办", "Add to To-Do"),
+                      symbol: "checklist", color: .systemGreen) { ctx in
+                let text = ctx.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return }
+                let source = ctx.origin == .selection ? ctx.appName : nil
+                Task { @MainActor in
+                    TodoStore.shared.add(text, source: source)
+                    bar.showInfo(L10n.t("已加入今日待办(\(TodoStore.shared.undoneCount) 项)",
+                                        "Added to To-Do (\(TodoStore.shared.undoneCount) open)"))
+                }
             },
             // —— 后续里程碑注册的动作 ——
         ] + milestoneActions()
