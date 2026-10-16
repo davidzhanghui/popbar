@@ -146,8 +146,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             (L10n.t("截图翻译(OCR)", "Screenshot Translate"), #selector(screenshotTranslateAction), hk.ocr),
             (L10n.t("输入翻译", "Input Translate"), #selector(inputTranslateAction), ""),
             (L10n.t("剪贴板翻译", "Clipboard Translate"), #selector(clipboardTranslateAction), ""),
-            (L10n.t("系统监控", "System Monitor"), #selector(systemMonitorAction), ""),
-            (L10n.t("磁盘清理", "Disk Cleanup"), #selector(diskCleanAction), ""),
         ] {
             let mi = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             if let eq = Hotkey.menuEquivalent(hotkey) {
@@ -174,6 +172,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menu.addItem(show)
             }
         }
+        // 系统工具组:监控 / 清理 / 维护 / 启动项
+        menu.addItem(.separator())
+        for (title, sel) in [
+            (L10n.t("系统监控", "System Monitor"), #selector(systemMonitorAction)),
+            (L10n.t("磁盘清理", "Disk Cleanup"), #selector(diskCleanAction)),
+            (L10n.t("系统维护", "Maintenance"), #selector(maintenanceAction)),
+            (L10n.t("启动项", "Startup Items"), #selector(startupItemsAction)),
+        ] {
+            let mi = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            mi.target = self
+            menu.addItem(mi)
+        }
+        menu.addItem(.separator())
         // #8 剪贴板历史(enabled 时)
         if let hist = ClipboardHistory.shared.menuItem() {
             hist.target = self
@@ -310,6 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func clipboardTranslateAction() { TranslateTriggers.clipboard() }
     @objc @MainActor private func systemMonitorAction() { SystemMonitorPanel.shared.toggle() }
     @objc @MainActor private func diskCleanAction() { CleanPanel.shared.toggle() }
+    @objc @MainActor private func maintenanceAction() { ToolPanels.maintenance.toggle() }
+    @objc @MainActor private func startupItemsAction() { ToolPanels.startup.toggle() }
 
     @objc private func openPreferencesAction() {
         PreferencesWindowController.shared.show()

@@ -942,5 +942,42 @@ expect(LibProc.parentMap()[me] != nil, "父进程表包含自己")
 await runExportPipelineTests()
 await runCleanTests()
 
+// MARK: - Maintenance / StartupItems
+
+section("Maintenance")
+expectEqual(Maintenance.tasks.count, 5, "5 个维护任务")
+expectEqual(Set(Maintenance.tasks.map(\.id)), Set(MaintenanceTask.ID.allCases), "任务覆盖全部 ID")
+expect(Maintenance.tasks.filter(\.needsAdmin).map(\.id) == [.flushDNS, .thinSnapshots, .reindexSpotlight], "只有 DNS/快照/Spotlight 需要管理员")
+expectEqual(ShellRun.run("/bin/echo", ["hi"]).out.trimmingCharacters(in: .whitespacesAndNewlines), "hi", "ShellRun 取 stdout")
+expectEqual(ShellRun.run("/bin/sleep", ["5"], timeout: 0.3).status, -2, "ShellRun 超时")
+
+section("StartupItems")
+do {
+    let disabled = StartupItems.parseDisabled("""
+    disabled services = {
+        "com.foo.bar" => disabled
+        "com.foo.baz" => enabled
+    }
+    """)
+    expectEqual(disabled["com.foo.bar"], true, "print-disabled: disabled")
+    expectEqual(disabled["com.foo.baz"], false, "print-disabled: enabled")
+
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("popbar-startup-\(UUID().uuidString.prefix(8))")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let plist = dir.appendingPathComponent("a.plist")
+    (["Label": "com.x.agent", "ProgramArguments": ["/nonexistent/prog", "-a"],
+      "AssociatedBundleIdentifiers": ["com.x.app"]] as NSDictionary).write(to: plist, atomically: true)
+    let info = StartupItems.parse(plist.path)
+    expectEqual(info?.label, "com.x.agent", "plist: Label")
+    expectEqual(info?.program, "/nonexistent/prog", "plist: 程序路径")
+    expect(info.map { StartupItems.isBroken($0, isInstalled: { _ in false }) } == true, "程序不存在且应用已卸载 → 损坏")
+    expect(info.map { StartupItems.isBroken($0, isInstalled: { $0 == "com.x.app" }) } == false, "关联应用仍安装 → 不算损坏")
+    expect(info.map { StartupItems.isBroken($0, fileExists: { _ in true }, isInstalled: { _ in false }) } == false, "程序存在 → 不损坏")
+    let bare = dir.appendingPathComponent("b.plist")
+    (["Label": "com.x.bare", "ProgramArguments": ["ls"]] as NSDictionary).write(to: bare, atomically: true)
+    expect(StartupItems.parse(bare.path)?.program == nil, "裸命令名不判断")
+}
+
 print("\n========== \(checks) 项检查,\(failures) 项失败 ==========")
 exit(failures == 0 ? 0 : 1)

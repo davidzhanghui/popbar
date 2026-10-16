@@ -106,7 +106,7 @@ final class SelectionMonitor {
             if translation.isVisible && !insideTranslation && !translation.isPinned { translation.close() }
             // 翻译面板、设置窗口里的拖选/点击都属于 PopBar 自己,不触发取词
             downInsidePanel = insideTranslation || SnapPinWindow.contains(cocoaLoc) || Self.insideSettings(cocoaLoc)
-                || MainActor.assumeIsolated { SystemMonitorPanel.contains(cocoaLoc) || CleanPanel.contains(cocoaLoc) }
+                || MainActor.assumeIsolated { SystemMonitorPanel.contains(cocoaLoc) || CleanPanel.contains(cocoaLoc) || ToolPanel.anyContains(cocoaLoc) }
             downInsideBar = FloatingBarController.shared.isVisible
                 && FloatingBarController.shared.frame.contains(cocoaLoc)
             downPoint = event.location

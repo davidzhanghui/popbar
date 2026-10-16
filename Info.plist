@@ -2,38 +2,38 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>PopBar</string>
-    <key>CFBundleDisplayName</key>
-    <string>PopBar</string>
-    <key>CFBundleIdentifier</key>
-    <string>dev.popbar.app</string>
-    <key>CFBundleExecutable</key>
-    <string>PopBar</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>2.2</string>
-    <key>CFBundleVersion</key>
-    <string>4</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>PopBar uses automation to read the browser's current URL for clipping, to create Calendar events, and to ask Finder to move protected leftover folders (such as app containers) to the Trash in Disk Cleanup.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>PopBar records microphone audio into screen recordings when you turn on the microphone option.</string>
-    <key>NSCameraUsageDescription</key>
-    <string>PopBar records a camera picture-in-picture into screen recordings when you turn on the camera option.</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>15.0</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleIconName</key>
-    <string>AppIcon</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsLocalNetworking</key>
-        <true/>
-    </dict>
+	<key>CFBundleDisplayName</key>
+	<string>PopBar</string>
+	<key>CFBundleExecutable</key>
+	<string>PopBar</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.popbar.app</string>
+	<key>CFBundleName</key>
+	<string>PopBar</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.3</string>
+	<key>CFBundleVersion</key>
+	<string>5</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>PopBar uses automation to read the browser's current URL for clipping, to create Calendar events, and to ask Finder to move protected leftover folders (such as app containers) to the Trash in Disk Cleanup.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>PopBar records a camera picture-in-picture into screen recordings when you turn on the camera option.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>PopBar records microphone audio into screen recordings when you turn on the microphone option.</string>
 </dict>
 </plist>
