@@ -17,7 +17,7 @@ mkdir -p "$APP/Contents/MacOS"
 # 中间产物放在 build.noindex,不进 build/
 clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o "$OBJ"
 swiftc -O -target $(uname -m)-apple-macos15.0 -o "$BIN" \
-    -import-objc-header Native/CMetrics.h -framework IOKit \
+    -import-objc-header Native/CMetrics.h -framework IOKit -lcups \
     Sources/*.swift "$OBJ"
 
 cp "$BIN" "$APP/Contents/MacOS/PopBar"

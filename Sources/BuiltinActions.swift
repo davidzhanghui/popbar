@@ -86,6 +86,7 @@ enum BuiltinActions {
         if let a = QRCodePanel.barAction() { out.append(a) }
         if let a = SensitiveGuard.maskAction() { out.append(a) }
         if let a = DevTools.barAction() { out.append(a) }
+        if let a = PrintAction.barAction() { out.append(a) }
         return out
     }
 }

@@ -941,6 +941,7 @@ expect(LibProc.parentMap()[me] != nil, "父进程表包含自己")
 // 录屏导出管线:合成视频 → 真跑导出 → 抽帧验收(tests/export.swift)
 await runExportPipelineTests()
 await runCleanTests()
+await runPrintTests()
 
 // MARK: - Maintenance / StartupItems
 

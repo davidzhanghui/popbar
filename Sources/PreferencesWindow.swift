@@ -113,6 +113,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             (L10n.t("截屏", "Screenshot"), ft.snap),
             (L10n.t("录屏", "Recording"), ft.record),
             (L10n.t("待办", "To-Do"), todoTab()),
+            (L10n.t("打印", "Print"), printTab()),
             (L10n.t("AI 翻译", "AI"), [SettingsWindowController.shared.buildContent(in: w)]),
             (L10n.t("工具条", "Toolbar"), toolbarTab()),
             (L10n.t("关于", "About"), aboutTab()),
@@ -612,6 +613,19 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             row(L10n.t("结束提醒", "Notify"),
                 L10n.t("专注 / 休息结束时发系统通知", "System notification when a round ends"),
                 toggle("todoNotify")),
+        ])]
+    }
+
+    /// 打印管理:全局快捷键(其余设置在面板「管理」页)
+    private func printTab() -> [NSView] {
+        let c = ConfigStore.shared.config
+        let hotkey = makeHotkeyField(placeholder: "ctrl+opt+o", key: "hotkeys.printPanel", value: c.hotkeys.printPanel)
+        hotkey.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        return [sectionHeader(L10n.t("打印管理", "Print")), card([
+            row(L10n.t("面板快捷键", "Panel Hotkey"),
+                L10n.t("格式 ctrl+opt+o;弹出 / 收起打印管理面板。通知、墨量预警、默认参数等在面板的「管理」页设置",
+                       "Format: ctrl+opt+o; show / hide the print panel. Notifications, low-ink alerts and defaults live on the panel's Manage tab"),
+                hotkey),
         ])]
     }
 
@@ -1215,6 +1229,15 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 c.hotkeys.recordPause = v.isEmpty ? "ctrl+opt+shift+r" : v
             } else {
                 field.stringValue = c.hotkeys.recordPause
+                NSSound.beep()
+                return
+            }
+        case "hotkeys.printPanel":
+            let v = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if v.isEmpty || Hotkey.parse(v) != nil {
+                c.hotkeys.printPanel = v.isEmpty ? "ctrl+opt+o" : v
+            } else {
+                field.stringValue = c.hotkeys.printPanel
                 NSSound.beep()
                 return
             }

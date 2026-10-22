@@ -2,6 +2,8 @@
 #define CMETRICS_H
 
 #include <stdint.h>
+#include <cups/cups.h>   // 打印管理(PrintIPP.swift)直接调用系统 libcups
+#include <cups/ipp.h>
 
 #ifdef __cplusplus
 extern "C" {

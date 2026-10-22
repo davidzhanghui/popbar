@@ -151,6 +151,8 @@ struct HotkeysConfig: Codable, Equatable {
     var recordMarker: String = "ctrl+opt+shift+m"
     /// 今日待办面板开关
     var todo: String = "ctrl+opt+t"
+    /// 打印管理面板开关
+    var printPanel: String = "ctrl+opt+o"
 
     init() {}
 
@@ -165,6 +167,7 @@ struct HotkeysConfig: Codable, Equatable {
         recordPause = (try? c.decode(String.self, forKey: .recordPause)) ?? d.recordPause
         recordMarker = (try? c.decode(String.self, forKey: .recordMarker)) ?? d.recordMarker
         todo = (try? c.decode(String.self, forKey: .todo)) ?? d.todo
+        printPanel = (try? c.decode(String.self, forKey: .printPanel)) ?? d.printPanel
     }
 }
 
