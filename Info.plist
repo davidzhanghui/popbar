@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.4</string>
+	<string>2.5</string>
 	<key>CFBundleVersion</key>
-	<string>6</string>
+	<string>7</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>LSUIElement</key>
@@ -35,6 +35,8 @@
 	<string>PopBar adds an event to the "PopBar" calendar for each completed Pomodoro focus round when you turn this on.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>PopBar records a camera picture-in-picture into screen recordings when you turn on the camera option.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PopBar scans your local network for TVs with ADB debugging enabled so TV Remote can find and control them.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>PopBar records microphone audio into screen recordings when you turn on the microphone option.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

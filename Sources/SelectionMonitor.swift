@@ -70,6 +70,11 @@ final class SelectionMonitor {
             Task { @MainActor in ToolPanels.printing.toggle() }
             return
         }
+        if type == .keyDown, let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.tv),
+           Hotkey.matches(event, spec) {
+            Task { @MainActor in ToolPanels.tv.toggle() }
+            return
+        }
         if type == .keyDown, let spec = Hotkey.parse(ConfigStore.shared.config.hotkeys.record),
            Hotkey.matches(event, spec), !SnapController.shared.isActive {
             // 录制中按下 = 停止,而不是再弹一次选区

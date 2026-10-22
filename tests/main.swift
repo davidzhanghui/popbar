@@ -942,6 +942,7 @@ expect(LibProc.parentMap()[me] != nil, "父进程表包含自己")
 await runExportPipelineTests()
 await runCleanTests()
 await runPrintTests()
+await runTVTests()
 
 // MARK: - Maintenance / StartupItems
 

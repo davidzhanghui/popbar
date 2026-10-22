@@ -153,6 +153,8 @@ struct HotkeysConfig: Codable, Equatable {
     var todo: String = "ctrl+opt+t"
     /// 打印管理面板开关
     var printPanel: String = "ctrl+opt+o"
+    /// 电视遥控面板开关
+    var tv: String = "ctrl+opt+v"
 
     init() {}
 
@@ -168,6 +170,7 @@ struct HotkeysConfig: Codable, Equatable {
         recordMarker = (try? c.decode(String.self, forKey: .recordMarker)) ?? d.recordMarker
         todo = (try? c.decode(String.self, forKey: .todo)) ?? d.todo
         printPanel = (try? c.decode(String.self, forKey: .printPanel)) ?? d.printPanel
+        tv = (try? c.decode(String.self, forKey: .tv)) ?? d.tv
     }
 }
 

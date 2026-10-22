@@ -22,6 +22,7 @@ enum ActionRegistry {
     static func actions(for ctx: SourceContext) -> [BarAction] {
         var all = BuiltinActions.all()
         all += contextualActions(for: ctx)
+        if let a = MainActor.assumeIsolated({ TVCast.barAction(for: ctx) }) { all.append(a) }
         all += Extensions.barActions()
         return all.filter { $0.isAvailable(ctx) }
     }

@@ -114,6 +114,7 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             (L10n.t("录屏", "Recording"), ft.record),
             (L10n.t("待办", "To-Do"), todoTab()),
             (L10n.t("打印", "Print"), printTab()),
+            (L10n.t("电视", "TV"), tvTab()),
             (L10n.t("AI 翻译", "AI"), [SettingsWindowController.shared.buildContent(in: w)]),
             (L10n.t("工具条", "Toolbar"), toolbarTab()),
             (L10n.t("关于", "About"), aboutTab()),
@@ -625,6 +626,19 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
             row(L10n.t("面板快捷键", "Panel Hotkey"),
                 L10n.t("格式 ctrl+opt+o;弹出 / 收起打印管理面板。通知、墨量预警、默认参数等在面板的「管理」页设置",
                        "Format: ctrl+opt+o; show / hide the print panel. Notifications, low-ink alerts and defaults live on the panel's Manage tab"),
+                hotkey),
+        ])]
+    }
+
+    /// 电视遥控:全局快捷键(设备管理在面板「设备」页)
+    private func tvTab() -> [NSView] {
+        let c = ConfigStore.shared.config
+        let hotkey = makeHotkeyField(placeholder: "ctrl+opt+v", key: "hotkeys.tv", value: c.hotkeys.tv)
+        hotkey.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        return [sectionHeader(L10n.t("电视遥控", "TV Remote")), card([
+            row(L10n.t("面板快捷键", "Panel Hotkey"),
+                L10n.t("格式 ctrl+opt+v;弹出 / 收起电视遥控面板。需要先安装 adb,并在电视上打开 ADB 调试;设备在面板「设备」页管理",
+                       "Format: ctrl+opt+v; show / hide the TV Remote panel. Requires adb and ADB debugging on the TV; manage TVs on the panel's Devices tab"),
                 hotkey),
         ])]
     }
@@ -1238,6 +1252,15 @@ final class PreferencesWindowController: NSObject, NSTextFieldDelegate {
                 c.hotkeys.printPanel = v.isEmpty ? "ctrl+opt+o" : v
             } else {
                 field.stringValue = c.hotkeys.printPanel
+                NSSound.beep()
+                return
+            }
+        case "hotkeys.tv":
+            let v = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if v.isEmpty || Hotkey.parse(v) != nil {
+                c.hotkeys.tv = v.isEmpty ? "ctrl+opt+v" : v
+            } else {
+                field.stringValue = c.hotkeys.tv
                 NSSound.beep()
                 return
             }

@@ -5,6 +5,12 @@ enum ShellRun {
     typealias Result = (status: Int32, out: String, err: String)
 
     static func run(_ path: String, _ args: [String], timeout: TimeInterval = 60) -> Result {
+        let r = runData(path, args, timeout: timeout)
+        return (r.status, String(decoding: r.out, as: UTF8.self), r.err)
+    }
+
+    /// 同 run,但 stdout 保持原始字节(截图等二进制输出)
+    static func runData(_ path: String, _ args: [String], timeout: TimeInterval = 60) -> (status: Int32, out: Data, err: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
@@ -14,7 +20,7 @@ enum ShellRun {
         p.standardInput = FileHandle.nullDevice
         let exited = DispatchSemaphore(value: 0)
         p.terminationHandler = { _ in exited.signal() }
-        do { try p.run() } catch { return (-1, "", error.localizedDescription) }
+        do { try p.run() } catch { return (-1, Data(), error.localizedDescription) }
 
         final class Box: @unchecked Sendable { var data = Data() }
         let outBox = Box(), errBox = Box()
@@ -30,11 +36,10 @@ enum ShellRun {
             p.terminate()
             if exited.wait(timeout: .now() + 2) == .timedOut { kill(p.processIdentifier, SIGKILL) }
             readers.wait()
-            return (-2, "", L10n.t("执行超时", "Timed out"))
+            return (-2, Data(), L10n.t("执行超时", "Timed out"))
         }
         readers.wait()
-        return (p.terminationStatus,
-                String(decoding: outBox.data, as: UTF8.self),
+        return (p.terminationStatus, outBox.data,
                 String(decoding: errBox.data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 

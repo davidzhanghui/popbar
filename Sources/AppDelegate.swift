@@ -179,11 +179,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menu.addItem(show)
             }
         }
-        // 系统工具组:监控 / 打印 / 清理 / 维护 / 启动项
+        // 系统工具组:监控 / 打印 / 电视 / 清理 / 维护 / 启动项
         menu.addItem(.separator())
         for (title, sel, hotkey) in [
             (L10n.t("系统监控", "System Monitor"), #selector(systemMonitorAction), ""),
             (L10n.t("打印管理", "Print"), #selector(printAction), hk.printPanel),
+            (L10n.t("电视遥控", "TV Remote"), #selector(tvAction), hk.tv),
             (L10n.t("磁盘清理", "Disk Cleanup"), #selector(diskCleanAction), ""),
             (L10n.t("系统维护", "Maintenance"), #selector(maintenanceAction), ""),
             (L10n.t("启动项", "Startup Items"), #selector(startupItemsAction), ""),
@@ -335,6 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc @MainActor private func diskCleanAction() { CleanPanel.shared.toggle() }
     @objc @MainActor private func todoAction() { ToolPanels.todo.toggle() }
     @objc @MainActor private func printAction() { ToolPanels.printing.toggle() }
+    @objc @MainActor private func tvAction() { ToolPanels.tv.toggle() }
 
     /// 「今日待办」菜单标题带未完成数(读当天文件,仅在弹出菜单时算一次)
     @MainActor private func todoMenuTitle() -> String {
