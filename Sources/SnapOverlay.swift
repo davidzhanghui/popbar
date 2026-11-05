@@ -12,6 +12,7 @@ final class SnapOverlayWindow: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
+        animationBehavior = .none   // 默认的窗口出现/关闭缩放动画在全屏覆盖窗口上就是"整屏缩放抖一下"
         hidesOnDeactivate = false
         acceptsMouseMovedEvents = true
         isReleasedWhenClosed = false
@@ -21,6 +22,10 @@ final class SnapOverlayWindow: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// 刘海屏/菜单栏下 AppKit 会把窗口往下挤、缩小以避开刘海,冻结图就会和真实画面错位(整屏抖一下)。
+    /// 覆盖窗口必须严格等于屏幕 frame,不做任何约束。
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 final class SnapTextView: NSTextView {

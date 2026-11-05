@@ -49,9 +49,13 @@ final class SnapController {
         let key = overlays.first { $0.frame.contains(mouse) } ?? overlays[0]
         let front = NSWorkspace.shared.frontmostApplication
         previousApp = front?.processIdentifier == getpid() ? nil : front
-        NSApp.activateForUI()
-        for o in overlays where o !== key { o.orderFront(nil) }
+        // 不再 activate 整个 App:覆盖窗口是 nonactivatingPanel,可直接成为 key;
+        // 激活会让原前台 App 变灰、菜单栏切换,和冻结图出现叠在一起造成整屏闪动。
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for o in overlays where o !== key { o.orderFrontRegardless() }
         key.makeKeyAndOrderFront(nil)
+        CATransaction.commit()
         key.overlayView.didShow()
     }
 
