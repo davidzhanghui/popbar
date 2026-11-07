@@ -19,8 +19,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/popbar-promo-v2.0.mp4"><img src="docs/popbar-promo-poster.png" width="720" alt="PopBar promo video"></a><br>
-  <a href="docs/popbar-promo-v2.0.mp4">▶ Watch the promo</a> · <sub>69s: select-to-pop · context-aware actions · AI translation · privacy masking · screenshots · screen recording</sub>
+  <a href="docs/popbar-promo-v3.0.mp4"><img src="docs/popbar-promo-poster.png" width="720" alt="PopBar promo video"></a><br>
+  <a href="docs/popbar-promo-v3.0.mp4">▶ Watch the promo</a> · <sub>62s: select-to-pop · AI translation · smart capsule · privacy guard · the Deck window · module switches · light &amp; dark</sub>
 </p>
 
 ## What's new in 3.0
@@ -128,7 +128,7 @@ Key implementation notes:
 ## AI translation panel
 
 <p align="center">
-  <img src="docs/popbar-panel.png" width="480" alt="AI translation panel: multi-provider parallel streaming">
+  <img src="docs/screenshots/translate-result.png" width="460" alt="AI translation panel: multi-provider parallel streaming">
 </p>
 
 Clicking the 💬 button on the bar opens a translation panel: the original text sits on top
@@ -175,10 +175,6 @@ Menu bar → "System Monitor" opens a live panel styled like the translation pan
 
 ### Process detail
 
-<p align="center">
-  <img src="docs/popbar-monitor-detail.png" width="460" alt="Process detail: stat tiles, launch chain, source and confidence, launchd plist, resources and environment, member processes">
-</p>
-
 Click a process row (or "Why Is This Running?" in the menu) to open the detail window; Esc closes the detail first and a second Esc closes the panel; × or clicking outside also closes it:
 
 | Section | Content |
@@ -204,7 +200,7 @@ Per-process context menu (right-click a row, or the "…" at the end of the row)
 | Terminate / Force Quit | Ends that row after confirmation (the whole app for an app); rules above |
 
 <p align="center">
-  <img src="docs/popbar-monitor.png" width="460" alt="System Monitor panel: health score, CPU / GPU / memory / battery / disk / network / temperature and a searchable process table">
+  <img src="docs/screenshots/deck-monitor.png" width="720" alt="System Monitor panel: health score, CPU / GPU / memory / battery / disk / network / temperature and a searchable process table">
 </p>
 
 Sampling (IOReport / IOKit / libproc — no extra permissions) runs only while the panel is visible and stops on close, so PopBar's idle CPU stays ≈ 0.
@@ -215,7 +211,7 @@ The collector is `Native/metrics.c` (C), exposed to Swift through the bridging h
 Menu bar → "Disk Cleanup" opens a panel styled like System Monitor and scans immediately (sizes measured concurrently with `du`); Esc or ✕ closes it. **It only cleans your user folders — no admin rights and no privileged helper.**
 
 <p align="center">
-  <img src="docs/popbar-clean.png" width="460" alt="Disk Cleanup panel: caches, logs, build products and uninstall leftovers by category, moved to the Trash when checked">
+  <img src="docs/screenshots/deck-clean.png" width="720" alt="Disk Cleanup panel: caches, logs, build products and uninstall leftovers by category, moved to the Trash when checked">
 </p>
 
 | Category | Scanned | Default |
@@ -243,7 +239,7 @@ Hovering highlights a window and a click selects it; you can also drag a custom 
 It needs the Screen Recording permission, shared with Screenshot Translate, and guides you through granting it on first use.
 
 <p align="center">
-  <img src="docs/popbar-snap.png" width="700" alt="Screenshot: frozen frame, selection, annotations and toolbar">
+  <img src="docs/screenshots/deck-snap.png" width="720" alt="Deck · Capture page: screenshot history">
 </p>
 
 - **Magnifier**: while selecting, an 8× pixel magnifier shows the pixel coordinates and RGB/HEX color; press `C` to copy the color under the cursor (can be turned off in Preferences)
@@ -281,7 +277,7 @@ The selection gets a red border and a panel shows the mm:ss timer with **pause /
 the menu bar icon turns into a red timer.
 
 <p align="center">
-  <img src="docs/popbar-record-export.png" width="420" alt="Export panel: trim, resolution, quality, click ripples, camera PiP, watermark">
+  <img src="docs/screenshots/deck-record.png" width="720" alt="Deck · Record page: recent recordings">
 </p>
 
 - **Output**: H.264 / MOV / 30fps / 2x native pixels by default, saved to the same folder as screenshots as
@@ -320,59 +316,26 @@ the menu bar icon turns into a red timer.
 | `R` | Restore the last recording region on this screen |
 | `Esc` | Cancel the selection / cancel the countdown |
 
-### Settings window
+### Settings
 
 <p align="center">
-  <img src="docs/popbar-settings.png" width="700" alt="AI translation settings window">
+  <img src="docs/screenshots/settings-hotkeys.png" width="720" alt="Settings → Shortcuts">
 </p>
 
-Menu bar → "AI Translation…" opens the settings window: provider list on the left (green
-dot = ready / orange = missing key or model / gray = disabled) with inline toggles and
-**drag-to-reorder** (the order is the card order in the panel); name, Base URL, model, API
-key, deep thinking and enabled state on the right; "+" offers presets like DeepSeek,
-SiliconFlow, OpenAI, OpenRouter, Ollama; "Test Connection" makes a real request and shows
-latency. Below: default language, timeout, max characters and temperature.
-"Save" (⌘S) writes the config file; closing with unsaved changes prompts first.
+Settings live in the Deck (menu bar → "Settings…" or ⌘,). Changes take effect **immediately** — no save button:
 
-### Preferences
-
-<p align="center">
-  <img src="docs/popbar-prefs.png" width="560" alt="Preferences window">
-</p>
-
-Menu bar → "Preferences…" (⌘,). Changes take effect **immediately** — no save button. The
-window has four tabs: **General / Features / Toolbar / About**, and its height adapts to the
-tab content (a tab scrolls internally when it exceeds the available screen height):
-
-| Tab | Content |
+| Page | Content |
 |---|---|
-| General | Appearance, language, tray icon, panel position, trigger, clipboard fallback, privacy guard, launch at login |
-| Features | Clipboard history, history persistence, OCR result, usage stats, summon hotkey; Speech: voice (grouped by language, previewable) and rate; Screenshot: hotkey, save folder, format, magnifier, history and limit |
-| Toolbar | Actions & ordering (drag), per-app rules |
-| About | Version, config folder |
-
-Item details:
-
-| Item | Description |
-|---|---|
-| Appearance | System / Light / Dark; all windows and panels switch instantly |
-| Language | System / English / 中文; menu bar, bar, panel switch instantly |
-| Tray Icon | Left-click action on the menu bar icon: menu / input translate / clipboard translate (right-click always opens the menu) |
-| Panel Position | Translation panel at top-center / at cursor |
-| Trigger | Drag + double-click / drag only / double-click only |
-| Clipboard Fallback | Whether to simulate ⌘C when AX can't read the selection (turning it off better protects pasteboard privacy) |
-| Privacy Guard | Check sensitive content before AI requests: ask / auto-mask / off |
-| Clipboard History | Records recent text/images/files (≤10, pinnable); per-item submenu paste / copy only / append; plus persist-history, capture-images and capture-files toggles; off by default, memory-only |
-| OCR Result | After screenshot recognition: translation panel / full action bar |
-| Usage Stats | Counts actions only, never text; powers the weekly ordering suggestion; can be disabled |
-| Summon Hotkey | Default `ctrl+opt+space`; format `ctrl+opt+space` |
-| Screenshot Hotkey | Default `ctrl+opt+p`; clear it to restore the default |
-| Save Folder / Format | Where ⌘S saves screenshots (default `~/Desktop`) and PNG / JPG |
-| Magnifier | Show the pixel magnifier and color value while selecting |
-| Screenshot History / Limit | Keep a local screenshot history (off by default) and how many to keep, 1–200 |
-| Launch at Login | SMAppService login item, synced with System Settings → Login Items |
-
-The About tab shows the version and config folder, with a one-click Finder reveal.
+| General | Language, appearance, launch at login, pause selection, menu bar icon click, config folder, re-run onboarding |
+| Selection | Trigger (drag + double-click / drag only / double-click only), delay, minimum characters, ⌘C fallback |
+| Bar | Smart capsule, search engine, number and order of primary buttons, per-app ordering, speech voice and rate |
+| Translate & AI | Source / target language, timeout, max characters, temperature, after-OCR action, panel position; add / edit / reorder / test providers, prompts |
+| Shortcuts | Recorder: click and press a new combo, Esc cancels, ⌫ clears; duplicates, system-reserved and failed registrations are flagged red on the spot; global shortcuts pause while recording |
+| Privacy | Sensitive-content guard, detected types, clipboard history, usage stats |
+| Per App | Never pop / hotkey only / custom buttons |
+| Extensions | URL / Shell / Shortcuts extensions |
+| Modules | On/off switches for the ten modules |
+| To-Do / Capture / About | Their own options, version and config folder |
 
 ### Config file
 
@@ -585,17 +548,10 @@ popbar/
 swift icon/make_icon.swift icon/PopBar.iconset icon/preview.png
 iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 
-# Regenerate the bar screenshots used in the README (light + dark)
-clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o build/metrics.o   # System Monitor's C collector
-swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header Native/CMetrics.h -framework IOKit \
-    $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift build/metrics.o
-./build/shot docs/screenshots/bar-default.png docs/screenshots/bar-more-dark.png
-
-# Screenshot-feature showcase image (offline composite over docs/index.html, no Screen Recording needed)
-./build/shot --snap docs
-
-# Disk Cleanup panel image (data comes from a temporary sandbox folder, no personal data)
-./build/shot --clean docs
+# Regenerate the docs screenshots (offscreen rendering, no Screen Recording permission, never touches your real config)
+swift run PopBarShot docs/screenshots          # all
+swift run PopBarShot docs/screenshots bar      # only bar-*
+POPBAR_SHOT_DEMO=1 swift run PopBarShot docs/screenshots   # Deck pages with demo data (to-dos, clipboard, history)
 ```
 
 ## Known limitations

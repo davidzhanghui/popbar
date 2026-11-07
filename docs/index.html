@@ -4,230 +4,145 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PopBar — 选中文字，事就办了</title>
-<meta name="description" content="PopBar 是一个 macOS 划词工具条：选中文字，浮动菜单即刻出现在选区上方。上下文感知、AI 翻译面板、隐私脱敏，外加微信式截屏、录屏导出、系统监控与磁盘清理，纯 Swift + AppKit。">
-<meta property="og:title" content="PopBar — 选中文字，事就办了">
-<meta property="og:description" content="macOS 划词工具条：划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏 · 录屏 · 系统监控 · 磁盘清理">
+<meta name="description" content="PopBar 是 macOS 划词工具条：选中文字，浮动工具条出现在选区上方。智能胶囊、多模型 AI 翻译、隐私脱敏；3.0 把截屏、录屏、监控、清理等十个工具收进一个 Deck 窗口。Swift 原生，开源。">
+<meta property="og:title" content="PopBar 3.0 — 选中文字，事就办了">
+<meta property="og:description" content="macOS 划词工具条 · 智能胶囊 · 多模型 AI 翻译 · 隐私脱敏 · Deck：今日、剪贴板、截屏、录屏、监控、清理……">
 <meta property="og:image" content="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-og.png">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="popbar-icon.png">
 <style>
+  /* 设计令牌与 Sources/PopBarDesign/Theme.swift 一致：暖纸中性灰 + 朱砂强调色 + 发丝线 */
   :root {
-    --accent: #744DF2;
-    --accent-soft: rgba(116,77,242,.10);
-    --accent-line: rgba(116,77,242,.28);
-    --ink: #241f38;
-    --sub: #6e6787;
-    --faint: #8a849e;
-    --card: rgba(255,255,255,.78);
-    --line: rgba(116,77,242,.14);
-    --radius: 22px;
+    --bg:#F7F6F3; --surface:#FFFFFF; --surface2:#F1EFEB; --border:#E7E5E0; --border-strong:#D6D3CC;
+    --text:#1C1B19; --text2:#3D3B37; --muted:#6B6862; --faint:#A19D96;
+    --accent:#D9480F; --accent-soft:rgba(217,72,15,.10); --selection:rgba(217,72,15,.22);
+    --shadow:0 24px 48px rgba(28,27,25,.10), 0 2px 6px rgba(28,27,25,.06);
+    --en:"SF Pro Display",-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
+    --zh:"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif;
+    --mono:"SF Mono",Menlo,monospace;
+    color-scheme:light dark;
   }
-  * { margin:0; padding:0; box-sizing:border-box; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161615; --surface:#1F1E1C; --surface2:#282725; --border:#34322F; --border-strong:#46433F;
+      --text:#EDEBE7; --text2:#D5D2CC; --muted:#A19D96; --faint:#6F6B65; --accent:#F0652A; --accent-soft:rgba(240,101,42,.14);
+      --selection:rgba(240,101,42,.30); --shadow:0 24px 48px rgba(0,0,0,.45), 0 2px 6px rgba(0,0,0,.3); }
+  }
+  * { box-sizing:border-box; }
   html { scroll-behavior:smooth; }
-  body {
-    font-family:"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",sans-serif;
-    color:var(--ink);
-    background:linear-gradient(178deg,#EDE8FA 0%,#F6F4FD 42%,#FBFAFF 100%);
-    background-attachment:fixed;
-    -webkit-font-smoothing:antialiased;
-  }
-  body::before { content:""; position:fixed; left:-10%; top:-15%; width:60%; height:60%; z-index:-1;
-    background:radial-gradient(closest-side,rgba(116,77,242,.15),transparent 70%); }
-  body::after { content:""; position:fixed; right:-12%; bottom:-18%; width:56%; height:56%; z-index:-1;
-    background:radial-gradient(closest-side,rgba(116,77,242,.11),transparent 70%); }
-  body { padding-left:56px; }
-  section, header.hero { scroll-margin-top:64px; }
-  .wrap { max-width:1120px; margin:0 auto; padding:0 40px; }
-  .en { font-family:"Helvetica Neue",Helvetica,Arial,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--zh); line-height:1.6; -webkit-font-smoothing:antialiased;
+    background-image:linear-gradient(to right, color-mix(in srgb, var(--border) 45%, transparent) 1px, transparent 1px),
+                     linear-gradient(to bottom, color-mix(in srgb, var(--border) 45%, transparent) 1px, transparent 1px);
+    background-size:80px 80px; }
+  img { max-width:100%; display:block; }
+  a { color:inherit; }
+  .en { font-family:var(--en); }
+  .wrap { max-width:1160px; margin:0 auto; padding:0 32px; }
 
-  /* ---------- left rail ---------- */
-  .rail { position:fixed; left:0; top:0; bottom:0; width:56px; z-index:60; display:flex;
-    flex-direction:column; align-items:center; gap:8px; padding:12px 0;
-    background:rgba(246,244,253,.82); backdrop-filter:blur(24px) saturate(1.6);
-    -webkit-backdrop-filter:blur(24px) saturate(1.6); border-right:1px solid var(--line); }
-  .rail a { position:relative; width:40px; height:40px; border-radius:11px; display:flex;
-    align-items:center; justify-content:center; color:var(--sub); text-decoration:none;
-    transition:background .18s, color .18s; }
-  .rail a svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.7;
-    stroke-linecap:round; stroke-linejoin:round; }
-  .rail a:hover { background:var(--accent-soft); color:var(--accent); }
-  .rail a[aria-current="true"] { background:var(--accent-soft); color:var(--accent); }
-  .rail a::after { content:attr(data-tip); position:absolute; left:50px; top:50%;
-    transform:translate(-4px,-50%); padding:5px 11px; border-radius:8px; white-space:nowrap;
-    font-size:13px; background:var(--ink); color:#fff; opacity:0; pointer-events:none;
-    transition:opacity .16s, transform .16s; }
-  .rail a:hover::after { opacity:1; transform:translate(0,-50%); }
-  .rail .spacer { flex:1; }
+  nav { position:sticky; top:0; z-index:10; background:color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter:saturate(1.4) blur(14px);
+    border-bottom:1px solid var(--border); }
+  nav .wrap { display:flex; align-items:center; gap:12px; height:60px; }
+  nav .logo { width:30px; height:30px; }
+  nav .brand { font-family:var(--en); font-weight:800; font-size:19px; letter-spacing:-.01em; }
+  nav .links { margin-left:auto; display:flex; gap:4px; align-items:center; }
+  nav .links a { text-decoration:none; font-size:15px; color:var(--muted); padding:6px 12px; border-radius:8px; }
+  nav .links a:hover, nav .links a[aria-current="true"] { color:var(--text); background:var(--surface2); }
+  nav .links a.gh { color:var(--text); border:1px solid var(--border-strong); background:var(--surface); display:flex; gap:6px; align-items:center; }
+  nav .gh svg { width:16px; height:16px; fill:currentColor; }
 
-  /* ---------- nav ---------- */
-  nav { position:sticky; top:0; z-index:50; backdrop-filter:blur(24px) saturate(1.6);
-    -webkit-backdrop-filter:blur(24px) saturate(1.6);
-    background:rgba(246,244,253,.72); border-bottom:1px solid var(--line); }
-  nav .wrap { display:flex; align-items:center; height:64px; gap:14px; }
-  nav .logo { width:34px; height:34px; border-radius:9px;
-    box-shadow:0 4px 14px rgba(116,77,242,.30); }
-  nav .brand { font-weight:600; font-size:19px; }
-  nav .links { margin-left:auto; display:flex; gap:30px; align-items:center; }
-  nav .links a { color:var(--sub); text-decoration:none; font-size:15px; transition:color .2s; }
-  nav .links a:hover { color:var(--accent); }
-  nav .links a:not(.gh) { position:relative; display:flex; align-items:center; height:64px; }
-  nav .links a:not(.gh)::after { content:""; position:absolute; left:0; right:0; bottom:-1px;
-    height:2px; background:var(--accent); transform:scaleX(0); transition:transform .22s; }
-  nav .links a[aria-current="true"] { color:var(--ink); font-weight:600; }
-  nav .links a[aria-current="true"]::after { transform:scaleX(1); }
-  nav .gh { display:inline-flex; align-items:center; gap:7px; padding:8px 18px;
-    border-radius:999px; background:var(--ink); color:#fff !important; font-weight:500;
-    transition:transform .2s, box-shadow .2s; }
-  nav .gh:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(36,31,56,.25); }
-  nav .gh svg { width:17px; height:17px; fill:#fff; }
+  .eyebrow { font-size:14px; font-weight:600; letter-spacing:.1em; color:var(--accent); text-transform:uppercase; }
+  h1, h2, h3 { margin:0; }
 
-  /* ---------- hero ---------- */
-  .hero { text-align:center; padding:110px 0 70px; }
-  .hero .icon { width:118px; height:118px; border-radius:28px;
-    box-shadow:0 22px 60px rgba(116,77,242,.38), 0 4px 14px rgba(116,77,242,.2); }
-  .kicker { margin-top:38px; font-size:15px; font-weight:500; letter-spacing:.38em;
-    color:var(--accent); }
-  .hero h1 { margin-top:18px; font-size:76px; font-weight:600; letter-spacing:.01em;
-    line-height:1.15; }
-  .hero .sub { margin:24px auto 0; max-width:640px; font-size:20px; line-height:1.7;
-    color:var(--sub); }
-  .badges { margin-top:30px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
-  .badge { padding:7px 18px; border-radius:999px; font-size:14px; font-weight:500;
-    color:#5b5478; background:rgba(255,255,255,.72); border:1.5px solid var(--accent-line); }
-  .cta { margin-top:42px; display:flex; gap:16px; justify-content:center; }
-  .btn { display:inline-flex; align-items:center; gap:9px; padding:15px 34px;
-    border-radius:999px; font-size:17px; font-weight:500; text-decoration:none;
-    transition:transform .2s, box-shadow .2s; }
-  .btn-primary { background:var(--accent); color:#fff;
-    box-shadow:0 10px 30px rgba(116,77,242,.38); }
-  .btn-primary:hover { transform:translateY(-2px); box-shadow:0 14px 36px rgba(116,77,242,.45); }
-  .btn-ghost { background:var(--card); color:var(--ink); border:1.5px solid var(--accent-line); }
-  .btn-ghost:hover { transform:translateY(-2px); box-shadow:0 10px 26px rgba(60,45,120,.15); }
+  .hero { padding:88px 0 64px; }
+  .hero .wrap { display:grid; grid-template-columns:1.05fr 1fr; gap:56px; align-items:center; }
+  .hero h1 { font-size:64px; line-height:1.12; font-weight:700; letter-spacing:-.01em; margin:18px 0 20px; }
+  .hero .sub { font-size:19px; color:var(--muted); margin:0 0 26px; max-width:34em; }
+  .badges { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:30px; }
+  .badge { font-size:14px; color:var(--text2); padding:5px 14px; border:1px solid var(--border-strong); border-radius:999px; background:var(--surface); }
+  .cta { display:flex; gap:12px; flex-wrap:wrap; }
+  .btn { text-decoration:none; font-size:16px; font-weight:600; padding:12px 24px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface); }
+  .btn-primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .stage { position:relative; background:var(--surface); border:1px solid var(--border-strong); border-radius:16px; box-shadow:var(--shadow); padding:96px 34px 40px; }
+  .stage .dots { position:absolute; top:16px; left:18px; display:flex; gap:8px; }
+  .stage .dots i { width:12px; height:12px; border-radius:50%; background:var(--border-strong); }
+  .stage p { font-family:var(--en); font-size:22px; line-height:1.7; margin:0; color:var(--text); }
+  .stage mark { background:var(--selection); color:inherit; border-radius:3px; padding:1px 0; }
+  .stage .bar { position:absolute; left:34px; top:30px; width:min(330px, 70%); filter:drop-shadow(0 12px 20px rgba(28,27,25,.14)); }
 
-  /* ---------- sections ---------- */
-  section { padding:80px 0; }
-  .sec-head { text-align:center; margin-bottom:52px; }
-  .sec-head .kicker { margin-top:0; }
-  .sec-head h2 { margin-top:14px; font-size:44px; font-weight:600; }
-  .sec-head p { margin-top:14px; font-size:18px; color:var(--sub); }
-  .sec-head.left { text-align:left; display:flex; align-items:flex-end; justify-content:space-between;
-    gap:20px; border-bottom:1px solid var(--line); padding-bottom:18px; margin-bottom:0; }
-  .sec-head.left h2 { font-size:52px; line-height:1.1; letter-spacing:-.01em; }
-  .sec-head.left .count { font-size:16px; font-weight:600; white-space:nowrap; padding-bottom:8px; }
+  section { padding:72px 0; }
+  .head { margin-bottom:36px; max-width:720px; }
+  .head h2 { font-size:42px; line-height:1.2; font-weight:700; margin:12px 0 10px; }
+  .head p { color:var(--muted); font-size:18px; margin:0; }
 
-  /* video */
-  .video-shell { max-width:960px; margin:0 auto; border-radius:var(--radius); overflow:hidden;
-    background:#000; box-shadow:0 40px 100px rgba(60,45,120,.28), 0 6px 24px rgba(60,45,120,.12);
-    border:1px solid rgba(255,255,255,.9); }
-  .video-shell video { width:100%; display:block; }
-  .video-note { text-align:center; margin-top:20px; font-size:14px; color:var(--faint); }
+  .video { border-radius:16px; overflow:hidden; border:1px solid var(--border-strong); box-shadow:var(--shadow); background:#000; }
+  .video video { width:100%; display:block; aspect-ratio:16/9; }
+  .video-note { color:var(--muted); font-size:15px; margin-top:14px; }
 
-  /* features */
-  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:22px; }
-  .card { background:var(--card); border:1px solid rgba(255,255,255,.9); border-radius:var(--radius);
-    padding:30px 28px; box-shadow:0 8px 30px rgba(60,45,120,.08);
-    backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
-    transition:transform .25s, box-shadow .25s; }
-  .card:hover { transform:translateY(-5px); box-shadow:0 20px 50px rgba(60,45,120,.16); }
-  .card .glyph { width:46px; height:46px; border-radius:13px; display:flex; align-items:center;
-    justify-content:center; background:var(--accent-soft); border:1px solid var(--accent-line); }
-  .card .glyph svg { width:24px; height:24px; stroke:var(--accent); fill:none;
-    stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-  .card h3 { margin-top:18px; font-size:20px; font-weight:600; }
-  .card p { margin-top:10px; font-size:15px; line-height:1.7; color:var(--sub); }
-  .grid { gap:0; border-left:1px solid var(--line); }
-  .grid .card { border-radius:0; border:0; border-right:1px solid var(--line);
-    border-bottom:1px solid var(--line); box-shadow:none; cursor:pointer; position:relative;
-    transition:opacity .7s ease, transform .7s ease, background .18s; }
-  .grid .card:hover { transform:none; box-shadow:none; background:rgba(255,255,255,.96); }
-  .grid .card.reveal.on:hover { transform:none; }
-  .grid .card .glyph { float:left; margin-right:14px; }
-  .grid .card h3 { margin-top:0; line-height:46px; }
-  .grid .card p { clear:both; padding-top:12px; display:-webkit-box; -webkit-line-clamp:3;
-    -webkit-box-orient:vertical; overflow:hidden; }
-  .grid .card.open p { display:block; -webkit-line-clamp:unset; }
-  .grid .card::after { content:"展开"; position:absolute; right:18px; top:30px; font-size:12px;
-    color:var(--faint); opacity:0; transition:opacity .18s; }
-  .grid .card:hover::after { opacity:1; }
-  .grid .card.open::after { content:"收起"; }
-  @media (min-width:901px) { .grid .card:last-child:nth-child(3n+1) { grid-column:1 / -1; } }
-  .chips { margin-top:34px; display:flex; flex-wrap:wrap; gap:10px; justify-content:center; }
-  .chip { padding:8px 16px; border-radius:999px; font-size:14px; color:#5b5478;
-    background:rgba(255,255,255,.6); border:1px solid var(--line); }
+  .feat { display:grid; grid-template-columns:repeat(2, 1fr); gap:20px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px; display:flex; flex-direction:column; gap:10px; }
+  .card h3 { font-size:22px; font-weight:600; }
+  .card p { margin:0; color:var(--muted); font-size:16px; }
+  .card .shot { margin-top:14px; background:var(--surface2); border-radius:12px; padding:22px; display:flex; align-items:center; justify-content:center; min-height:200px; }
+  .card .shot img { max-height:340px; width:auto; filter:drop-shadow(0 10px 18px rgba(28,27,25,.12)); }
 
-  /* screenshots */
-  .shots { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
-  .shots figure { background:var(--card); border:1px solid rgba(255,255,255,.9);
-    border-radius:var(--radius); padding:18px; box-shadow:0 8px 30px rgba(60,45,120,.08); }
-  .shots figure.wide { grid-column:1 / -1; }
-  .shots img { width:100%; border-radius:12px; display:block; background:#f6f4fd; }
-  .shots figcaption { margin-top:14px; font-size:14px; color:var(--sub); text-align:center; }
+  .deck { display:grid; grid-template-columns:240px 1fr; gap:24px; align-items:start; }
+  .deck .tabs { display:flex; flex-direction:column; gap:4px; position:sticky; top:84px; }
+  .deck .tabs button { all:unset; cursor:pointer; padding:12px 16px; border-radius:10px; font-size:16px; color:var(--text2); display:flex; flex-direction:column; border-left:3px solid transparent; }
+  .deck .tabs button small { color:var(--faint); font-size:13px; }
+  .deck .tabs button[aria-selected="true"] { background:var(--surface); border-left-color:var(--accent); color:var(--text); box-shadow:0 1px 0 var(--border); }
+  .deck .tabs button:focus-visible { outline:2px solid var(--accent); }
+  .deck .view { border-radius:14px; overflow:hidden; border:1px solid var(--border-strong); box-shadow:var(--shadow); background:var(--surface); }
+  .deck .cap { margin-top:14px; color:var(--muted); font-size:16px; }
 
-  /* install */
-  .install { display:grid; grid-template-columns:1fr 1fr; gap:22px; align-items:stretch; }
-  .install > .card { min-width:0; }
-  .install .card h3 { display:flex; align-items:center; gap:10px; }
-  .install .card h3 .num { width:30px; height:30px; border-radius:9px; background:var(--accent);
-    color:#fff; font-size:15px; display:inline-flex; align-items:center; justify-content:center;
-    font-weight:600; }
-  .codeblock { position:relative; margin-top:16px; background:#211d33; border-radius:14px;
-    padding:44px 20px 18px; overflow-x:auto; }
-  .codeblock code { font-family:"SF Mono",Menlo,monospace; font-size:13.5px; line-height:1.85;
-    color:#e8e4f8; white-space:pre; }
-  .codeblock .cm { color:#7d7699; }
-  .copy-btn { position:absolute; top:10px; right:10px; padding:5px 12px; font-size:12px;
-    border-radius:8px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08);
-    color:#cfcbe4; cursor:pointer; font-family:inherit; transition:background .2s; }
-  .copy-btn:hover { background:rgba(255,255,255,.16); }
-  .note { margin-top:14px; font-size:13.5px; line-height:1.7; color:var(--faint); }
-  .note b { color:var(--sub); }
-  .note code { font-family:"SF Mono",Menlo,monospace; font-size:12.5px;
-    background:rgba(116,77,242,.09); padding:2px 7px; border-radius:6px; color:var(--accent); }
+  .duo { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .duo figure { margin:0; }
+  .duo img { border-radius:12px; border:1px solid var(--border-strong); box-shadow:var(--shadow); }
+  .duo figcaption { color:var(--muted); font-size:15px; margin-top:12px; }
 
-  /* footer */
-  footer { padding:60px 0 50px; text-align:center; border-top:1px solid var(--line); }
-  footer .logo { width:44px; height:44px; border-radius:12px;
-    box-shadow:0 8px 22px rgba(116,77,242,.3); }
-  footer p { margin-top:16px; font-size:14px; color:var(--faint); }
+  .chips { display:flex; flex-wrap:wrap; gap:10px; }
+  .chip { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 18px; font-size:15px; color:var(--muted); max-width:360px; }
+  .chip b { display:block; color:var(--text); font-size:16px; font-weight:600; margin-bottom:2px; }
+
+  .install { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .code { position:relative; background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:18px 20px; margin:6px 0; }
+  .code code { font-family:var(--mono); font-size:14px; white-space:pre; display:block; overflow-x:auto; color:var(--text2); }
+  .code .cm { color:var(--faint); }
+  .copy-btn { position:absolute; top:10px; right:10px; font:inherit; font-size:13px; border:1px solid var(--border-strong); background:var(--surface); color:var(--muted); border-radius:8px; padding:3px 10px; cursor:pointer; }
+  .note { font-size:14px; color:var(--muted); margin:0; }
+  .note code { font-family:var(--mono); font-size:13px; background:var(--surface2); padding:1px 6px; border-radius:5px; }
+
+  footer { border-top:1px solid var(--border); padding:40px 0 56px; color:var(--muted); font-size:14px; }
+  footer .wrap { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  footer img { width:28px; height:28px; }
   footer a { color:var(--accent); text-decoration:none; }
-  footer a:hover { text-decoration:underline; }
 
-  /* reveal */
-  .reveal { opacity:0; transform:translateY(26px); transition:opacity .7s ease, transform .7s ease; }
+  .hero .wrap > *, .feat > *, .deck > *, .duo > *, .install > * { min-width:0; }
+  .reveal { opacity:0; transform:translateY(16px); transition:opacity .6s ease, transform .6s ease; }
   .reveal.on { opacity:1; transform:none; }
+  @media (prefers-reduced-motion: reduce) { .reveal { opacity:1; transform:none; transition:none; } html { scroll-behavior:auto; } }
 
-  @media (max-width:900px) {
-    .grid, .install { grid-template-columns:1fr; }
-    .shots { grid-template-columns:1fr; }
-    .hero h1 { font-size:46px; }
+  @media (max-width: 900px) {
+    .hero .wrap, .feat, .duo, .install, .deck { grid-template-columns:1fr; }
+    .hero { padding-top:48px; }
+    .hero h1 { font-size:42px; }
+    .head h2 { font-size:32px; }
+    .deck .tabs { position:static; flex-direction:row; overflow-x:auto; padding-bottom:6px; }
+    .deck .tabs button { border-left:0; border-bottom:3px solid transparent; flex:none; }
+    .deck .tabs button[aria-selected="true"] { border-bottom-color:var(--accent); }
     nav .links a:not(.gh) { display:none; }
-    .rail { display:none; }
-    body { padding-left:0; }
-    .sec-head.left { flex-direction:column; align-items:flex-start; gap:6px; }
-    .sec-head.left h2 { font-size:36px; }
-    .wrap { padding:0 22px; }
   }
+  @media (max-width: 520px) { .wrap { padding:0 16px; } .stage { padding:84px 18px 28px; } .stage p { font-size:18px; } }
 </style>
 </head>
 <body>
 
-<aside class="rail" aria-label="快速导航">
-  <a href="#top" data-tip="顶部" aria-label="顶部"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg></a>
-  <a href="#demo" data-tip="演示" aria-label="演示"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4-2.5z"/></svg></a>
-  <a href="#features" data-tip="特性" aria-label="特性"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></a>
-  <a href="#shots" data-tip="截图" aria-label="截图"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/></svg></a>
-  <a href="#install" data-tip="安装" aria-label="安装"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg></a>
-  <span class="spacer"></span>
-  <a href="https://github.com/davidzhanghui/popbar" target="_blank" rel="noopener" data-tip="GitHub" aria-label="GitHub"><svg viewBox="0 0 24 24"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.800-.3 5.800-1.400 5.800-6.200a4.800 4.800 0 0 0-1.300-3.300 4.500 4.500 0 0 0-.1-3.300s-1-.3-3.500 1.300a12 12 0 0 0-6.200 0C6.400 1.600 5.400 1.900 5.400 1.900a4.500 4.500 0 0 0-.1 3.300A4.800 4.800 0 0 0 4 8.500c0 4.800 3 5.900 5.800 6.200a3 3 0 0 0-.8 2.300V21"/></svg></a>
-</aside>
-
 <nav>
   <div class="wrap">
-    <img class="logo" src="popbar-icon.png" alt="PopBar">
-    <span class="brand en">PopBar</span>
+    <img class="logo" src="popbar-icon.png" alt="">
+    <span class="brand">PopBar</span>
     <div class="links">
       <a href="#demo">演示</a>
-      <a href="#features">特性</a>
-      <a href="#shots">截图</a>
+      <a href="#selection">划词</a>
+      <a href="#deck">Deck</a>
       <a href="#install">安装</a>
       <a class="gh" href="https://github.com/davidzhanghui/popbar" target="_blank" rel="noopener">
         <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -239,212 +154,159 @@
 
 <header class="hero" id="top">
   <div class="wrap">
-    <img class="icon" src="popbar-icon.png" alt="PopBar 图标">
-    <div class="kicker en">MACOS 划词工具条</div>
-    <h1>选中文字，事就办了</h1>
-    <p class="sub">选中文字，浮动工具条即刻出现在选区上方 —— 复制、搜索、AI 翻译、上下文操作，一步到位；还能像微信一样截屏标注，录屏后一键导出带点击涟漪的视频或 GIF。纯 Swift + AppKit，无 Xcode 工程依赖，单文件编译打包。</p>
-    <div class="badges">
-      <span class="badge">开源</span>
-      <span class="badge en">Swift + AppKit</span>
-      <span class="badge en">macOS 15+</span>
-      <span class="badge">无 Dock 图标 · 空闲 CPU ≈ 0</span>
+    <div>
+      <div class="eyebrow">macOS 划词工具条 · 3.0</div>
+      <h1>选中文字，<br>事就办了</h1>
+      <p class="sub">拖选或双击一段文字，浮动工具条就出现在选区正上方：复制、翻译、搜索、朗读、加入待办，不用切换应用。3.0 再把截屏、录屏、监控、清理等十个工具收进一个 Deck 窗口。</p>
+      <div class="badges">
+        <span class="badge">开源</span>
+        <span class="badge en">Swift 原生</span>
+        <span class="badge en">macOS 15+</span>
+        <span class="badge">无 Dock 图标 · 空闲 CPU ≈ 0</span>
+      </div>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/davidzhanghui/popbar/releases" target="_blank" rel="noopener">下载 PopBar</a>
+        <a class="btn" href="#demo">看 62 秒宣传片</a>
+      </div>
     </div>
-    <div class="cta">
-      <a class="btn btn-primary" href="https://github.com/davidzhanghui/popbar/releases" target="_blank" rel="noopener">下载 PopBar</a>
-      <a class="btn btn-ghost" href="#demo">观看宣传片</a>
+    <div class="stage" aria-label="选中文字后，浮动工具条出现在选区上方">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <picture>
+        <source srcset="screenshots/bar-default-dark.png" media="(prefers-color-scheme: dark)">
+        <img class="bar" src="screenshots/bar-default.png" alt="PopBar 浮动工具条">
+      </picture>
+      <p><mark>Select any text</mark> and a floating toolbar appears right above it — copy, translate, search or read it aloud, without leaving the app.</p>
     </div>
   </div>
 </header>
 
 <section id="demo">
   <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker en">PROMO</div>
-      <h2>69 秒，看懂 PopBar</h2>
+    <div class="head reveal">
+      <div class="eyebrow en">Promo</div>
+      <h2>62 秒，看懂 PopBar 3.0</h2>
     </div>
-    <div class="video-shell reveal">
-      <video controls muted playsinline preload="metadata" poster="popbar-promo-poster.png">
-        <source src="popbar-promo-v2.0.mp4" type="video/mp4">
-        <source src="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-promo-v2.0.mp4" type="video/mp4">
+    <div class="video reveal">
+      <video controls playsinline preload="metadata" poster="popbar-promo-poster.png">
+        <source src="popbar-promo-v3.0.mp4" type="video/mp4">
+        <source src="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-promo-v3.0.mp4" type="video/mp4">
       </video>
     </div>
-    <p class="video-note">划词即弹 · 上下文感知 · AI 翻译面板 · 隐私脱敏 · 截屏标注 · 录屏导出</p>
+    <p class="video-note">划词即弹 · AI 翻译 · 智能胶囊 · 隐私守卫 · Deck 主窗口 · 模块开关 · 明暗主题　｜　配乐：“Smile” by LiQWYD（CC BY 4.0）</p>
   </div>
 </section>
 
-<section id="features">
+<section id="selection">
   <div class="wrap">
-    <div class="sec-head left reveal">
-      <div>
-        <div class="kicker en">FEATURES</div>
-        <h2>认出你选中的是什么</h2>
-      </div>
-      <div class="count">13 项核心能力</div>
+    <div class="head reveal">
+      <div class="eyebrow en">Selection</div>
+      <h2>认出你选中的是什么</h2>
+      <p>工具条只在你选中文字时出现，用完就收起。</p>
     </div>
-    <div class="grid">
+    <div class="feat">
       <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/><rect x="15" y="14" width="7" height="6" rx="1.5"/></svg></div>
-        <h3>划词即弹</h3>
-        <p>拖拽或双击选中文字，毛玻璃工具条出现在选区上方。NSPanel 不抢焦点，前台 App 与选区原样保留。</p>
+        <h3>智能胶囊</h3>
+        <p>识别链接、算式、颜色、时间戳、JSON、Base64、文件路径、电话、地址等 14 类内容，最相关的一键操作放在最左边。</p>
+        <div class="shot"><picture><source srcset="screenshots/bar-capsule-dark.png" media="(prefers-color-scheme: dark)"><img src="screenshots/bar-capsule.png" alt="选中链接时，胶囊显示打开链接" loading="lazy"></picture></div>
       </div>
       <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.8 2.8M16.2 16.2 19 19M19 5l-2.8 2.8M7.8 16.2 5 19"/></svg></div>
-        <h3>上下文感知</h3>
-        <p>识别 URL、邮箱、算式、JSON、Base64、颜色、文件路径、电话、地址等 14 类内容，自动追加对应按钮。</p>
+        <h3>一次划词，三家同时作答</h3>
+        <p>接入任意 OpenAI 兼容服务：DeepSeek、硅基流动、Ollama……多个 provider 并行流式返回，还能就地追问。</p>
+        <div class="shot"><picture><source srcset="screenshots/translate-result-dark.png" media="(prefers-color-scheme: dark)"><img src="screenshots/translate-result.png" alt="AI 翻译面板，三家服务的译文并排" loading="lazy"></picture></div>
       </div>
       <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/><path d="M9 11h6M9 14h4"/></svg></div>
-        <h3>AI 翻译面板</h3>
-        <p>接入任意 OpenAI 兼容服务 —— DeepSeek、硅基流动、Ollama 并行流式返回译文对比，还能就地多轮追问。</p>
+        <h3>发出去之前，先遮住隐私</h3>
+        <p>发给 AI 之前检查手机号、身份证、银行卡、邮箱、API Key、私钥、内网 IP，可询问、自动脱敏或关闭。</p>
+        <div class="shot"><picture><source srcset="screenshots/translate-sensitive-dark.png" media="(prefers-color-scheme: dark)"><img src="screenshots/translate-sensitive.png" alt="检测到手机号与邮箱，等待确认" loading="lazy"></picture></div>
       </div>
       <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></div>
-        <h3>隐私脱敏</h3>
-        <p>AI 请求发出前检测手机号、身份证、API Key、私钥、内网 IP，可询问或自动脱敏，返回后原位还原。</p>
+        <h3>常用在前，其余收进「更多」</h3>
+        <p>剪切、大小写、字数、二维码、脱敏、开发者工具、打印、扩展……在「设置 → 浮动条」里排序和挑选常用按钮。</p>
+        <div class="shot"><picture><source srcset="screenshots/bar-more-dark.png" media="(prefers-color-scheme: dark)"><img src="screenshots/bar-more.png" alt="浮动条与更多面板" loading="lazy"></picture></div>
       </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="2" width="10" height="14" rx="2" opacity=".45"/></svg></div>
-        <h3>剪贴板历史</h3>
-        <p>可选开启，记录文字、图片和文件（最多 10 条，可置顶）；默认只在内存、不落盘，密码类剪贴板标记一律跳过。</p>
+    </div>
+  </div>
+</section>
+
+<section id="deck">
+  <div class="wrap">
+    <div class="head reveal">
+      <div class="eyebrow en">New in 3.0 · Deck</div>
+      <h2>一个 Deck，装下十个工具</h2>
+      <p><b>⌃⌥D</b> 打开。今日、剪贴板、截屏、录屏、监控、清理、启动项、维护、打印、电视，按「工作 / 媒体 / 系统 / 设备」分组，原来的十几个浮窗和两个设置窗口都合并进来。</p>
+    </div>
+    <div class="deck reveal">
+      <div class="tabs" role="tablist" aria-label="Deck 页面">
+        <button role="tab" aria-selected="true" data-shot="deck-today" data-cap="每天一个 Markdown 文件，没做完的自动顺延；内置番茄钟，可选与提醒事项、日历同步。">今日<small>待办 + 番茄钟</small></button>
+        <button role="tab" aria-selected="false" data-shot="deck-clipboard" data-cap="可选开启，默认只存在内存里；⌥⌘V 速选面板，⌘1–9 直接粘贴，密码类内容自动跳过。">剪贴板<small>历史与速选</small></button>
+        <button role="tab" aria-selected="false" data-shot="deck-snap" data-cap="⌃⌥P 微信式截屏：冻结画面、识别窗口、标注、马赛克、贴图、文字识别、长截图。">截屏<small>标注 · 贴图 · OCR</small></button>
+        <button role="tab" aria-selected="false" data-shot="deck-record" data-cap="⌃⌥R 选区 / 窗口 / 整屏录制：点击涟漪、摄像头画中画、水印、裁剪压缩、导出 GIF。">录屏<small>涟漪 · 画中画 · GIF</small></button>
+        <button role="tab" aria-selected="false" data-shot="deck-monitor" data-cap="健康评分、CPU / GPU / 内存 / 电池 / 磁盘 / 网络 / 温度，按应用分组的进程表；只在这一页打开时采样。">监控<small>按应用分组的进程</small></button>
+        <button role="tab" aria-selected="false" data-shot="deck-clean" data-cap="扫描 App 缓存、开发工具、AI 工具缓存与卸载残留，一律移入废纸篓，随时能放回。">清理<small>一律移入废纸篓</small></button>
       </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/><path d="M12 8v8M8 12h8"/></svg></div>
-        <h3>扩展系统</h3>
-        <p>URL 模板、Shell 脚本（stdin 传文本、防注入）、快捷指令三类扩展，写进配置即刻生效。</p>
+      <div>
+        <div class="view"><picture><source id="deck-dark" srcset="screenshots/deck-today-dark.png" media="(prefers-color-scheme: dark)"><img id="deck-img" src="screenshots/deck-today.png" alt="Deck 主窗口 · 今日"></picture></div>
+        <p class="cap" id="deck-cap">每天一个 Markdown 文件，没做完的自动顺延；内置番茄钟，可选与提醒事项、日历同步。</p>
       </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></svg></div>
-        <h3>微信式截屏</h3>
-        <p>ctrl+opt+p 冻结画面、自动识别窗口、放大镜取色；矩形/箭头/画笔/文字/马赛克/序号标注，贴图、文字识别、长截图一气呵成。</p>
-      </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M17 10l4-2.5v9L17 14"/><circle cx="10" cy="12" r="2.5"/></svg></div>
-        <h3>录屏导出</h3>
-        <p>ctrl+opt+r 选区或跟随窗口录制，倒计时开录、暂停、标记点；统一导出面板一次烧进点击涟漪、摄像头画中画与水印，也能导出 GIF。</p>
-      </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4-5"/><circle cx="12" cy="16" r="1.2"/></svg></div>
-        <h3>系统监控</h3>
-        <p>菜单栏一点即开：健康评分、CPU（含每核）/ GPU / 内存 / 电池 / 磁盘 / 网络 / 温度实时面板，外观与翻译面板一致；只在打开时采样，空闲零开销。</p>
-      </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg></div>
-        <h3>进程管理</h3>
-        <p>按应用分组、可滚动可搜索；点击任意一行查看进程详情（启动链、launchd 原因、置信度、警告）；右键菜单可固定行、终止、强制退出。</p>
-      </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12"/><path d="M10 11v5M14 11v5"/></svg></div>
-        <h3>磁盘清理</h3>
-        <p>扫描 App 缓存、Xcode / Homebrew / npm 等开发缓存、AI 工具缓存与卸载残留，按大小分类勾选；一律移入废纸篓可恢复，运行中的 App 自动加锁，不需要管理员权限。</p>
-      </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></svg></div>
-        <h3>开发者工具箱</h3>
-        <p>HTML / Unicode 转义、SHA256 / MD5、JWT 解码、JSON 格式化与压缩，外加二维码生成；Dev 菜单里的「→ 替换」直接改写原文。</p>
-      </div>
-      <div class="card reveal">
-        <div class="glyph"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M7 10v4M11 10v4M15 10v4M19 10v4"/></svg></div>
-        <h3>键盘模式</h3>
-        <p>可配置全局快捷键唤起工具条；键盘模式期间 ←/→ 移动高亮、Enter 执行、Esc 关闭，拦截自动限时摘除。</p>
-      </div>
+    </div>
+  </div>
+</section>
+
+<section id="settings">
+  <div class="wrap">
+    <div class="head reveal">
+      <div class="eyebrow en">Only what you turn on</div>
+      <h2>用哪个，开哪个</h2>
+      <p>关掉的模块不出现在侧栏、浮动条和菜单里，快捷键不注册，也不在后台运行。快捷键由系统注册，冲突当场标红。</p>
+    </div>
+    <div class="duo">
+      <figure class="reveal"><picture><source srcset="screenshots/settings-modules-dark.png" media="(prefers-color-scheme: dark)"><img src="screenshots/settings-modules.png" alt="设置 · 模块" loading="lazy"></picture><figcaption>设置 · 模块：启动项、维护、打印、电视默认关闭</figcaption></figure>
+      <figure class="reveal"><picture><source srcset="screenshots/settings-hotkeys-dark.png" media="(prefers-color-scheme: dark)"><img src="screenshots/settings-hotkeys.png" alt="设置 · 快捷键" loading="lazy"></picture><figcaption>设置 · 快捷键：录制器，冲突当场标红</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="more">
+  <div class="wrap">
+    <div class="head reveal">
+      <div class="eyebrow en">And the small things</div>
+      <h2>还有这些顺手的小事</h2>
     </div>
     <div class="chips reveal">
-      <span class="chip">键盘模式 ←/→ 执行</span>
-      <span class="chip">按应用规则</span>
-      <span class="chip">截图 OCR 翻译</span>
-      <span class="chip">长截图</span>
-      <span class="chip">点击涟漪</span>
-      <span class="chip">摄像头画中画</span>
-      <span class="chip">导出 GIF</span>
-      <span class="chip">贴图</span>
-      <span class="chip">进程搜索 / 终止</span>
-      <span class="chip">每核 CPU 曲线</span>
-      <span class="chip">明暗双主题</span>
-      <span class="chip">中英双语界面</span>
-      <span class="chip">智能排序建议</span>
-      <span class="chip">就地替换</span>
-    </div>
-  </div>
-</section>
-
-<section id="shots">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker en">SCREENSHOTS</div>
-      <h2>真实界面</h2>
-    </div>
-    <div class="shots">
-      <figure class="wide reveal">
-        <img src="popbar-bar-light.png" alt="浅色模式下的浮动工具条">
-        <figcaption>浮动工具条 · 浅色模式 —— 毛玻璃材质随系统外观自适应</figcaption>
-      </figure>
-      <figure class="wide reveal">
-        <img src="popbar-bar-dark.png" alt="深色模式下的浮动工具条">
-        <figcaption>浮动工具条 · 深色模式</figcaption>
-      </figure>
-      <figure class="wide reveal">
-        <img src="popbar-panel.png" alt="AI 翻译面板，多 provider 并行流式翻译">
-        <figcaption>AI 翻译面板 —— 多个 provider 并行流式返回译文</figcaption>
-      </figure>
-      <figure class="wide reveal">
-        <img src="popbar-snap.png" alt="微信式截屏：定格画面、选区、标注与工具条">
-        <figcaption>截屏 —— 冻结画面、框选、标注、马赛克、长截图，一气呵成</figcaption>
-      </figure>
-      <figure class="reveal">
-        <img src="popbar-record-export.png" alt="录屏导出面板：裁剪、分辨率、质量、点击涟漪、摄像头画中画、水印">
-        <figcaption>录屏导出面板 —— 裁剪、压缩、点击涟漪、画中画、水印一次导出</figcaption>
-      </figure>
-      <figure class="reveal">
-        <img src="popbar-prefs.png" alt="偏好设置窗口">
-        <figcaption>偏好设置 —— 工具条排序、应用规则、快捷键、截屏</figcaption>
-      </figure>
-      <figure class="reveal">
-        <img src="popbar-monitor.png" alt="系统监控面板：健康评分、CPU / GPU / 内存 / 电池 / 磁盘 / 网络 / 温度与按应用分组的进程表">
-        <figcaption>系统监控 —— 实时指标 + 按应用分组、可滚动可搜索的进程表</figcaption>
-      </figure>
-      <figure class="reveal">
-        <img src="popbar-monitor-detail.png" alt="进程详情：启动链、来源与置信度、launchd plist、资源与环境、成员进程">
-        <figcaption>进程详情 —— 为什么在运行、谁启动的、占了什么资源，可直接终止</figcaption>
-      </figure>
-      <figure class="reveal">
-        <img src="popbar-clean.png" alt="磁盘清理面板：按分类列出缓存、日志、构建产物与卸载残留，勾选后移入废纸篓">
-        <figcaption>磁盘清理 —— 缓存 / 构建产物 / 卸载残留按分类勾选，一律移入废纸篓可恢复</figcaption>
-      </figure>
-      <figure class="wide reveal">
-        <img src="popbar-settings.png" alt="AI 翻译设置窗口">
-        <figcaption>AI 翻译设置 —— provider 管理与状态</figcaption>
-      </figure>
+      <div class="chip"><b>按应用规则</b>1Password、终端等可整体禁用、只留指定按钮，或设为仅快捷键</div>
+      <div class="chip"><b>扩展</b>URL 模板、Shell 脚本（stdin 传文本，防注入）、快捷指令</div>
+      <div class="chip"><b>键盘模式</b>⌃⌥B 唤起，←→ 移动、回车执行、Esc 关闭</div>
+      <div class="chip"><b>就地替换</b>大小写转换等直接改写原文，剪贴板先备份后还原</div>
+      <div class="chip"><b>打印管理</b>直连 macOS 自带的 CUPS，批量打印、预设、墨量</div>
+      <div class="chip"><b>电视遥控</b>ADB over TCP 控制局域网里的 Android TV</div>
+      <div class="chip"><b>启动项与维护</b>登录项开关、刷新 DNS、重建 Spotlight 索引</div>
+      <div class="chip"><b>中英双语 · 明暗主题</b>界面即时切换，一套设计令牌</div>
+      <div class="chip"><b>无侵入取词</b>优先 Accessibility API，降级模拟 ⌘C 并自动还原剪贴板</div>
     </div>
   </div>
 </section>
 
 <section id="install">
   <div class="wrap">
-    <div class="sec-head reveal">
-      <div class="kicker en">INSTALL</div>
+    <div class="head reveal">
+      <div class="eyebrow en">Install</div>
       <h2>两种方式，装上就用</h2>
     </div>
     <div class="install">
       <div class="card reveal">
-        <h3><span class="num">1</span>下载 DMG</h3>
-        <p>从 GitHub Releases 下载对应架构的 DMG，拖入「应用程序」即可。</p>
-        <div class="codeblock">
-          <button class="copy-btn" data-copy="open https://github.com/davidzhanghui/popbar/releases">复制</button>
-          <code><span class="cm"># 到 Releases 页面下载最新 DMG</span>
-open https://github.com/davidzhanghui/popbar/releases</code>
-        </div>
-        <p class="note"><b>注意</b>：DMG 未经 Apple 公证，首次打开若提示「已损坏」，在终端执行 <code>xattr -cr /Applications/PopBar.app</code> 后重开。</p>
+        <h3>下载 DMG</h3>
+        <p>从 GitHub Releases 下载 DMG，拖进「应用程序」。</p>
+        <div class="code"><button class="copy-btn" data-copy="open https://github.com/davidzhanghui/popbar/releases">复制</button><code><span class="cm"># 到 Releases 页面下载最新 DMG</span>
+open https://github.com/davidzhanghui/popbar/releases</code></div>
+        <p class="note">DMG 未经 Apple 公证，首次打开若提示「已损坏」，在终端执行 <code>xattr -cr /Applications/PopBar.app</code> 后重开。</p>
       </div>
       <div class="card reveal">
-        <h3><span class="num">2</span>源码编译</h3>
-        <p>无 Xcode 工程依赖，一条命令编译、打包并生成 DMG。</p>
-        <div class="codeblock">
-          <button class="copy-btn" data-copy="git clone https://github.com/davidzhanghui/popbar.git && cd popbar && ./build.sh">复制</button>
-          <code>git clone https://github.com/davidzhanghui/popbar.git
+        <h3>源码编译</h3>
+        <p>SwiftPM 工程，不需要 Xcode 工程文件，一条命令编译、打包、生成 DMG。</p>
+        <div class="code"><button class="copy-btn" data-copy="git clone https://github.com/davidzhanghui/popbar.git && cd popbar && ./build.sh">复制</button><code>git clone https://github.com/davidzhanghui/popbar.git
 cd popbar
-./build.sh   <span class="cm"># 编译 → 打包 → 生成 build/PopBar-*.dmg</span></code>
-        </div>
-        <p class="note">运行需要 macOS 15+，首次使用按引导授予「辅助功能」权限；截屏 / 截图翻译 / 录屏还需「屏幕录制」权限，录屏开启麦克风或摄像头时另需对应权限。</p>
+./build.sh   <span class="cm"># → build/PopBar-*.dmg</span></code></div>
+        <p class="note">需要 macOS 15+。首次使用按引导授予「辅助功能」权限；截屏、截图翻译、录屏还需「屏幕录制」权限。</p>
       </div>
     </div>
   </div>
@@ -452,29 +314,35 @@ cd popbar
 
 <footer>
   <div class="wrap">
-    <img class="logo" src="popbar-icon.png" alt="PopBar">
-    <p>PopBar · 选中文字，事就办了 · <a href="https://github.com/davidzhanghui/popbar" target="_blank" rel="noopener">github.com/davidzhanghui/popbar</a></p>
+    <img src="popbar-icon.png" alt="">
+    <span>PopBar · 选中文字，事就办了 · <a href="https://github.com/davidzhanghui/popbar" target="_blank" rel="noopener">github.com/davidzhanghui/popbar</a></span>
   </div>
 </footer>
 
 <script>
   const io = new IntersectionObserver(es => es.forEach(e => {
     if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); }
-  }), { threshold: .12 });
+  }), { threshold: .1 });
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 
-  // 点击卡片展开 / 收起完整描述
-  document.querySelectorAll('.grid .card').forEach(c => c.addEventListener('click', () => c.classList.toggle('open')));
+  // Deck 页面切换
+  const tabs = [...document.querySelectorAll('.deck .tabs button')];
+  const img = document.getElementById('deck-img'), dark = document.getElementById('deck-dark'), cap = document.getElementById('deck-cap');
+  tabs.forEach(b => b.addEventListener('click', () => {
+    tabs.forEach(t => t.setAttribute('aria-selected', t === b ? 'true' : 'false'));
+    img.src = `screenshots/${b.dataset.shot}.png`;
+    dark.srcset = `screenshots/${b.dataset.shot}-dark.png`;
+    img.alt = 'Deck 主窗口 · ' + b.firstChild.textContent;
+    cap.textContent = b.dataset.cap;
+  }));
 
-  // scroll-spy：滚到哪一节，导航与左侧栏对应项高亮
-  const spyLinks = [...document.querySelectorAll('nav .links a[href^="#"], .rail a[href^="#"]')];
-  const spyIds = ['top','demo','features','shots','install'];
+  // 导航高亮
+  const links = [...document.querySelectorAll('nav .links a[href^="#"]')];
   const spy = new IntersectionObserver(es => es.forEach(e => {
     if (!e.isIntersecting) return;
-    const id = e.target.id;
-    spyLinks.forEach(a => a.setAttribute('aria-current', a.getAttribute('href') === '#' + id ? 'true' : 'false'));
+    links.forEach(a => a.setAttribute('aria-current', a.getAttribute('href') === '#' + e.target.id ? 'true' : 'false'));
   }), { rootMargin: '-40% 0px -55% 0px' });
-  spyIds.forEach(id => spy.observe(document.getElementById(id)));
+  ['demo', 'selection', 'deck', 'install'].forEach(id => spy.observe(document.getElementById(id)));
 
   document.querySelectorAll('.copy-btn').forEach(btn => btn.addEventListener('click', () => {
     navigator.clipboard.writeText(btn.dataset.copy).then(() => {

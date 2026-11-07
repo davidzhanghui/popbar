@@ -20,8 +20,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/popbar-promo-v2.0.mp4"><img src="docs/popbar-promo-poster.png" width="720" alt="PopBar 宣传片"></a><br>
-  <a href="docs/popbar-promo-v2.0.mp4">▶ 观看宣传片</a> · <sub>69 秒:划词即弹 · 上下文感知 · AI 翻译 · 隐私脱敏 · 截屏标注 · 录屏导出</sub>
+  <a href="docs/popbar-promo-v3.0.mp4"><img src="docs/popbar-promo-poster.png" width="720" alt="PopBar 宣传片"></a><br>
+  <a href="docs/popbar-promo-v3.0.mp4">▶ 观看宣传片</a> · <sub>62 秒：划词即弹 · AI 翻译 · 智能胶囊 · 隐私守卫 · Deck 主窗口 · 模块开关 · 明暗主题</sub>
 </p>
 
 ## 3.0 有什么变化
@@ -131,7 +131,7 @@ flowchart TD
 ## AI 翻译面板
 
 <p align="center">
-  <img src="docs/popbar-panel.png" width="480" alt="AI 翻译面板:多 provider 并行流式翻译">
+  <img src="docs/screenshots/translate-result.png" width="460" alt="AI 翻译面板:多 provider 并行流式翻译">
 </p>
 
 点击弹条上的 💬 按钮，会打开一个翻译面板：顶部是原文（可选中、可朗读），
@@ -176,10 +176,6 @@ Deck →「监控」页显示实时数据，只在这一页打开时采样，切
 
 ### 进程详情
 
-<p align="center">
-  <img src="docs/popbar-monitor-detail.png" width="460" alt="进程详情:指标小卡、启动链、来源与置信度、launchd plist、资源与环境、成员进程">
-</p>
-
 点击进程行（或菜单里的「为什么在运行？」）弹出详情窗；Esc 先关详情、再按一次才关面板，× / 点击窗外也可关闭：
 
 | 区块 | 内容 |
@@ -205,7 +201,7 @@ Deck →「监控」页显示实时数据，只在这一页打开时采样，切
 | 终止 / 强制退出 | 确认后结束该行（App 为整个应用）；规则见上 |
 
 <p align="center">
-  <img src="docs/popbar-monitor.png" width="460" alt="系统监控面板:健康评分、CPU / GPU / 内存 / 电池 / 磁盘 / 网络 / 温度与可搜索的进程表">
+  <img src="docs/screenshots/deck-monitor.png" width="720" alt="系统监控面板:健康评分、CPU / GPU / 内存 / 电池 / 磁盘 / 网络 / 温度与可搜索的进程表">
 </p>
 
 采样（IOReport / IOKit / libproc，不需要额外权限）只在面板可见时运行，关闭即停，不影响 PopBar 空闲时 CPU ≈ 0。
@@ -216,7 +212,7 @@ Deck →「监控」页显示实时数据，只在这一页打开时采样，切
 Deck →「清理」页打开即自动扫描（`du` 并发测量），切走即取消；**只清理用户目录，不需要管理员权限，不装任何特权助手**。
 
 <p align="center">
-  <img src="docs/popbar-clean.png" width="460" alt="磁盘清理面板:按分类列出缓存、日志、构建产物与卸载残留,勾选后移入废纸篓">
+  <img src="docs/screenshots/deck-clean.png" width="720" alt="磁盘清理面板:按分类列出缓存、日志、构建产物与卸载残留,勾选后移入废纸篓">
 </p>
 
 | 分类 | 扫描范围 | 默认 |
@@ -244,7 +240,7 @@ Deck →「清理」页打开即自动扫描（`du` 并发测量），切走即�
 需要「屏幕录制」权限，与截图翻译共用同一项授权，首次使用会引导授权。
 
 <p align="center">
-  <img src="docs/popbar-snap.png" width="700" alt="截屏:定格画面、选区、标注与工具条">
+  <img src="docs/screenshots/deck-snap.png" width="720" alt="Deck · 截屏页：截图历史">
 </p>
 
 - **放大镜**：拖选时显示 8 倍像素放大镜、像素坐标与 RGB/HEX 颜色，按 `C` 复制光标处颜色（「设置 → 截屏与录屏」可关闭）
@@ -279,7 +275,7 @@ Deck →「清理」页打开即自动扫描（`du` 并发测量），切走即�
 选区会被红线框住，旁边的面板显示 mm:ss 计时与**暂停 / 标记 / 隐藏面板 / 停止**四个按钮，菜单栏图标同时变成红色计时器。
 
 <p align="center">
-  <img src="docs/popbar-record-export.png" width="420" alt="录屏导出面板:裁剪、分辨率、质量、点击涟漪、摄像头画中画、水印">
+  <img src="docs/screenshots/deck-record.png" width="720" alt="Deck · 录屏页：最近的录制">
 </p>
 
 - **输出**：默认 H.264 / MOV / 30fps / 2x 原生像素，保存位置沿用截屏的保存目录，文件名 `PopBar-Rec-yyyyMMdd-HHmmss`
@@ -496,6 +492,7 @@ iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 # 重新生成文档截图（离屏渲染，不需要屏幕录制权限，不读写真实配置）
 swift run PopBarShot docs/screenshots          # 全部
 swift run PopBarShot docs/screenshots bar      # 只截 bar-* 开头的
+POPBAR_SHOT_DEMO=1 swift run PopBarShot docs/screenshots   # Deck 各页带演示数据（待办、剪贴板、历史）
 ```
 
 ## 已知限制
