@@ -218,10 +218,14 @@ final class SelectionMonitor {
     }
 
     /// 点在 PopBar 自己的可交互窗口里(Deck、钉住的今日窗、结果卡片、剪贴板速选…)
+    /// 只认该点最上层的窗口:被别的 App 挡住的 Deck 等窗口不算(否则 Deck 留在后台时,
+    /// 它矩形范围内的划词全部失效)
     private static func insideOwnWindow(_ point: CGPoint) -> Bool {
         let barID = FloatingBarController.shared.windowID
+        let topmost = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+        guard topmost != barID else { return false }
         return NSApp.windows.contains { w in
-            w.isVisible && !w.ignoresMouseEvents && w.windowNumber != barID && w.frame.contains(point)
+            w.windowNumber == topmost && w.isVisible && !w.ignoresMouseEvents
         }
     }
 }

@@ -71,10 +71,12 @@ final class FloatingBarController: NSObject {
         guard !layout.all.isEmpty else { return }
 
         let content = buildBar()
+        // 必须在赋 contentView 之前取尺寸:赋值时 AppKit 会把视图缩成窗口当前内容尺寸
+        // (首次创建的面板是 .zero),之后再读就是 0×0,面板会以零尺寸"弹出"而看不见
+        let size = content.frame.size
         let p = panel ?? makePanel()
         panel = p
         p.contentView = content
-        let size = content.frame.size
         let target = ScreenPlacement.frame(size: size, anchor: ctx.bounds, prefer: .above, gap: 8)
         present(p, at: target)
     }
