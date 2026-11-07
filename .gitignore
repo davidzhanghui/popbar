@@ -7,3 +7,5 @@ icon/PopBar.iconset/
 push-main.sh
 push-tag.sh
 .build/
+.wrangler/
+.dev.vars
