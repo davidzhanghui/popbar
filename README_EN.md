@@ -14,14 +14,23 @@
 </p>
 
 <p align="center">
-  <img src="docs/popbar-bar-light.png" width="520" alt="Light mode"><br>
-  <img src="docs/popbar-bar-dark.png" width="520" alt="Dark mode">
+  <img src="docs/screenshots/bar-default.png" width="520" alt="Light mode"><br>
+  <img src="docs/screenshots/bar-more-dark.png" width="520" alt="Dark mode">
 </p>
 
 <p align="center">
   <a href="docs/popbar-promo-v2.0.mp4"><img src="docs/popbar-promo-poster.png" width="720" alt="PopBar promo video"></a><br>
   <a href="docs/popbar-promo-v2.0.mp4">▶ Watch the promo</a> · <sub>69s: select-to-pop · context-aware actions · AI translation · privacy masking · screenshots · screen recording</sub>
 </p>
+
+## What's new in 3.0
+
+- **Deck window** (`⌃⌥D`): Today, Clipboard, Snap, Record, Monitor, Clean, Startup, Maintenance, Print and TV live in one window, grouped as Work / Media / System / Devices. Settings are merged in too.
+- **Module switches**: Settings → Modules. Disabled modules disappear from the sidebar, bar and menu; their hotkeys are not registered. On by default: Today, Clipboard, Snap, Record, Monitor, Clean. Off by default: Startup, Maintenance, Print, TV.
+- **New bar**: `[smart capsule] │ Copy Translate Search Speak To-do │ ···` with a 4-column "more" panel; placed on the screen that holds the selection.
+- **System hotkeys** (Carbon): the bar hotkey default is now `⌃⌥B`; `⌃⌥D` opens the Deck; `⌥⌘V` opens the clipboard picker (⌘1–9, Return pastes, ⇧Return copies).
+- **Sturdier text capture**: 0.25s AX timeout, `AXManualAccessibility` set once per process, full pasteboard snapshot with Transient markers for the ⌘C fallback.
+- **Single subprocess wrapper**, design tokens + Lucide icons, a status menu of at most 10 items, and config migration (`schemaVersion`, backup at `config.v2.json`).
 
 ## Features
 
@@ -580,7 +589,7 @@ iconutil -c icns icon/PopBar.iconset -o Resources/AppIcon.icns
 clang -O2 -target $(uname -m)-apple-macos15.0 -c Native/metrics.c -o build/metrics.o   # System Monitor's C collector
 swiftc -O -target $(uname -m)-apple-macos15.0 -o build/shot -import-objc-header Native/CMetrics.h -framework IOKit \
     $(ls Sources/*.swift | grep -v '/main.swift$') shot/main.swift build/metrics.o
-./build/shot docs/popbar-bar-light.png docs/popbar-bar-dark.png
+./build/shot docs/screenshots/bar-default.png docs/screenshots/bar-more-dark.png
 
 # Screenshot-feature showcase image (offline composite over docs/index.html, no Screen Recording needed)
 ./build/shot --snap docs

@@ -38,7 +38,7 @@ fi
 
 # 2) 构建(改过源码才需要;--no-build 跳过)
 if [ "$BUILD" = 1 ]; then
-    ./build.sh
+    ./build.sh --debug
 fi
 
 [ -x "$APP/Contents/MacOS/PopBar" ] || {

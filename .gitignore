@@ -6,3 +6,4 @@ icon/PopBar.iconset/
 .commandcode/
 push-main.sh
 push-tag.sh
+.build/

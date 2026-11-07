@@ -20,6 +20,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 打包前先跑一遍测试:逻辑测试 + 静态检查,任何一项失败都不出包
+      - name: Test
+        run: |
+          swift test
+          tests/run.sh --static-only
+
       - name: Build & package
         run: ./build.sh   # dmg 文件名自动带 uname -m 架构后缀
 
