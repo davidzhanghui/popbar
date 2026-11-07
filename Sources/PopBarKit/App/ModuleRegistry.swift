@@ -20,7 +20,7 @@ enum DeckGroup: Int, CaseIterable {
 
 /// 模块需要的系统权限（欢迎页只列出当前已开启模块真正需要的）
 enum PermissionKind: String, CaseIterable, Identifiable {
-    case accessibility, screenRecording, reminders, calendar, localNetwork, microphone, camera
+    case accessibility, inputMonitoring, screenRecording, reminders, calendar, localNetwork, microphone, camera
     var id: String { rawValue }
 }
 
@@ -123,9 +123,9 @@ final class ModuleRegistry: ObservableObject {
         enabled.flatMap { $0.barActions(for: ctx) }
     }
 
-    /// 已开启模块需要的权限（辅助功能永远需要）
+    /// 已开启模块需要的权限（辅助功能 + 输入监控永远需要：前者取词，后者听鼠标划词）
     var requiredPermissions: [PermissionKind] {
-        var out: [PermissionKind] = [.accessibility]
+        var out: [PermissionKind] = [.accessibility, .inputMonitoring]
         for m in enabled {
             for p in m.permissions where !out.contains(p) { out.append(p) }
         }

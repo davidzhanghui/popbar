@@ -21,6 +21,10 @@ final class SelectionMonitor {
     private var keyboardSelToken = 0
 
     func start() {
+        guard eventTap == nil else {
+            if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return
+        }
         let mask: CGEventMask =
             (1 << CGEventType.leftMouseDown.rawValue) |
             (1 << CGEventType.leftMouseDragged.rawValue) |
@@ -52,6 +56,15 @@ final class SelectionMonitor {
         tapInstalled = true
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
+    }
+
+    /// 输入监控 / 辅助功能刚授权后调用：没有 tap 就装上，有则重新启用
+    func refreshAfterPermissionChange() {
+        if eventTap == nil {
+            start()
+        } else if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
     }
 
     private func handle(type: CGEventType, event: CGEvent) {

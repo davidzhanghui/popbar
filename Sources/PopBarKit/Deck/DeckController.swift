@@ -203,11 +203,26 @@ struct DeckSidebar: View {
             }
             Spacer(minLength: 0)
             Rectangle().fill(DS.border).frame(height: 1).padding(.horizontal, 12)
-            SidebarRow(icon: "settings", title: L10n.t("设置", "Settings"), badge: nil,
-                       selected: state.page == .settings) { state.page = .settings }
-                .padding(8)
+            VStack(spacing: 2) {
+                // 欢迎与权限：侧栏常驻入口；缺辅助功能/输入监控时用角标提醒
+                SidebarRow(icon: missingCriticalPermissions > 0 ? "shield-alert" : "shield-check",
+                           title: L10n.t("欢迎与权限", "Welcome & Permissions"),
+                           badge: missingCriticalPermissions > 0 ? missingCriticalPermissions : nil,
+                           selected: state.page == .welcome) { state.page = .welcome }
+                SidebarRow(icon: "settings", title: L10n.t("设置", "Settings"), badge: nil,
+                           selected: state.page == .settings) { state.page = .settings }
+            }
+            .padding(8)
+            .id(state.tick)
         }
         .background(DS.bg)
+    }
+
+    /// 划词必备权限缺失数（辅助功能、输入监控）
+    private var missingCriticalPermissions: Int {
+        [PermissionKind.accessibility, .inputMonitoring]
+            .filter { PermissionCheck.granted($0) == false }
+            .count
     }
 
     private var brand: some View {

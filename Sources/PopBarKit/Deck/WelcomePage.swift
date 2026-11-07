@@ -12,6 +12,7 @@ enum PermissionCheck {
     static func title(_ k: PermissionKind) -> String {
         switch k {
         case .accessibility: return L10n.t("辅助功能", "Accessibility")
+        case .inputMonitoring: return L10n.t("输入监控", "Input Monitoring")
         case .screenRecording: return L10n.t("屏幕录制", "Screen Recording")
         case .reminders: return L10n.t("提醒事项", "Reminders")
         case .calendar: return L10n.t("日历", "Calendars")
@@ -24,6 +25,7 @@ enum PermissionCheck {
     static func reason(_ k: PermissionKind) -> String {
         switch k {
         case .accessibility: return L10n.t("读取选中的文字、替换原文。没有它浮动条无法工作。", "Read and replace selected text. The bar can't work without it.")
+        case .inputMonitoring: return L10n.t("监听拖拽和双击以弹出工具条。只有辅助功能时，快捷键仍可用，鼠标划词不会。", "Watch drag and double-click to show the bar. With Accessibility alone, the hotkey still works but mouse selection won't.")
         case .screenRecording: return L10n.t("截屏、录屏和截图 OCR。", "Screenshots, recordings and screenshot OCR.")
         case .reminders: return L10n.t("今日待办与提醒事项双向同步。", "Two-way sync between To-Do and Reminders.")
         case .calendar: return L10n.t("把完成的专注记到日历。", "Log finished focus sessions to Calendar.")
@@ -36,6 +38,7 @@ enum PermissionCheck {
     static func icon(_ k: PermissionKind) -> String {
         switch k {
         case .accessibility: return "text-cursor-input"
+        case .inputMonitoring: return "mouse-pointer-2"
         case .screenRecording: return "monitor"
         case .reminders: return "list-checks"
         case .calendar: return "calendar"
@@ -49,6 +52,7 @@ enum PermissionCheck {
     static func granted(_ k: PermissionKind) -> Bool? {
         switch k {
         case .accessibility: return AXSupport.isTrusted
+        case .inputMonitoring: return CGPreflightListenEventAccess()
         case .screenRecording: return CGPreflightScreenCaptureAccess()
         case .reminders: return SystemStore.hasAccess(.reminder)
         case .calendar: return SystemStore.hasAccess(.event)
@@ -63,6 +67,9 @@ enum PermissionCheck {
         case .accessibility:
             _ = AXSupport.promptIfNeeded()
             AppRouter.openAccessibilitySettings()
+        case .inputMonitoring:
+            if !CGRequestListenEventAccess() { AppRouter.openInputMonitoringSettings() }
+            SelectionMonitor.shared.refreshAfterPermissionChange()
         case .screenRecording:
             if !CGRequestScreenCaptureAccess() { AppRouter.openPrivacyPane("Privacy_ScreenCapture") }
         case .reminders:
@@ -79,13 +86,13 @@ enum PermissionCheck {
     }
 
     static var needed: [PermissionKind] {
-        var list: [PermissionKind] = [.accessibility]
+        var list: [PermissionKind] = [.accessibility, .inputMonitoring]
         for k in ModuleRegistry.shared.requiredPermissions where !list.contains(k) { list.append(k) }
         return list
     }
 }
 
-/// 欢迎与权限页：首次启动自动打开；之后从「设置 → 通用」进来
+/// 欢迎与权限页：首次启动 / 缺权限时自动打开；之后从 Deck 侧栏「欢迎与权限」或「设置 → 通用」进来
 struct WelcomePage: View {
     @ObservedObject var state: DeckState
     @State private var refresh = 0
@@ -114,7 +121,11 @@ struct WelcomePage: View {
                         "PopBar collects nothing; translation requests go only to services you configure."))
                 .font(DS.caption).foregroundStyle(DS.muted)
         }
-        .onReceive(timer) { _ in refresh &+= 1 }
+        .onReceive(timer) { _ in
+            refresh &+= 1
+            // 用户在系统设置里勾上输入监控后，补装 / 重新启用鼠标监听
+            SelectionMonitor.shared.refreshAfterPermissionChange()
+        }
     }
 
     private func tip(_ icon: String, _ title: String, _ text: String) -> some View {

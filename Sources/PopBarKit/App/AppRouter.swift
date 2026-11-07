@@ -35,6 +35,10 @@ enum AppRouter {
         openPrivacyPane("Privacy_Accessibility")
     }
 
+    static func openInputMonitoringSettings() {
+        openPrivacyPane("Privacy_ListenEvent")
+    }
+
     static func openPrivacyPane(_ anchor: String) {
         if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
             NSWorkspace.shared.open(u)

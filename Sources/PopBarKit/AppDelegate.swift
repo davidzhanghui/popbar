@@ -29,7 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SelectionMonitor.shared.start()
 
         // 首次启动、或划词必需的权限缺失：打开 Deck 的欢迎与权限页（代替以前的阻塞弹窗）
-        let needsWelcome = !ConfigStore.shared.config.onboarded || !AXSupport.isTrusted || !SelectionMonitor.shared.tapInstalled
+        // 输入监控：CGEventTap 听拖拽/双击；只有辅助功能时 ⌃⌥B 能弹条，鼠标划词不会
+        let needsWelcome = !ConfigStore.shared.config.onboarded
+            || !AXSupport.isTrusted
+            || !CGPreflightListenEventAccess()
+            || !SelectionMonitor.shared.tapInstalled
         if needsWelcome {
             MainActor.assumeIsolated { DeckController.shared.show(page: .welcome) }
         }

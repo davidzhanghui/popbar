@@ -41,14 +41,17 @@ struct GeneralSettings: View {
             }
         }
         DSGroup {
+            DSSettingRow(L10n.t("欢迎与权限", "Welcome & Permissions"),
+                         subtitle: L10n.t("辅助功能、输入监控等；也可从 Deck 侧栏底部进入",
+                                          "Accessibility, Input Monitoring, and more; also in the Deck sidebar footer")) {
+                DSButton(L10n.t("打开", "Open")) { state.page = .welcome }
+            }
+            DSDivider()
             DSSettingRow(L10n.t("配置文件", "Config File"),
                          subtitle: L10n.t("可以手动编辑，保存后自动重新读取。配置文件包含 API Key，分享前请删除。",
                                           "Editable by hand; reloaded on save. It contains your API keys, so remove them before sharing.")) {
-                HStack(spacing: 8) {
-                    DSButton(L10n.t("在访达中显示", "Show in Finder")) {
-                        NSWorkspace.shared.activateFileViewerSelecting([PopBarConfig.fileURL])
-                    }
-                    DSButton(L10n.t("重新查看引导", "Show Welcome"), kind: .ghost) { state.page = .welcome }
+                DSButton(L10n.t("在访达中显示", "Show in Finder")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([PopBarConfig.fileURL])
                 }
             }
         }
