@@ -36,7 +36,53 @@ func pixel(_ img: CGImage, _ x: Int, _ y: Int) -> (Int, Int, Int) {
 }
 
 let stW = 40
-func pageRowColor(_ r: Int) -> (UInt8, UInt8, UInt8) { (UInt8(r % 251), UInt8((r / 251) % 251), UInt8((r * 7) % 253)) }
+/// 行号 → 颜色:24 位内的 xorshift + 奇数乘法,每步都是双射,颜色互不重复且行间无规律(更像真实内容)
+func pageRowColor(_ r: Int) -> (UInt8, UInt8, UInt8) {
+    let m: UInt32 = 0xFFFFFF
+    var c = UInt32(truncatingIfNeeded: r) & m
+    c ^= c >> 12; c = (c &* 0x2C1B3D) & m
+    c ^= c >> 11; c = (c &* 0x297A2D) & m
+    c ^= c >> 12
+    return (UInt8(c >> 16), UInt8((c >> 8) & 0xFF), UInt8(c & 0xFF))
+}
+
+/// 模拟真实网页:白底多行文字、吸顶栏(滚动后出现阴影)、右侧叠加滚动条(位置随滚动变化)
+/// offset 可以是小数,模拟亚像素滚动
+func textFrame(_ offset: Double, w: Int = 320, h: Int = 240, header: Int = 0, shadow: Bool = false, scrollbar: Bool = false) -> CGImage {
+    let ctx = rgbaContext(w, h)
+    ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+    let words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet",
+                 "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo", "sierra", "tango"]
+    let font = CTFontCreateWithName("Helvetica" as CFString, 13, nil)
+    let lineH = 22.0
+    let first = Int(offset / lineH) - 1
+    for i in max(first, 0)...(first + h / Int(lineH) + 2) {
+        // 每 6 行留一段空白,制造大片空行
+        if i % 6 == 5 { continue }
+        var text = "\(i): "
+        for k in 0..<5 { text += words[(i * 7 + k * 3) % words.count] + " " }
+        let attr = NSAttributedString(string: text, attributes: [.init(kCTFontAttributeName as String): font])
+        let line = CTLineCreateWithAttributedString(attr)
+        let yTop = Double(i) * lineH - offset + 6          // 从画面顶部数
+        ctx.textPosition = CGPoint(x: 8 + Double(i % 3) * 10, y: Double(h) - yTop - 14)
+        CTLineDraw(line, ctx)
+    }
+    if header > 0 {
+        ctx.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: h - header, width: w, height: header))
+        if shadow {
+            ctx.setFillColor(CGColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: h - header - 2, width: w, height: 2))
+        }
+    }
+    if scrollbar {
+        ctx.setFillColor(CGColor(red: 0.45, green: 0.45, blue: 0.45, alpha: 1))
+        let y = Double(h) - 60 - (offset / 3000) * Double(h - 60)
+        ctx.fill(CGRect(x: Double(w) - 10, y: y - 20, width: 7, height: 80))
+    }
+    return ctx.makeImage()!
+}
 func stImage(_ rows: [Int]) -> CGImage {
     let ctx = rgbaContext(stW, rows.count)
     for (i, r) in rows.enumerated() {
@@ -658,6 +704,34 @@ func runLegacyMainChecks() async throws {
     for o in [80, 160] { if st6.add(stFrame(o, h: 200)) == .limitReached { limitHit = true } }
     expect(limitHit, "limit reached")
     expectEqual(st6.finalImage()!.height, 300, "limited height")
+
+    // 真实感内容:文字 + 空行 + 叠加滚动条(右侧忽略 16px)
+    var st7 = SnapStitcher(first: textFrame(0, scrollbar: true), ignoreRight: 16)!
+    expectEqual(st7.add(textFrame(0)), .unchanged, "scrollbar fade-in is not a change")
+    expectEqual(st7.add(textFrame(70, scrollbar: true)), .appended(70), "text + scrollbar stitch 70")
+    expectEqual(st7.add(textFrame(200, scrollbar: true)), .appended(130), "text + scrollbar stitch 130")
+    expectEqual(st7.add(textFrame(201, scrollbar: true)), .appended(1), "text stitch 1px")
+    expectEqual(st7.finalImage()!.height, 240 + 201, "text stitch height")
+
+    // 吸顶栏:滚动后栏下出现阴影,不应导致无法对齐
+    var st8 = SnapStitcher(first: textFrame(0, header: 30), ignoreRight: 16)!
+    expectEqual(st8.add(textFrame(50, header: 30, shadow: true)), .appended(50), "sticky header with new shadow")
+    expectEqual(st8.add(textFrame(140, header: 30, shadow: true)), .appended(90), "sticky header next")
+
+    // 亚像素滚动:抗锯齿后像素不完全一致,允许 ±1
+    var st9 = SnapStitcher(first: textFrame(0), ignoreRight: 16)!
+    let half = st9.add(textFrame(60.5))
+    expect(half == .appended(60) || half == .appended(61), "subpixel scroll tolerated (\(half))")
+
+    // 跳太远:报 tooFast 且保留锚点,往回滚一点后能继续
+    var st10 = SnapStitcher(first: textFrame(0), ignoreRight: 16)!
+    expectEqual(st10.add(textFrame(400)), .tooFast, "text jump too far")
+    expectEqual(st10.add(textFrame(150)), .appended(150), "recovers after scrolling back")
+
+    // 缩略预览
+    let pv = st7.preview(maxWidth: 160, maxHeight: 1000)!
+    expectEqual(pv.width, 160, "preview width")
+    expectEqual(pv.height, Int(Double(441) * 0.5), "preview height")
 
     section("SnapHistory.toDelete")
     let histNames = (0..<25).map { String(format: "20260101-1200%02d-000@2x.png", $0) }

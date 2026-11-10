@@ -39,13 +39,16 @@ final class SnapScrollPanel: NSPanel {
     private let label = NSTextField(labelWithString: "")
     private let actionBar: SnapToolbar
     private let root = NSVisualEffectView()
-    private let panelWidth: CGFloat = 190
+    private let panelWidth: CGFloat = 230
     private var previewSize = CGSize.zero
 
-    init(selection: CGRect, screen: NSScreen, onAction: @escaping (SnapAction?) -> Void) {
+    init(selection: CGRect, screen: NSScreen, onAuto: @escaping () -> Void, onAction: @escaping (SnapAction?) -> Void) {
         self.selection = selection
         screenFrame = screen.frame
         actionBar = SnapToolbar(items: [
+            .button(id: "auto", symbol: "play.fill", tooltip: L10n.t("自动滚动", "Auto-scroll"), tint: Theme.text2,
+                    action: onAuto),
+            .separator,
             .button(id: "done", symbol: "checkmark", tooltip: L10n.t("完成并复制", "Done (Copy)"),
                     tint: NSColor(srgbRed: 0x1A / 255, green: 0xAD / 255, blue: 0x19 / 255, alpha: 1),
                     action: { onAction(.copy) }),
@@ -56,7 +59,7 @@ final class SnapScrollPanel: NSPanel {
             .button(id: "cancel", symbol: "xmark", tooltip: L10n.t("取消", "Cancel"), tint: Theme.danger,
                     action: { onAction(nil) }),
         ])
-        super.init(contentRect: CGRect(x: 0, y: 0, width: 190, height: 120),
+        super.init(contentRect: CGRect(x: 0, y: 0, width: 230, height: 120),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
@@ -83,15 +86,24 @@ final class SnapScrollPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
 
-    func update(preview: CGImage?, scale: CGFloat, status: String) {
+    /// preview 可以是缩略图,只用它的宽高比;显示宽度不超过 panel 内宽,也不超过选区本身的宽度
+    func update(preview: CGImage?, status: String) {
         label.stringValue = status
         if let p = preview {
-            imageView.image = NSImage(cgImage: p, size: CGSize(width: CGFloat(p.width) / scale, height: CGFloat(p.height) / scale))
+            let maxW = min(panelWidth - 24, max(selection.width, 40))
             let maxH = screenFrame.height - 80 - 90
-            let s = min(160 / CGFloat(p.width), maxH / CGFloat(p.height), 1)
-            previewSize = CGSize(width: max(CGFloat(p.width) * s, 1), height: max(CGFloat(p.height) * s, 1))
+            let aspect = CGFloat(p.height) / CGFloat(max(p.width, 1))
+            var size = CGSize(width: maxW, height: maxW * aspect)
+            if size.height > maxH { size = CGSize(width: maxH / aspect, height: maxH) }
+            imageView.image = NSImage(cgImage: p, size: size)
+            previewSize = CGSize(width: max(size.width, 1), height: max(size.height, 1))
         }
         relayout()
+    }
+
+    func setAutoScrolling(_ on: Bool) {
+        actionBar.setSymbol("auto", on ? "pause.fill" : "play.fill",
+                            tooltip: on ? L10n.t("暂停自动滚动", "Pause auto-scroll") : L10n.t("自动滚动", "Auto-scroll"))
     }
 
     private func relayout() {

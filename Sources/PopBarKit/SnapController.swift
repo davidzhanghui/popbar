@@ -149,13 +149,16 @@ final class SnapController {
         isScrolling = true
 
         let session = SnapScrollSession(screen: screen, rect: rect)
-        let panel = SnapScrollPanel(selection: rect, screen: screen) { [weak self] action in
+        let panel = SnapScrollPanel(selection: rect, screen: screen, onAuto: { [weak session] in
+            session?.toggleAuto()
+        }) { [weak self] action in
             if let action { self?.completeScroll(action) } else { self?.cancelScroll() }
         }
         let border = SnapScrollBorderWindow(rect: rect)
         session.onUpdate = { [weak panel] preview, status in
-            panel?.update(preview: preview, scale: session.scale, status: status)
+            panel?.update(preview: preview, status: status)
         }
+        session.onAutoChange = { [weak panel] on in panel?.setAutoScrolling(on) }
         scrollSession = session
         scrollPanel = panel
         scrollBorder = border

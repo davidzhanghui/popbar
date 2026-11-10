@@ -66,6 +66,13 @@ final class SnapToolbar: NSVisualEffectView {
         for (k, b) in buttons { b.isHighlightedByKeyboard = k == id }
     }
 
+    /// 切换按钮图标/提示(如 播放 ⇄ 暂停)
+    func setSymbol(_ id: String, _ symbol: String, tooltip: String) {
+        guard let b = buttons[id] else { return }
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip) ?? b.image
+        b.toolTip = tooltip
+    }
+
     func setEnabled(_ id: String, _ on: Bool) {
         buttons[id]?.isEnabled = on
         buttons[id]?.alphaValue = on ? 1 : 0.35
