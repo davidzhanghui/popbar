@@ -77,10 +77,7 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate, NSTextFiel
     var frame: CGRect { panel?.frame ?? .zero }
 
     /// (语言代码, 中文名, 英文名);各语言母语名中英界面下保持一致
-    private let languageOptions: [(String, String, String)] = [
-        ("auto", "自动检测", "Auto"), ("zh-CN", "中文简体", "Simplified Chinese"),
-        ("en", "English", "English"), ("ja", "日本語", "Japanese"), ("ko", "한국어", "Korean"),
-    ]
+    private let languageOptions = TranslateLanguage.options([("auto", L10n.t("自动检测", "Auto"))])
 
     // MARK: - 显示 / 关闭
 
@@ -317,8 +314,9 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate, NSTextFiel
             let sv = self.code(at: s.indexOfSelectedItem)
             let dv = self.code(at: d.indexOfSelectedItem)
             guard sv != "auto" else { return }   // 按钮此时已置灰,这里只是兜底
-            let detected = LanguageDetect.code(self.currentSourceText())
-            s.selectItem(at: self.index(of: dv == "auto" ? detected : dv))
+            // 目标是自动时,换过去的是按当前原文解析出的实际目标语言
+            let resolved = TranslateDirection.resolve(source: sv, target: dv, text: self.currentSourceText()).target
+            s.selectItem(at: self.index(of: resolved))
             d.selectItem(at: self.index(of: sv))
             self.languageChanged()
         }
@@ -577,12 +575,8 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate, NSTextFiel
         card.cancel()
         card.beginLoading()
 
-        let source = sourcePopup.map { code(at: $0.indexOfSelectedItem) } ?? config.sourceLanguage
-        let target = TranslatePrompt.resolveTarget(
-            targetPopup.map { code(at: $0.indexOfSelectedItem) } ?? config.targetLanguage,
-            text: sourceText)
-        let m = TranslatePrompt.messages(source: source, target: target,
-                                         text: sourceText, provider: provider)
+        let direction = TranslateDirection.resolve(source: selectedSource, target: selectedTarget, text: sourceText)
+        let m = TranslatePrompt.messages(direction, text: sourceText, provider: provider)
         let msg = (system: m.system, user: m.user)
         let temperature = config.temperature
 
@@ -931,22 +925,21 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate, NSTextFiel
         let src = selectedSource
         let dst = selectedTarget
         let auto = L10n.t("自动", "Auto")
-        let detected = LanguageDetect.code(sourceText)
-        let from = src == "auto" ? (sourceText.isEmpty ? auto : "\(auto) · \(Self.languageTitle(detected))") : Self.languageTitle(src)
-        let target = TranslatePrompt.resolveTarget(dst, text: sourceText)
-        let to = dst == "auto" ? "\(auto) · \(Self.languageTitle(target))" : Self.languageTitle(target)
+        let d = TranslateDirection.resolve(source: src, target: dst, text: sourceText)
+        let from: String
+        if src != "auto" {
+            from = Self.languageTitle(src)
+        } else if let detected = d.from, !sourceText.isEmpty {
+            from = "\(auto) · \(Self.languageTitle(detected))"
+        } else {
+            from = auto
+        }
+        // 手动目标和原文同语言时实际改译成了别的语言,也要标出「自动」
+        let to = dst == d.target ? Self.languageTitle(d.target) : "\(auto) · \(Self.languageTitle(d.target))"
         return "\(from) → \(to)"
     }
 
-    static func languageTitle(_ code: String) -> String {
-        switch code {
-        case "zh-CN", "zh": return L10n.t("简体中文", "Chinese")
-        case "en": return L10n.t("英语", "English")
-        case "ja": return L10n.t("日语", "Japanese")
-        case "ko": return L10n.t("韩语", "Korean")
-        default: return code
-        }
-    }
+    static func languageTitle(_ code: String) -> String { TranslateLanguage.title(code) }
 
     /// 改语言:结果对应的原文没变时立即按新语言重译;
     /// 输入模式下原文已改动/未提交时只刷新提示,不偷偷提交;同语言不发请求
@@ -978,7 +971,7 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate, NSTextFiel
 
     private func makeLanguagePopup(selected: String) -> NSPopUpButton {
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.addItems(withTitles: languageOptions.map { L10n.t($0.1, $0.2) })
+        popup.addItems(withTitles: languageOptions.map { $0.1 })
         popup.selectItem(at: index(of: selected))
         popup.font = .systemFont(ofSize: 11)
         popup.controlSize = .small
@@ -1053,11 +1046,7 @@ final class TranslationPanelController: NSObject, NSTextViewDelegate, NSTextFiel
         stopSpeaking()
         guard !toggleOff, !text.isEmpty else { return }
         let utterance = AVSpeechUtterance(string: text)
-        if LanguageDetect.containsCJK(text) {
-            SpeakVoice.apply(utterance, fallbackLanguage: LanguageDetect.code(text))
-        } else {
-            SpeakVoice.apply(utterance, fallbackLanguage: nil)
-        }
+        SpeakVoice.apply(utterance, fallbackLanguage: LanguageDetect.voiceLanguage(text))
         speakingUtterance = utterance
         if let button {
             speakingButton = button

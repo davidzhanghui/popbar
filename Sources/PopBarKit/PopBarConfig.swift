@@ -500,8 +500,11 @@ struct UsageConfig: Codable, Equatable {
 /// ~/Library/Application Support/PopBar/config.json
 /// 所有字段都允许缺省,方便手写配置
 struct PopBarConfig: Codable, Equatable {
-    var sourceLanguage: String = "auto"     // auto | zh-CN | en | ja | ko
-    var targetLanguage: String = "auto"     // auto | zh-CN | en | ja | ko
+    var sourceLanguage: String = "auto"     // auto | TranslateLanguage.all 里的代码
+    var targetLanguage: String = "auto"     // auto | TranslateLanguage.all 里的代码
+    /// 自动目标语言：原文是首选语言 → 第二语言，否则 → 首选语言
+    var primaryLanguage: String = "system"  // system | 语言代码
+    var secondaryLanguage: String = "auto"  // auto | 语言代码
     var timeout: Double = 30
     var maxCharacters: Int = 5000
     var temperature: Double = 0.2
@@ -559,6 +562,8 @@ struct PopBarConfig: Codable, Equatable {
         let d = PopBarConfig()
         sourceLanguage = (try? c.decode(String.self, forKey: .sourceLanguage)) ?? d.sourceLanguage
         targetLanguage = (try? c.decode(String.self, forKey: .targetLanguage)) ?? d.targetLanguage
+        primaryLanguage = (try? c.decode(String.self, forKey: .primaryLanguage)) ?? d.primaryLanguage
+        secondaryLanguage = (try? c.decode(String.self, forKey: .secondaryLanguage)) ?? d.secondaryLanguage
         timeout = (try? c.decode(Double.self, forKey: .timeout)) ?? d.timeout
         maxCharacters = (try? c.decode(Int.self, forKey: .maxCharacters)) ?? d.maxCharacters
         temperature = (try? c.decode(Double.self, forKey: .temperature)) ?? d.temperature

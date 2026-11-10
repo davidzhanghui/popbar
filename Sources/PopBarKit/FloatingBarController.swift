@@ -378,8 +378,7 @@ final class FloatingBarController: NSObject {
             return
         }
         let utt = AVSpeechUtterance(string: text)
-        let isCJK = text.range(of: "[\\u4e00-\\u9fff]", options: .regularExpression) != nil
-        SpeakVoice.apply(utt, fallbackLanguage: isCJK ? "zh-CN" : nil)
+        SpeakVoice.apply(utt, fallbackLanguage: LanguageDetect.voiceLanguage(text))
         isSpeaking = true
         setSpeakIcon(true)
         speech.speak(utt)

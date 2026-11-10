@@ -21,10 +21,14 @@ struct AISettings: View {
         LLMProvider(name: "Ollama（本地）", baseURL: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b", apiKey: "ollama", enabled: true),
     ]
 
-    private let langs: [(String, String)] = [
-        ("auto", L10n.t("自动", "Auto")), ("zh-CN", L10n.t("简体中文", "Chinese")), ("en", "English"),
-        ("ja", "日本語"), ("ko", "한국어"),
-    ]
+    private let langs = TranslateLanguage.options([("auto", L10n.t("自动", "Auto"))])
+    private let primaryLangs = TranslateLanguage.options([("system", L10n.t("跟随系统", "System"))])
+    private let secondaryLangs = TranslateLanguage.options([("auto", L10n.t("自动", "Auto"))])
+
+    /// 当前偏好解析后的实际语言，显示在副标题里
+    private var prefs: LanguagePrefs {
+        LanguagePrefs.resolve(primary: e.c.primaryLanguage, secondary: e.c.secondaryLanguage)
+    }
 
     private var index: Int? { e.c.providers.firstIndex { $0.id == selected } }
 
@@ -32,8 +36,18 @@ struct AISettings: View {
         DSGroup(L10n.t("翻译", "Translation")) {
             DSSettingRow(L10n.t("源语言", "From")) { DSMenuPicker(selection: e.bind(\.sourceLanguage), options: langs) }
             DSDivider()
-            DSSettingRow(L10n.t("目标语言", "To"), subtitle: L10n.t("自动：中文译成英语，其余译成简体中文", "Auto: Chinese → English, everything else → Chinese")) {
+            DSSettingRow(L10n.t("目标语言", "To"), subtitle: L10n.t("自动：原文是首选语言时译成第二语言，其余译成首选语言", "Auto: your primary language → second language, everything else → primary")) {
                 DSMenuPicker(selection: e.bind(\.targetLanguage), options: langs)
+            }
+            DSDivider()
+            DSSettingRow(L10n.t("首选语言", "Primary Language"),
+                         subtitle: L10n.t("当前：\(TranslateLanguage.title(prefs.primary))", "Now: \(TranslateLanguage.title(prefs.primary))")) {
+                DSMenuPicker(selection: e.bind(\.primaryLanguage), options: primaryLangs)
+            }
+            DSDivider()
+            DSSettingRow(L10n.t("第二语言", "Second Language"),
+                         subtitle: L10n.t("当前：\(TranslateLanguage.title(prefs.secondary))", "Now: \(TranslateLanguage.title(prefs.secondary))")) {
+                DSMenuPicker(selection: e.bind(\.secondaryLanguage), options: secondaryLangs)
             }
             DSDivider()
             DSSettingRow(L10n.t("超时", "Timeout")) {
@@ -192,7 +206,8 @@ struct AISettings: View {
         }
         testText = L10n.t("连接中…", "Connecting…"); testTone = .neutral
         let started = Date()
-        let msg = TranslatePrompt.messages(source: "auto", target: "zh-CN", text: "Hello, world.", provider: provider)
+        let direction = TranslateDirection(source: "auto", from: "en", target: "zh-CN", alternate: "en")
+        let msg = TranslatePrompt.messages(direction, text: "Hello, world.", provider: provider)
         var got = ""
         testTask = LLMClient.stream(text: msg.user, systemPrompt: msg.system, provider: provider,
                                     timeout: min(e.c.timeout, 20), temperature: 0) { event in
