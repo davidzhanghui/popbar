@@ -29,6 +29,9 @@ final class HotkeyManager: ObservableObject {
             Binding(id: "deck", title: L10n.t("打开 / 关闭 Deck", "Toggle Deck"), keyPath: \.deck) {
                 DeckController.shared.toggle()
             },
+            Binding(id: "inputTranslate", title: L10n.t("输入翻译", "Type to Translate"), keyPath: \.inputTranslate) {
+                TranslateTriggers.input()
+            },
         ]
     }
 

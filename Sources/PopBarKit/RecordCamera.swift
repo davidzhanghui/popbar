@@ -215,11 +215,12 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
 // MARK: - 预览窗
 
 /// 录制中的摄像头预览:位置与成品里画中画的位置一致,所见即所得。
-/// 本进程窗口已被 SCContentFilter 排除,不会录进画面。
+/// 已用 CaptureChrome 标记,不会录进原始视频(画中画在导出时按 camera.mov 合成)。
 final class RecordCameraPanel: NSPanel {
     init(frame: CGRect, preview: AVCaptureVideoPreviewLayer) {
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
+        CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false

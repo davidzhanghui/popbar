@@ -8,6 +8,7 @@ final class SnapScrollBorderWindow: NSPanel {
     init(rect: CGRect) {
         super.init(contentRect: rect.insetBy(dx: -3, dy: -3), styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
+        CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false
@@ -57,6 +58,7 @@ final class SnapScrollPanel: NSPanel {
         ])
         super.init(contentRect: CGRect(x: 0, y: 0, width: 190, height: 120),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false

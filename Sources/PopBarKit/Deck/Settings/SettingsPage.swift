@@ -117,10 +117,16 @@ final class ConfigEditor: ObservableObject {
 struct SettingsPage: View {
     @ObservedObject var state: DeckState
     @StateObject private var editor = ConfigEditor()
+    @AppStorage("deck.settingsNavWidth") private var settingsNavWidthStorage = 190.0
+
+    private var settingsNavWidth: Binding<CGFloat> {
+        Binding(get: { CGFloat(settingsNavWidthStorage) },
+                set: { settingsNavWidthStorage = Double($0.rounded()) })
+    }
 
     var body: some View {
         DSPageShell(L10n.t("设置", "Settings"), subtitle: state.settings.title, scrolls: false) {
-            HStack(alignment: .top, spacing: 28) {
+            HStack(alignment: .top, spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(SettingsSection.allCases) { s in
                         SidebarRow(icon: s.icon, title: s.title, badge: nil, selected: state.settings == s) {
@@ -128,11 +134,13 @@ struct SettingsPage: View {
                         }
                     }
                 }
-                .frame(width: 190)
+                .frame(width: settingsNavWidth.wrappedValue)
+                DSColumnResize(width: settingsNavWidth, range: 150...260)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         section
                     }
+                    .padding(.leading, 20)
                     .padding(.bottom, 24)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

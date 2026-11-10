@@ -103,7 +103,9 @@ enum SelectionService {
                let bRef {
                 var r = CGRect.zero
                 if AXValueGetValue(bRef as! AXValue, .cgRect, &r) {
-                    bounds = Screen.cocoaRect(from: r)
+                    let converted = Screen.cocoaRect(from: r)
+                    // 网页等常返回零矩形或越界坐标，丢掉后由定位逻辑退回鼠标
+                    if ScreenPlacement.isUsable(converted) { bounds = converted }
                 }
             }
         }

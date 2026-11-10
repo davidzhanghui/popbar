@@ -37,9 +37,18 @@ public enum ScreenPlacement {
         return CGRect(origin: CGPoint(x: x.rounded(), y: y.rounded()), size: size)
     }
 
-    /// 按当前屏幕布局定位；anchor 为 nil 时用鼠标位置
+    /// 选区矩形是否可用来定位（正尺寸且落在某块屏幕上）
+    public static func isUsable(_ rect: CGRect) -> Bool {
+        guard rect.width >= 1, rect.height >= 1,
+              rect.origin.x.isFinite, rect.origin.y.isFinite,
+              rect.size.width.isFinite, rect.size.height.isFinite else { return false }
+        return NSScreen.screens.contains { $0.frame.intersects(rect) }
+    }
+
+    /// 按当前屏幕布局定位；anchor 为 nil / 无效时用鼠标位置
     public static func frame(size: CGSize, anchor: CGRect?, prefer: Preference, gap: CGFloat = 6) -> CGRect {
-        let a = anchor ?? {
+        let a: CGRect = {
+            if let anchor, isUsable(anchor) { return anchor }
             let m = NSEvent.mouseLocation
             return CGRect(x: m.x, y: m.y - 8, width: 1, height: 16)
         }()

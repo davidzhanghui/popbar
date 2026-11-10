@@ -4,7 +4,7 @@ import PopBarPlatform
 import PopBarDesign
 
 /// 录制区域红框:.nonactivatingPanel + 不接收鼠标。
-/// 本进程窗口已被 SCContentFilter 排除,所以它不会出现在录制画面里。
+/// 已用 CaptureChrome 标记,所以它不会出现在录制画面里。
 final class RecordBorderWindow: NSPanel {
     private let borderView: RecordBorderView
 
@@ -12,6 +12,7 @@ final class RecordBorderWindow: NSPanel {
         borderView = RecordBorderView()
         super.init(contentRect: rect.insetBy(dx: -3, dy: -3), styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
+        CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false
@@ -50,7 +51,7 @@ private final class RecordBorderView: NSView {
 }
 
 /// 倒计时:在录制区上盖一层淡暗 + 大号倒数。
-/// 本进程窗口已被 SCContentFilter 排除,倒计时画面不会进片子。
+/// 已用 CaptureChrome 标记,倒计时画面不会进片子。
 final class RecordCountdownPanel: NSPanel {
     private let numberLabel = NSTextField(labelWithString: "3")
     private let hintLabel = NSTextField(labelWithString: "")
@@ -58,6 +59,7 @@ final class RecordCountdownPanel: NSPanel {
     init(rect: CGRect, seconds: Int) {
         super.init(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
+        CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false
@@ -135,6 +137,7 @@ final class RecordPanel: NSPanel {
         markerButton = Self.makeButton(symbol: "flag", tooltip: L10n.t("打标记点", "Add marker"), tint: Theme.text2)
         super.init(contentRect: CGRect(x: 0, y: 0, width: 232, height: 62),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false

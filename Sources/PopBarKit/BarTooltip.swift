@@ -15,6 +15,12 @@ final class BarTooltip {
 
     private init() {}
 
+    /// 提前建好提示窗:录屏的内容过滤器只能排除「已存在」的窗口,
+    /// 等到录制中第一次悬停才创建就会被录进片子
+    func prepare() {
+        if panel == nil { _ = makePanel() }
+    }
+
     /// 在 anchor(某个按钮)上方显示提示;同一 anchor 重复调用只更新文字
     func show(_ text: String, above anchor: NSView) {
         guard !text.isEmpty, let win = anchor.window else { return }
@@ -69,6 +75,7 @@ final class BarTooltip {
         let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 10, height: 20),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
+        MainActor.assumeIsolated { CaptureChrome.mark(p) }   // 悬停提示不进截图/录屏
         p.isFloatingPanel = true
         p.level = .popUpMenu                 // 初始值;show 时按 anchor 窗口 +1
         p.backgroundColor = .clear

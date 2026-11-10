@@ -132,6 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let hk = ConfigStore.shared.config.hotkeys
         menu.addItem(AppRouter.menuItem(L10n.t("打开 Deck", "Open Deck"), hotkey: hk.deck) { DeckController.shared.show() })
+        menu.addItem(AppRouter.menuItem(L10n.t("输入翻译", "Type to Translate"), hotkey: hk.inputTranslate) {
+            TranslateTriggers.input()
+        })
         let moduleItems = ModuleRegistry.shared.enabled.flatMap { $0.menuItems() }
         if !moduleItems.isEmpty {
             menu.addItem(.separator())

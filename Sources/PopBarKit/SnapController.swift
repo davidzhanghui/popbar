@@ -29,10 +29,7 @@ final class SnapController {
         self.mode = mode
         isActive = true
         FloatingBarController.shared.hide()
-        if TranslationPanelController.shared.isVisible && !TranslationPanelController.shared.isPinned {
-            TranslationPanelController.shared.close()
-        }
-        let windows = SnapCapture.windows()
+        let windows = MainActor.assumeIsolated { SnapCapture.windows() }   // 热键/菜单回调都在主线程
         Task { @MainActor in
             do {
                 let shots = try await SnapCapture.captureAll()

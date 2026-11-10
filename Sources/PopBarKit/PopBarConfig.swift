@@ -174,6 +174,8 @@ struct HotkeysConfig: Codable, Equatable {
     var showBar: String = "ctrl+opt+b"
     /// 打开 / 关闭 Deck 主窗口
     var deck: String = "ctrl+opt+d"
+    /// 输入翻译面板
+    var inputTranslate: String = "ctrl+opt+i"
     var ocr: String = ""
     var history: String = "opt+cmd+v"
     var snap: String = "ctrl+opt+p"
@@ -197,6 +199,7 @@ struct HotkeysConfig: Codable, Equatable {
         let d = HotkeysConfig()
         showBar = (try? c.decode(String.self, forKey: .showBar)) ?? d.showBar
         deck = (try? c.decode(String.self, forKey: .deck)) ?? d.deck
+        inputTranslate = (try? c.decode(String.self, forKey: .inputTranslate)) ?? d.inputTranslate
         ocr = (try? c.decode(String.self, forKey: .ocr)) ?? d.ocr
         history = (try? c.decode(String.self, forKey: .history)) ?? d.history
         snap = (try? c.decode(String.self, forKey: .snap)) ?? d.snap

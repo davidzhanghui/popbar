@@ -253,20 +253,40 @@ enum RecordNotify {
     static func saved(_ url: URL, duration: TimeInterval, interrupted: Bool, title: String? = nil) {
         let size = RecordUtil.fileSize(url)
         let detail = "\(RecordUtil.durationText(duration)) · \(RecordUtil.byteText(size))"
-        prepare()
-        // 首次真正发通知时才请求授权
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        let content = UNMutableNotificationContent()
-        content.title = title ?? (interrupted ? L10n.t("录制已中断，已保存", "Recording interrupted, saved")
+        let titleText = title ?? (interrupted ? L10n.t("录制已中断，已保存", "Recording interrupted, saved")
                                              : L10n.t("录屏已保存", "Recording saved"))
-        content.body = detail
+        prepare()
+        Task { await deliver(url: url, title: titleText, body: detail) }
+    }
+
+    /// 先确认通知授权再投递；未授权 / 失败则用浮动条兜底（系统拒绝时 add 往往不报错）
+    private static func deliver(url: URL, title: String, body: String) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        let allowed: Bool
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            allowed = true
+        case .notDetermined:
+            allowed = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        default:
+            allowed = false
+        }
+        let text = "\(title) · \(body)"
+        guard allowed else {
+            await MainActor.run { fallback(url, text: text) }
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
         content.categoryIdentifier = url.pathExtension.lowercased() == "gif" ? gifCategoryID : categoryID
         content.userInfo = [pathKey: url.path]
         content.sound = .default
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)) { error in
-            guard error != nil else { return }
-            Task { @MainActor in fallback(url, text: content.title + " · " + detail) }
+        do {
+            try await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        } catch {
+            await MainActor.run { fallback(url, text: text) }
         }
     }
 
@@ -327,6 +347,8 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
     private(set) var isBusy = false
 
     private var filter: SCContentFilter?
+    /// 整屏/区域模式录的显示器;每段开录前用它重建过滤器(按窗口录时为 nil)
+    private var filterDisplay: SCDisplay?
     private var screen: NSScreen?
     private var rect: CGRect?
     private var stream: SCStream?
@@ -406,11 +428,15 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
         windowFrame = windowID.flatMap { CGWindowGeometry.cocoaFrame(of: $0) } ?? rect
         gifMode = gif
 
-        let own = content.applications.filter { $0.processID == getpid() }
+        // 按窗口录(含 PopBar 自己的 Deck 等窗口):只录这一个窗口。
+        // 整屏/区域:只排除录屏工具自身的界面,Deck、翻译面板等 PopBar 窗口照常录进去;
+        // 真正的过滤器在 startSegment 里按当时存在的工具窗口重建
         if let windowID, let win = content.windows.first(where: { $0.windowID == windowID }) {
+            filterDisplay = nil
             filter = SCContentFilter(desktopIndependentWindow: win)
         } else {
-            filter = SCContentFilter(display: display, excludingApplications: own, exceptingWindows: [])
+            filterDisplay = display
+            filter = SCContentFilter(display: display, excludingWindows: [])
         }
 
         accumulated = 0
@@ -437,10 +463,14 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
         }
 
         if cfg.camera.enabled { await startCamera(cfg) }
+        // 红框、控制条、悬停提示先建好(暂不显示),startSegment 建过滤器时才能把它们排除掉
+        prepareUI()
+        BarTooltip.shared.prepare()
 
         do {
             try await startSegment()
         } catch {
+            hideUI()
             await stopCamera()
             cleanupTemp()
             isRecording = false
@@ -449,6 +479,7 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
         isRecording = true
         startedAt = Date()
         showUI()
+        await refreshDisplayFilter()   // 兜底:显示后再按实际窗口刷新一次
         startTimer()
         startClickRecording()
         NotificationCenter.default.post(name: Self.stateChanged, object: self)
@@ -685,7 +716,21 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
 
     // MARK: 内部
 
+    /// 整屏/区域模式的过滤器:排除当前所有录屏工具窗口(已创建的,不论是否在屏)
+    private func makeDisplayFilter() async -> SCContentFilter? {
+        guard windowID == nil, let display = filterDisplay else { return nil }
+        return SCContentFilter(display: display, excludingWindows: await CaptureChrome.excludedWindows())
+    }
+
+    private func refreshDisplayFilter() async {
+        guard let f = await makeDisplayFilter() else { return }
+        filter = f
+        try? await stream?.updateContentFilter(f)
+    }
+
     private func startSegment() async throws {
+        // 每段(含暂停后继续)都按当下的工具窗口重建,期间新建的摄像头预览等也会被排除
+        if let f = await makeDisplayFilter() { filter = f }
         guard let filter, let finalURL else { throw CocoaError(.fileNoSuchFile) }
         let cfg = ConfigStore.shared.config.snap.record
         let stream = SCStream(filter: filter, configuration: makeConfiguration(), delegate: self)
@@ -914,17 +959,21 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
 
     // MARK: UI
 
-    private func showUI() {
-        guard let screen else { return }
+    /// 只创建不显示:开录前就要存在,过滤器才能把它们排除
+    private func prepareUI() {
+        guard border == nil, panel == nil, let screen else { return }
         let r = recordArea ?? screen.frame
-        let b = RecordBorderWindow(rect: r)
-        let p = RecordPanel(selection: r, screen: screen,
+        border = RecordBorderWindow(rect: r)
+        panel = RecordPanel(selection: r, screen: screen,
                             onPause: mainClosure { Self.shared.togglePause() },
                             onMarker: mainClosure { Self.shared.addMarker() },
                             onHide: mainClosure { Self.shared.hidePanel() },
                             onStop: mainClosure { Self.shared.stop() })
-        border = b
-        panel = p
+    }
+
+    private func showUI() {
+        prepareUI()
+        guard let b = border, let p = panel else { return }
         update(0)
         p.setMarkerCount(markers.count)
         b.orderFrontRegardless()

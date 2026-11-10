@@ -10,6 +10,7 @@ final class SnapOverlayWindow: NSPanel {
         overlayView = SnapOverlayView(shot: shot, windowRects: windowRects)
         super.init(contentRect: shot.screen.frame, styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
+        CaptureChrome.mark(self)   // 截屏/录屏工具界面,不进画面
         level = .screenSaver
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false

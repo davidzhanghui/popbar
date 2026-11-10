@@ -37,7 +37,7 @@ func runPrintTests() async {
     let hkc = HotkeysConfig()
     expectEqual(hkc.printPanel, "ctrl+opt+o", "默认快捷键")
     expect(KeyCombo(hkc.printPanel) != nil, "默认快捷键可解析")
-    let others = [hkc.showBar, hkc.history, hkc.snap, hkc.record, hkc.recordPause, hkc.recordMarker, hkc.todo]
+    let others = [hkc.showBar, hkc.inputTranslate, hkc.history, hkc.snap, hkc.record, hkc.recordPause, hkc.recordMarker, hkc.todo]
     expect(!others.contains(hkc.printPanel), "不与其它默认快捷键冲突")
     var cfgHK = PopBarConfig(); cfgHK.hotkeys.printPanel = "ctrl+opt+k"
     let backHK = try? JSONDecoder().decode(PopBarConfig.self, from: JSONEncoder().encode(cfgHK))

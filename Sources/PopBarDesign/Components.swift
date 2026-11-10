@@ -512,6 +512,41 @@ public extension DSPageShell where Actions == EmptyView {
     }
 }
 
+/// 竖向分隔条：拖拽调整左侧栏宽度（命中区约 7pt，视觉线 1pt）
+public struct DSColumnResize: View {
+    @Binding private var width: CGFloat
+    private let range: ClosedRange<CGFloat>
+    @State private var hovering = false
+    @State private var dragOrigin: CGFloat?
+
+    public init(width: Binding<CGFloat>, range: ClosedRange<CGFloat>) {
+        self._width = width
+        self.range = range
+    }
+
+    public var body: some View {
+        ZStack {
+            Rectangle().fill(hovering ? DS.borderStrong : DS.border).frame(width: 1)
+        }
+        .frame(width: 7)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { h in
+            hovering = h
+            if h { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    if dragOrigin == nil { dragOrigin = width }
+                    guard let origin = dragOrigin else { return }
+                    width = min(max(origin + value.translation.width, range.lowerBound), range.upperBound)
+                }
+                .onEnded { _ in dragOrigin = nil }
+        )
+    }
+}
+
 /// 列表行的悬停底色
 public struct DSHoverRow: ViewModifier {
     @State private var hovering = false

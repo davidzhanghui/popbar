@@ -143,12 +143,18 @@ final class DeckController: NSObject, NSWindowDelegate {
 struct DeckRootView: View {
     @ObservedObject var state: DeckState
     @ObservedObject var registry: ModuleRegistry
+    @AppStorage("deck.sidebarWidth") private var sidebarWidthStorage = 220.0
+
+    private var sidebarWidth: Binding<CGFloat> {
+        Binding(get: { CGFloat(sidebarWidthStorage) },
+                set: { sidebarWidthStorage = Double($0.rounded()) })
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             DeckSidebar(state: state, registry: registry)
-                .frame(width: 220)
-            Rectangle().fill(DS.border).frame(width: 1)
+                .frame(width: sidebarWidth.wrappedValue)
+            DSColumnResize(width: sidebarWidth, range: 160...280)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

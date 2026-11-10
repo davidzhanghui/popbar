@@ -16,7 +16,7 @@ func runTVTests() async {
     let hk = HotkeysConfig()
     expectEqual(hk.tv, "ctrl+opt+v", "默认快捷键")
     expect(KeyCombo(hk.tv) != nil, "默认快捷键可解析")
-    expect(![hk.showBar, hk.history, hk.snap, hk.record, hk.recordPause, hk.recordMarker, hk.todo, hk.printPanel].contains(hk.tv), "不与其它默认快捷键冲突")
+    expect(![hk.showBar, hk.inputTranslate, hk.history, hk.snap, hk.record, hk.recordPause, hk.recordMarker, hk.todo, hk.printPanel].contains(hk.tv), "不与其它默认快捷键冲突")
     var cfg = PopBarConfig(); cfg.hotkeys.tv = "ctrl+opt+k"
     let back = try? JSONDecoder().decode(PopBarConfig.self, from: JSONEncoder().encode(cfg))
     expectEqual(back?.hotkeys.tv, "ctrl+opt+k", "快捷键往返编码")

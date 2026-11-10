@@ -218,7 +218,7 @@ final class SelectionMonitor {
             let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, keyboard || trimmed.count >= minChars else { return }
             var ctx = SourceContext(text: result.text, origin: .selection)
-            ctx.bounds = result.bounds
+            ctx.bounds = Self.trustedBounds(result.bounds, keyboard: keyboard)
             ctx.element = result.element
             ctx.selectedRange = result.range
             if let app {
@@ -228,6 +228,17 @@ final class SelectionMonitor {
             }
             FloatingBarController.shared.show(ctx: ctx, keyboard: keyboard)
         }
+    }
+
+    /// 鼠标划词时：选区中心离鼠标过远（常见于网页 AX 给错坐标）则丢弃，改跟鼠标
+    private static func trustedBounds(_ bounds: CGRect?, keyboard: Bool) -> CGRect? {
+        guard let bounds, ScreenPlacement.isUsable(bounds) else { return nil }
+        if keyboard { return bounds }
+        let mouse = NSEvent.mouseLocation
+        let pad: CGFloat = 140
+        if bounds.insetBy(dx: -pad, dy: -pad).contains(mouse) { return bounds }
+        if hypot(mouse.x - bounds.midX, mouse.y - bounds.midY) > 280 { return nil }
+        return bounds
     }
 
     /// 点在 PopBar 自己的可交互窗口里(Deck、钉住的今日窗、结果卡片、剪贴板速选…)

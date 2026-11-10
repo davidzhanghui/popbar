@@ -147,8 +147,8 @@ final class SnapScrollSession: @unchecked Sendable {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
         guard let display = content.displays.first(where: { $0.displayID == id }) else { throw CocoaError(.fileNoSuchFile) }
-        let own = content.applications.filter { $0.processID == getpid() }
-        filter = SCContentFilter(display: display, excludingApplications: own, exceptingWindows: [])
+        // 滚动框/控制条在 start 之前已创建并标记,这里排除它们;其余 PopBar 窗口照常进画面
+        filter = SCContentFilter(display: display, excludingWindows: await CaptureChrome.excludedWindows())
         let cfg = SCStreamConfiguration()
         let f = screen.frame
         cfg.sourceRect = CGRect(x: rect.minX - f.minX, y: f.maxY - rect.maxY, width: rect.width, height: rect.height)
