@@ -804,7 +804,17 @@ func runLegacyMainChecks() async throws {
     let r4 = ActionRegistry.resolve(for: ctx)
     expectEqual(r4.primary.first?.id, "builtin.copy", "toolbar order respected")
     expect(r4.more.contains { $0.id == "builtin.cut" }, "hidden item in more")
-    expect(r4.more.contains { $0.id == "builtin.speak" }, "unlisted item in more")
+    // 没列出的动作沿用默认显隐:默认常用的(朗读)仍在常用,其余(字数)进「更多」
+    expect(r4.primary.contains { $0.id == "builtin.speak" }, "unlisted default-primary item stays primary")
+    expect(r4.more.contains { $0.id == "builtin.stats" }, "unlisted non-default item in more")
+    // 只固定了一项(智能建议的典型产物)时,其余默认常用按钮不能全被挤进「更多」
+    var cfgPinned = PopBarConfig()
+    cfgPinned.toolbar.items = [ToolbarItem(id: "builtin.ai", visible: true)]
+    ConfigStore.shared.config = cfgPinned
+    let r5 = ActionRegistry.resolve(for: ctx)
+    expectEqual(r5.primary.first?.id, "builtin.ai", "pinned item first")
+    expect(r5.primary.contains { $0.id == "builtin.copy" } && r5.primary.contains { $0.id == "builtin.search" },
+           "pinning one item keeps default primaries")
     // maxVisible 限制常用数量
     var cfgMax = PopBarConfig()
     cfgMax.toolbar.maxVisible = 2

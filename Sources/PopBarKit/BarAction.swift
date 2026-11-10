@@ -71,10 +71,15 @@ enum ActionRegistry {
         } else {
             let indexOf = Dictionary(items.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { a, _ in a })
             let listed = nonCtx.filter { indexOf[$0.id] != nil }.sorted { indexOf[$0.id]! < indexOf[$1.id]! }
-            // 配置里没有的新动作:追加到末尾并放进「更多」
-            let unlisted = nonCtx.filter { indexOf[$0.id] == nil }
+            // 配置里没有的动作:按默认顺序追加到末尾,显隐沿用默认(默认常用的仍进常用,其余进「更多」)。
+            // 否则只要 items 里写了一项(比如「固定到主工具条」建议),其余常用按钮就全被挤进「更多」
+            let order = BuiltinActions.defaultOrder
+            let unlisted = nonCtx.filter { indexOf[$0.id] == nil }.sorted { a, b in
+                ((order.firstIndex(of: a.id) ?? Int.max), a.id) < ((order.firstIndex(of: b.id) ?? Int.max), b.id)
+            }
             let visById = Dictionary(items.map { ($0.id, $0.visible) }, uniquingKeysWith: { a, _ in a })
-            ordered = listed.map { ($0, visById[$0.id] ?? true) } + unlisted.map { ($0, false) }
+            ordered = listed.map { ($0, visById[$0.id] ?? true) }
+                + unlisted.map { ($0, BuiltinActions.isDefaultPrimary($0.id)) }
         }
 
         // perApp:该应用最常用的 3 个动作提到常用最前

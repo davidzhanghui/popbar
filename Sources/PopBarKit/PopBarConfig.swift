@@ -515,6 +515,8 @@ struct PopBarConfig: Codable, Equatable {
 
     // 通用偏好(设置页编辑,保存即时生效)
     var appearance: AppearanceMode = .system
+    /// 浮动条 / 截屏条 / 录屏条按钮使用彩色图标（关闭则为单色）
+    var colorIcons: Bool = true
     var language: String = "system"          // system | zh | en（L10n 直接读字符串）
     var trayClick: TrayClick = .menu         // 左键点菜单栏图标
     var panelPosition: PanelPosition = .top
@@ -571,6 +573,7 @@ struct PopBarConfig: Codable, Equatable {
         // 老配置没有 schemaVersion：按 0 处理，由 ConfigMigration 在读盘前迁移
         schemaVersion = (try? c.decode(Int.self, forKey: .schemaVersion)) ?? 0
         appearance = (try? c.decode(AppearanceMode.self, forKey: .appearance)) ?? d.appearance
+        colorIcons = (try? c.decode(Bool.self, forKey: .colorIcons)) ?? d.colorIcons
         language = LanguagePref(lenient: (try? c.decode(String.self, forKey: .language)) ?? d.language).rawValue
         trayClick = (try? c.decode(TrayClick.self, forKey: .trayClick)) ?? d.trayClick
         panelPosition = (try? c.decode(PanelPosition.self, forKey: .panelPosition)) ?? d.panelPosition

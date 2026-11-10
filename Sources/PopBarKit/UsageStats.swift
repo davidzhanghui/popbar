@@ -63,12 +63,12 @@ final class UsageStats {
 
     /// 启动后调用:找到常用但未固定的动作,每周最多弹一次询问
     /// 「是否加入主工具条?」确认才改排序;不自动动用户排序。
-    func maybeSuggest() {
+    @MainActor func maybeSuggest() {
         guard enabled else { return }
         let last = UserDefaults.standard.double(forKey: "PopBarSuggestAt")
         guard Date().timeIntervalSince1970 - last > suggestInterval else { return }
         let config = ConfigStore.shared.config
-        let listed = Set(config.toolbar.items.filter { $0.visible }.map { $0.id })
+        let listed = Set(BuiltinActions.materializedItems(config.toolbar.items).filter { $0.visible }.map { $0.id })
         // 找一个:7 天高频 + 不在主条可见列表里 + 之前没建议过
         let asked = Set(UserDefaults.standard.stringArray(forKey: "PopBarSuggestedIDs") ?? [])
         guard let top = topOverall(limit: 5)
@@ -93,8 +93,10 @@ final class UsageStats {
         guard a.runModal() == .alertFirstButtonReturn else { return }
 
         var c = ConfigStore.shared.config
-        // 追加到 items 开头(固定=排在主条最前)
-        c.toolbar.items.insert(ToolbarItem(id: top.id, visible: true), at: 0)
+        // 固定 = 排在主条最前;先把默认布局展开,避免空列表插一项后其余常用按钮被挤进「更多」
+        var items = BuiltinActions.materializedItems(c.toolbar.items).filter { $0.id != top.id }
+        items.insert(ToolbarItem(id: top.id, visible: true), at: 0)
+        c.toolbar.items = items
         try? ConfigStore.shared.save(c)
     }
 

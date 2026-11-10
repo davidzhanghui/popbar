@@ -11,7 +11,10 @@ final class ConfigStore {
 
     /// 测试代码可直接注入配置;生产路径经 save()/reload() 更新
     var config = PopBarConfig() {
-        didSet { L10n.preference = config.language }
+        didSet {
+            L10n.preference = config.language
+            IconPalette.enabled = config.colorIcons
+        }
     }
     /// 最近一次读取失败的原因(JSON 写坏了等);nil 表示正常
     private(set) var loadError: String?

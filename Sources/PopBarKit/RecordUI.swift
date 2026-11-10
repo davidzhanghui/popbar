@@ -218,8 +218,9 @@ final class RecordPanel: NSPanel {
         label.stringValue = RecordUtil.durationText(duration)
         guard paused != isPaused else { return }
         isPaused = paused
-        pauseButton.image = NSImage(systemSymbolName: paused ? "play.fill" : "pause.fill",
-                                    accessibilityDescription: nil)
+        let pauseSymbol = paused ? "play.fill" : "pause.fill"
+        pauseButton.image = NSImage(systemSymbolName: pauseSymbol, accessibilityDescription: nil)
+        pauseButton.contentTintColor = IconPalette.tint(pauseSymbol, fallback: Theme.text2)
         pauseButton.toolTip = paused ? L10n.t("继续", "Resume") : L10n.t("暂停", "Pause")
     }
 
@@ -242,9 +243,10 @@ final class RecordPanel: NSPanel {
         // BarButton 悬停时用 BarTooltip 自绘提示(非激活面板里原生 toolTip 不弹)
         let b = BarButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip) ?? NSImage(),
                           target: nil, action: nil)
-        b.accentColor = tint
+        let color = IconPalette.tint(symbol, fallback: tint)
+        b.accentColor = color
         b.toolTip = tooltip
-        b.contentTintColor = tint
+        b.contentTintColor = color
         b.isBordered = false
         b.imageScaling = .scaleProportionallyDown
         b.widthAnchor.constraint(equalToConstant: 30).isActive = true

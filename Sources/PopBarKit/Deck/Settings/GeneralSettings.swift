@@ -25,6 +25,11 @@ struct GeneralSettings: View {
                 ])
             }
             DSDivider()
+            DSSettingRow(L10n.t("彩色图标", "Colorful Icons"),
+                         subtitle: L10n.t("浮动条、截屏与录屏工具条的按钮按功能着色", "Tint buttons on the selection, screenshot and recording bars by function")) {
+                DSToggle(isOn: e.bind(\.colorIcons))
+            }
+            DSDivider()
             DSSettingRow(L10n.t("登录时启动", "Launch at Login")) { DSToggle(isOn: e.bind(\.launchAtLogin)) }
             DSDivider()
             DSSettingRow(L10n.t("暂停划词", "Pause Selection"),
@@ -107,16 +112,7 @@ struct BarSettings: View {
     /// 设置页里可排序的常用按钮（模块关闭的不列）
     private var catalog: [(id: String, title: String, icon: String)] { BuiltinActions.catalog }
 
-    private var ordered: [ToolbarItem] {
-        let ids = catalog.map(\.id)
-        var items = e.c.toolbar.items.filter { ids.contains($0.id) }
-        if items.isEmpty {
-            items = ids.map { ToolbarItem(id: $0, visible: BuiltinActions.defaultPrimary.contains($0)) }
-        } else {
-            for id in ids where !items.contains(where: { $0.id == id }) { items.append(ToolbarItem(id: id, visible: false)) }
-        }
-        return items
-    }
+    private var ordered: [ToolbarItem] { BuiltinActions.materializedItems(e.c.toolbar.items) }
 
     var body: some View {
         DSGroup {

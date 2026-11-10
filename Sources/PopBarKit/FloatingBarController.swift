@@ -181,7 +181,7 @@ final class FloatingBarController: NSObject {
             }
         } else {
             b.image = Lucide.image(icon, size: 16)
-            b.contentTintColor = Theme.text2
+            b.contentTintColor = IconPalette.tint(icon, fallback: Theme.text2)
         }
         b.tooltipText = title
         b.setAccessibilityLabel(title)
@@ -398,7 +398,9 @@ final class FloatingBarController: NSObject {
     /// 朗读中把按钮图标换成停止,给用户明确的「再点一次停止」提示
     private func setSpeakIcon(_ speaking: Bool) {
         guard let b = speakButton else { return }
-        b.image = Lucide.image(speaking ? "square" : "volume-2", size: 16)
+        let icon = speaking ? "square" : "volume-2"
+        b.image = Lucide.image(icon, size: 16)
+        b.contentTintColor = IconPalette.tint(icon, fallback: Theme.text2)
         b.tooltipText = speaking ? L10n.t("停止朗读", "Stop Speaking") : L10n.t("朗读", "Speak")
     }
 
@@ -624,7 +626,7 @@ private final class MoreCell: BarButton {
         } else {
             image = Lucide.image(action.icon, size: 18)
         }
-        contentTintColor = Theme.text2
+        contentTintColor = IconPalette.tint(action.icon, fallback: Theme.text2)
         imagePosition = .imageAbove
         tooltipText = action.title
         setAccessibilityLabel(action.title)

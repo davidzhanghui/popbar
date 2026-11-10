@@ -14,6 +14,17 @@ enum BuiltinActions {
         "builtin.devtools", "builtin.print",
     ]
     static let defaultPrimary = Array(defaultOrder.prefix(5))
+    static func isDefaultPrimary(_ id: String) -> Bool { defaultPrimary.contains(id) }
+
+    /// 把「空 items = 用默认」展开成显式列表(按设置页目录顺序),便于在其上插入/改动单项
+    static func materializedItems(_ items: [ToolbarItem]) -> [ToolbarItem] {
+        let ids = catalog.map(\.id)
+        var out = items.filter { ids.contains($0.id) }
+        for id in ids where !out.contains(where: { $0.id == id }) {
+            out.append(ToolbarItem(id: id, visible: isDefaultPrimary(id)))
+        }
+        return out
+    }
 
     /// 设置页（浮动条排序、按应用自定义）列出的动作；所属模块关闭的不列
     static var catalog: [(id: String, title: String, icon: String)] {

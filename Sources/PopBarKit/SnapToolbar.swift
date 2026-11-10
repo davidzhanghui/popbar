@@ -30,8 +30,9 @@ final class SnapToolbar: NSVisualEffectView {
                         ?? NSImage(systemSymbolName: "arrow.down.to.line", accessibilityDescription: tooltip) ?? NSImage(),
                     target: self, action: #selector(dispatch(_:)))
                 b.toolTip = tooltip
-                b.contentTintColor = tint
-                b.accentColor = tint
+                let color = IconPalette.tint(symbol, fallback: tint)
+                b.contentTintColor = color
+                b.accentColor = color
                 b.imageScaling = .scaleProportionallyDown
                 b.isBordered = false
                 b.tag = tag
@@ -70,6 +71,7 @@ final class SnapToolbar: NSVisualEffectView {
     func setSymbol(_ id: String, _ symbol: String, tooltip: String) {
         guard let b = buttons[id] else { return }
         b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip) ?? b.image
+        if let color = IconPalette.color(for: symbol) { b.contentTintColor = color }
         b.toolTip = tooltip
     }
 
