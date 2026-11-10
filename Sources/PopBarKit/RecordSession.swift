@@ -218,6 +218,7 @@ final class MicLevelMonitor: NSObject, AVCaptureAudioDataOutputSampleBufferDeleg
 
 enum RecordNotify {
     static let categoryID = "PopBarRecordDone"
+    /// 旧版通知上的「导出 GIF」按钮;分类里已不再注册,只为兼容历史通知的点击
     static let gifActionID = "PopBarRecordGIF"
     static let exportActionID = "PopBarRecordExport"
     static let playActionID = "PopBarRecordPlay"
@@ -226,6 +227,15 @@ enum RecordNotify {
     static let pathKey = "path"
 
     private static var prepared = false
+
+    /// 屏幕采集结束后,macOS 要把「屏幕共享中」状态撤掉,约 200~250ms 后通知中心会重建列表
+    /// 并清空当前横幅(日志:Clearing banner to update root model)。通知抢在这之前投递,
+    /// 横幅刚出现几十毫秒就被清掉 —— 所以投递前至少等采集结束这么久。
+    static let postCaptureDelay: TimeInterval = 1.0
+    private static var captureEndedAt: Date?
+
+    /// 录屏的 SCStream 停止时调用
+    static func markCaptureEnded() { captureEndedAt = Date() }
 
     /// 启动时调用:装上 delegate + 注册分类。
     /// 必须在应用启动早期执行——App 重启后点击历史通知的 action 时,
@@ -240,10 +250,8 @@ enum RecordNotify {
                                         title: L10n.t("播放", "Play"), options: [])
         let edit = UNNotificationAction(identifier: exportActionID,
                                         title: L10n.t("编辑并导出", "Edit & Export"), options: [])
-        let gif = UNNotificationAction(identifier: gifActionID,
-                                       title: L10n.t("导出 GIF", "Export GIF"), options: [])
         center.setNotificationCategories([
-            UNNotificationCategory(identifier: categoryID, actions: [play, edit, gif],
+            UNNotificationCategory(identifier: categoryID, actions: [play, edit],
                                    intentIdentifiers: [], options: .customDismissAction),
             UNNotificationCategory(identifier: gifCategoryID, actions: [play],
                                    intentIdentifiers: [], options: .customDismissAction),
@@ -256,7 +264,11 @@ enum RecordNotify {
         let titleText = title ?? (interrupted ? L10n.t("录制已中断，已保存", "Recording interrupted, saved")
                                              : L10n.t("录屏已保存", "Recording saved"))
         prepare()
-        Task { await deliver(url: url, title: titleText, body: detail) }
+        let wait = captureEndedAt.map { postCaptureDelay - Date().timeIntervalSince($0) } ?? 0
+        Task {
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+            await deliver(url: url, title: titleText, body: detail)
+        }
     }
 
     /// 先确认通知授权再投递；未授权 / 失败则用浮动条兜底（系统拒绝时 add 往往不报错）
@@ -309,7 +321,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         if let url {
             switch response.actionIdentifier {
             case RecordNotify.gifActionID:
-                Task { @MainActor in GIFExportController.shared.show(url: url) }
+                Task { @MainActor in RecordExportController.shared.show(url: url, format: .gif) }
             case RecordNotify.exportActionID:
                 Task { @MainActor in RecordExportController.shared.show(url: url) }
             case RecordNotify.playActionID:
@@ -793,6 +805,7 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
         finishing = true
         defer { finishing = false }
         if !isPaused { await stopSegment() }
+        RecordNotify.markCaptureEnded()
         let total = duration
         isRecording = false
         isPaused = false
@@ -837,7 +850,7 @@ final class RecordSession: NSObject, SCStreamDelegate, SCRecordingOutputDelegate
             return
         }
         if wasGIF {
-            await GIFExportController.shared.run(url: file, params: .auto, deleteSource: true, duration: total)
+            await RecordExportController.shared.runAutomaticGIF(url: file, duration: total)
             return
         }
 

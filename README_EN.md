@@ -284,7 +284,7 @@ the menu bar icon turns into a red timer.
   `PopBar-Rec-yyyyMMdd-HHmmss` (with `-2`, `-3` suffixes on collisions); `SCRecordingOutput` writes to disk as it
   records, so an interrupted session still keeps what was captured
 - **Stop**: the panel button, the hotkey again, or the menu item — all equivalent; a notification reports length and
-  size and offers **Play / Edit & Export / Export GIF** (a GIF's notification only offers **Play**)
+  size and offers **Play / Edit & Export** (a GIF's notification only offers **Play**)
 - **Pause**: `ctrl+opt+shift+r` or the panel button; the border turns orange and the timer stops; segments are
   stitched into a single file when you stop
 - **Markers**: `ctrl+opt+shift+m` or the panel button; the export panel can jump the trim range to any marker,
@@ -297,13 +297,14 @@ the menu bar icon turns into a red timer.
   recording, and the camera footage is composited into the export
 - **Watermark**: text or image, four corners, adjustable opacity
 - **Export video**: "Recent Recordings" → "Edit & Export…" opens one panel — trim range, target width
-  (Original/1920/1280/854), quality (High/Medium/Low), MP4/MOV, separate system-audio and microphone volumes,
+  (Original/1920/1280/854), quality (High/Medium/Low), MP4/MOV/GIF, separate system-audio and microphone volumes,
   click ripples, camera PiP and watermark, all applied in a single pass. Output is written with the moov atom first,
-  so it plays straight from a web page or chat app
+  so it plays straight from a web page or chat app. Exports are tagged "Exported" in the Deck list, and exporting
+  one again starts from the original recording, so nothing is re-compressed and clicks/camera data are kept
 - **Sharing preset**: Preferences → "Apply demo preset" switches to 1x + MP4 + H.264 + 30fps + 3s countdown in one click
 - **Record GIF**: ⌥-click the record button to record straight to GIF (≤30s, 10fps, ≤800 wide) and the intermediate
-  .mov is deleted; "Recent Recordings" or the notification's "Export GIF" action opens the GIF panel
-  (fps / width / range / size estimate / progress / cancel), optionally copying to the clipboard
+  .mov is deleted; for an existing recording pick GIF as the format in the export panel (fps / width / range /
+  size estimate) — click ripples, watermark and camera are baked into the GIF too
 - **Safety nets**: quitting while recording finalises the file synchronously; a max-duration limit is available;
   the selection is remembered per screen (press `R`)
 

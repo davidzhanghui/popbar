@@ -30,8 +30,11 @@ struct RecordExportParams {
     var width: Int = 0
     /// high | medium | low
     var quality: String = "high"
-    /// mp4 | mov
+    /// mp4 | mov | gif(gif 先按其余参数合成视频,再抽帧成 GIF)
     var container: String = "mp4"
+    /// 仅 gif:5 | 10 | 15
+    var gifFps: Int = 10
+    var isGIF: Bool { container == "gif" }
     var systemVolume: Double = 1
     var micVolume: Double = 1
     var burnClicks: Bool = false

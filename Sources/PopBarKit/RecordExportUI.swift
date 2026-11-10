@@ -24,6 +24,9 @@ final class RecordExportController: NSObject {
     private var widthSeg: NSSegmentedControl?
     private var qualitySeg: NSSegmentedControl?
     private var containerSeg: NSSegmentedControl?
+    private var gifFpsSeg: NSSegmentedControl?
+    /// 上一次的容器选项,用来识别「刚切到 GIF」
+    private var lastContainerIndex = 0
     private var clickSwitch: NSSwitch?
     private var cameraSwitch: NSSwitch?
     private var markSwitch: NSSwitch?
@@ -50,12 +53,18 @@ final class RecordExportController: NSObject {
 
     // MARK: - 入口
 
-    /// 交互式打开(菜单 / 通知按钮)
-    func show(url: URL) {
+    enum Format { case video, gif }
+
+    /// 交互式打开(Deck 列表 / 菜单 / 通知按钮)。
+    /// 传进来的是导出成品时自动换成它的原始录屏:点击坐标、摄像头、标记点都挂在原始文件上,
+    /// 在成品上再导出既拿不到这些数据,重新编码还会再损一次画质。
+    func show(url: URL, format: Format? = nil) {
         guard !isExporting else { return }
+        let target = RecordHistory.shared.originalURL(for: url) ?? url
         Task { @MainActor in
-            await load(url: url)
+            await load(url: target)
             buildWindow()
+            if format == .gif { selectContainer(2) }
             NSApp.activateForUI()
             window?.center()
             window?.orderFrontRegardless()
@@ -72,6 +81,26 @@ final class RecordExportController: NSObject {
         window?.center()
         window?.orderFrontRegardless()
         await perform()
+        window?.close()
+        window = nil
+    }
+
+    /// 「直接录 GIF」:按 GIF 偏好整段转换,成功后删掉中间视频
+    func runAutomaticGIF(url: URL, duration total: Double) async {
+        await load(url: url)
+        if duration <= 0.01 { duration = total }
+        buildWindow()
+        let auto = GIFParams.auto
+        var params = RecordExportParams()
+        params.container = "gif"
+        params.width = auto.width
+        params.gifFps = auto.fps
+        params.copyToClipboard = ConfigStore.shared.config.snap.record.gif.copyToClipboard
+        apply(params: params)
+        NSApp.activateForUI()
+        window?.center()
+        window?.orderFrontRegardless()
+        await perform(override: params, deleteSource: true)
         window?.close()
         window = nil
     }
@@ -118,7 +147,7 @@ final class RecordExportController: NSObject {
         let w = EscClosableWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 680),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
-        w.title = L10n.t("导出视频", "Export Video")
+        w.title = L10n.t("编辑并导出", "Edit & Export")
         w.collectionBehavior = [.moveToActiveSpace]
         let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 680))
         let bg = GradientView(top: dyn(lightTheme.gradientTop, darkTheme.gradientTop),
@@ -152,11 +181,14 @@ final class RecordExportController: NSObject {
                                         trackingMode: .selectOne, target: self, action: #selector(refresh))
         let quality = NSSegmentedControl(labels: [L10n.t("高", "High"), L10n.t("中", "Medium"), L10n.t("低", "Low")],
                                          trackingMode: .selectOne, target: self, action: #selector(refresh))
-        let container = NSSegmentedControl(labels: ["MP4", "MOV"], trackingMode: .selectOne,
-                                           target: self, action: #selector(refresh))
+        let container = NSSegmentedControl(labels: ["MP4", "MOV", "GIF"], trackingMode: .selectOne,
+                                           target: self, action: #selector(containerChanged))
+        let gifFps = NSSegmentedControl(labels: ["5", "10", "15"], trackingMode: .selectOne,
+                                        target: self, action: #selector(refresh))
         widthSeg = width_
         qualitySeg = quality
         containerSeg = container
+        gifFpsSeg = gifFps
 
         // 开关(与设置窗口一致用小号)
         let clickSw = NSSwitch()
@@ -237,7 +269,11 @@ final class RecordExportController: NSObject {
             sectionHeader(L10n.t("输出", "Output")),
             card([row(L10n.t("分辨率", "Resolution"), "", width_),
                   row(L10n.t("质量", "Quality"), "", quality),
-                  row(L10n.t("容器", "Container"), "", container)]),
+                  row(L10n.t("格式", "Format"),
+                      L10n.t("GIF 适合 README / 文档 / 聊天里自动播放，没有声音", "GIF autoplays in READMEs, docs and chats; no audio"),
+                      container),
+                  row(L10n.t("GIF 帧率", "GIF FPS"),
+                      L10n.t("帧数越多越流畅，体积也越大", "More frames: smoother, bigger"), gifFps)]),
             sectionHeader(L10n.t("画面", "Picture")),
             card([row(L10n.t("点击涟漪", "Click ripple"),
                       L10n.t("在每次点击处扩散一圈提示，烧进画面", "Draw a ripple at every click, baked in"), clickSw),
@@ -323,6 +359,8 @@ final class RecordExportController: NSObject {
         widthSeg?.selectedSegment = [0, 1920, 1280, 854].firstIndex(of: c.export.width) ?? 0
         qualitySeg?.selectedSegment = ["high", "medium", "low"].firstIndex(of: c.export.quality) ?? 0
         containerSeg?.selectedSegment = c.export.container == "mov" ? 1 : 0
+        lastContainerIndex = containerSeg?.selectedSegment ?? 0
+        gifFpsSeg?.selectedSegment = Self.gifFpsIndex(c.gif.fps)
         clickSwitch?.state = c.click.enabled ? .on : .off
         cameraSwitch?.state = (sidecar?.camera != nil) ? .on : .off
         markSwitch?.state = c.watermark.enabled ? .on : .off
@@ -338,7 +376,9 @@ final class RecordExportController: NSObject {
     private func apply(params: RecordExportParams) {
         widthSeg?.selectedSegment = [0, 1920, 1280, 854].firstIndex(of: params.width) ?? 0
         qualitySeg?.selectedSegment = ["high", "medium", "low"].firstIndex(of: params.quality) ?? 0
-        containerSeg?.selectedSegment = params.container == "mov" ? 1 : 0
+        containerSeg?.selectedSegment = Self.containers.firstIndex(of: params.container) ?? 0
+        lastContainerIndex = containerSeg?.selectedSegment ?? 0
+        gifFpsSeg?.selectedSegment = Self.gifFpsIndex(params.gifFps)
         clickSwitch?.state = params.burnClicks ? .on : .off
         cameraSwitch?.state = params.camera != nil ? .on : .off
         markSwitch?.state = params.watermark.enabled ? .on : .off
@@ -374,13 +414,32 @@ final class RecordExportController: NSObject {
 
     // MARK: - 参数
 
+    private static let containers = ["mp4", "mov", "gif"]
+    private static let gifFpsOptions = [5, 10, 15]
+    private static func gifFpsIndex(_ fps: Int) -> Int {
+        gifFpsOptions.firstIndex(of: fps) ?? (fps < 8 ? 0 : fps < 13 ? 1 : 2)
+    }
+
+    @objc private func containerChanged() { selectContainer(containerSeg?.selectedSegment ?? 0) }
+
+    /// 切到 GIF 时,原始分辨率的 GIF 动辄几十 MB:顺手降到 854 宽
+    private func selectContainer(_ index: Int) {
+        containerSeg?.selectedSegment = index
+        if index == 2, lastContainerIndex != 2, (widthSeg?.selectedSegment ?? 0) == 0 {
+            widthSeg?.selectedSegment = 3
+        }
+        lastContainerIndex = index
+        refresh()
+    }
+
     private func currentParams() -> RecordExportParams {
         var p = RecordExportParams()
         p.start = Double(startField?.stringValue.trimmingCharacters(in: .whitespaces) ?? "") ?? 0
         p.end = Double(endField?.stringValue.trimmingCharacters(in: .whitespaces) ?? "")
         p.width = [0, 1920, 1280, 854][max(widthSeg?.selectedSegment ?? 0, 0)]
         p.quality = ["high", "medium", "low"][max(qualitySeg?.selectedSegment ?? 0, 0)]
-        p.container = (containerSeg?.selectedSegment ?? 0) == 1 ? "mov" : "mp4"
+        p.container = Self.containers[min(max(containerSeg?.selectedSegment ?? 0, 0), 2)]
+        p.gifFps = Self.gifFpsOptions[min(max(gifFpsSeg?.selectedSegment ?? 1, 0), 2)]
         p.systemVolume = sysSlider?.doubleValue ?? 1
         p.micVolume = micSlider?.doubleValue ?? 1
         p.burnClicks = (clickSwitch?.state ?? .off) == .on
@@ -407,7 +466,13 @@ final class RecordExportController: NSObject {
         micLabel?.stringValue = "\(Int(((micSlider?.doubleValue ?? 1) * 100).rounded()))%"
         let p = currentParams()
         // 摄像头开关在没录到摄像头时置灰
-        cameraSwitch?.isEnabled = sidecar?.camera != nil
+        cameraSwitch?.isEnabled = sidecar?.camera != nil && !isExporting
+        // GIF 没有声音、没有码率档位
+        let running = isExporting
+        gifFpsSeg?.isEnabled = p.isGIF && !running
+        qualitySeg?.isEnabled = !p.isGIF && !running
+        sysSlider?.isEnabled = !p.isGIF && !running
+        micSlider?.isEnabled = !p.isGIF && !running
         let clipCount = p.clicks.filter { $0.t >= p.start && $0.t <= (p.end ?? duration) }.count
         let target = RecordExportUtil.targetSize(source: sourceSize.width > 0 ? sourceSize : CGSize(width: 1920, height: 1080),
                                                  width: p.width)
@@ -418,6 +483,14 @@ final class RecordExportController: NSObject {
         parts.append(L10n.t("时长 \(RecordUtil.durationText(span))", "Length \(RecordUtil.durationText(span))"))
         if p.burnClicks { parts.append(L10n.t("\(clipCount) 次点击", "\(clipCount) clicks")) }
         if p.camera != nil { parts.append(L10n.t("含摄像头", "with camera")) }
+        if p.isGIF {
+            let plan = RecordGIF.plan(duration: span > 0 ? span : duration, size: target, fps: p.gifFps, width: 0)
+            let bytes = RecordUtil.gifBytes(frames: plan.frames, width: Int(plan.size.width), height: Int(plan.size.height))
+            parts.append(L10n.t("GIF 约 ", "GIF ≈ ") + RecordUtil.byteText(bytes))
+            infoLabel?.textColor = bytes > 20 * 1024 * 1024 ? Theme.warning : Theme.muted
+        } else {
+            infoLabel?.textColor = Theme.muted
+        }
         infoLabel?.stringValue = parts.joined(separator: " · ")
     }
 
@@ -467,41 +540,94 @@ final class RecordExportController: NSObject {
         exportButton?.isEnabled = !on
         presetButton?.isEnabled = !on
         [startField, endField, markField].forEach { $0?.isEnabled = !on }
-        [widthSeg, qualitySeg, containerSeg].forEach { $0?.isEnabled = !on }
+        [widthSeg, qualitySeg, containerSeg, gifFpsSeg].forEach { $0?.isEnabled = !on }
         [clickSwitch, markSwitch, clipboardSwitch].forEach { $0?.isEnabled = !on }
         cameraSwitch?.isEnabled = !on && sidecar?.camera != nil
         [sysSlider, micSlider].forEach { $0?.isEnabled = !on }
         if on { statusLabel?.stringValue = L10n.t("正在导出…", "Exporting…") }
+        else { refresh() }
     }
 
-    private func perform() async {
+    /// override 给自动流程用:直接按传入参数导出,不经面板控件回读(面板档位表达不了任意宽度)。
+    /// deleteSource 只在「直接录 GIF」时为 true:成品出来后删掉中间视频,失败则保留它。
+    private func perform(override: RecordExportParams? = nil, deleteSource: Bool = false) async {
         guard let url else { return }
-        let params = currentParams()
+        let params = override ?? currentParams()
         let dir = (ConfigStore.shared.config.snap.saveDir as NSString).expandingTildeInPath
         let dirURL = URL(fileURLWithPath: dir, isDirectory: true)
         try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
         let stem = url.deletingPathExtension().lastPathComponent
-        let dest = RecordUtil.uniqueURL(in: dirURL, stem: "\(stem)-edit", ext: params.container)
+        let ext = params.isGIF ? "gif" : params.container
+        let dest = RecordUtil.uniqueURL(in: deleteSource ? url.deletingLastPathComponent() : dirURL,
+                                        stem: deleteSource ? stem : "\(stem)-edit", ext: ext)
         setRunning(true)
         let flag = self.flag
+        let progress: @Sendable (Double) -> Void = { v in
+            Task { @MainActor in RecordExportController.shared.setProgress(v) }
+        }
         do {
-            let out = try await RecordExport.export(
-                source: url, params: params, to: dest,
-                progress: { v in Task { @MainActor in RecordExportController.shared.setProgress(v) } },
-                isCancelled: { flag.value })
+            let out: URL
+            if params.isGIF {
+                out = try await exportGIF(source: url, params: params, to: dest,
+                                          progress: progress, isCancelled: { flag.value })
+            } else {
+                out = try await RecordExport.export(source: url, params: params, to: dest,
+                                                    progress: progress, isCancelled: { flag.value })
+            }
             if params.copyToClipboard { PasteboardGuard.write(urls: [out]) }
+            if deleteSource {
+                try? FileManager.default.removeItem(at: url)
+                RecordDataStore.remove(for: url)
+            }
             let d = max((params.end ?? duration) - params.start, 0)
-            RecordHistory.shared.add(url: out, duration: d)
-            RecordNotify.saved(out, duration: d, interrupted: false,
-                               title: L10n.t("导出完成", "Export finished"))
-            statusLabel?.stringValue = L10n.t("导出完成", "Export finished")
+            RecordHistory.shared.add(url: out, duration: d, isGIF: params.isGIF,
+                                     source: deleteSource ? nil : url)
+            let title = params.isGIF ? L10n.t("GIF 已导出", "GIF exported") : L10n.t("导出完成", "Export finished")
+            RecordNotify.saved(out, duration: d, interrupted: false, title: title)
+            statusLabel?.stringValue = title
         } catch RecordExportError.cancelled {
+            statusLabel?.stringValue = L10n.t("已取消", "Cancelled")
+        } catch GIFError.cancelled {
             statusLabel?.stringValue = L10n.t("已取消", "Cancelled")
         } catch {
             statusLabel?.stringValue = error.localizedDescription
-            RecordNotify.fallback(url, text: error.localizedDescription)
+            if deleteSource {
+                // 自动 GIF 失败:保留原视频并记进「最近录制」,别让文件找不到
+                RecordHistory.shared.add(url: url, duration: duration)
+                RecordNotify.saved(url, duration: duration, interrupted: false)
+            } else {
+                RecordNotify.fallback(url, text: error.localizedDescription)
+            }
         }
         setRunning(false)
+    }
+
+    /// GIF:没有需要烧进画面的东西时直接从源视频抽帧(裁剪 + 缩放由 RecordGIF 完成);
+    /// 有涟漪 / 水印 / 摄像头时先合成一段临时 MP4,再从它抽帧 —— 这样 GIF 里也能看到点击位置。
+    private func exportGIF(source: URL, params: RecordExportParams, to dest: URL,
+                           progress: @escaping @Sendable (Double) -> Void,
+                           isCancelled: @escaping @Sendable () -> Bool) async throws -> URL {
+        let end = params.end ?? duration
+        let hasClicks = params.burnClicks && params.clicks.contains { $0.t >= params.start && $0.t <= end }
+        let needsRender = hasClicks || params.watermark.enabled || params.camera != nil
+        guard needsRender else {
+            let gp = GIFParams(fps: params.gifFps, width: params.width,
+                               start: params.start, end: params.end, loop: true)
+            return try await RecordGIF.export(url: source, params: gp, to: dest,
+                                              progress: progress, isCancelled: isCancelled)
+        }
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PopBar-gif-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        var vp = params
+        vp.container = "mp4"
+        vp.quality = "high"
+        vp.copyToClipboard = false
+        _ = try await RecordExport.export(source: source, params: vp, to: temp,
+                                          progress: { v in progress(v * 0.5) }, isCancelled: isCancelled)
+        let gp = GIFParams(fps: params.gifFps, width: 0, start: 0, end: nil, loop: true)
+        return try await RecordGIF.export(url: temp, params: gp, to: dest,
+                                          progress: { v in progress(0.5 + v * 0.5) }, isCancelled: isCancelled)
     }
 
     private func setProgress(_ v: Double) {

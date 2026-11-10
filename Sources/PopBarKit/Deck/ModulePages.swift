@@ -399,6 +399,15 @@ struct RecordRow: View {
     @State private var thumb: NSImage?
     @State private var hovering = false
 
+    private var sourceName: String {
+        entry.source.map { URL(fileURLWithPath: $0).lastPathComponent } ?? ""
+    }
+    /// 原始录屏:视频本身;导出成品:仍在磁盘上的原始文件;录制时直接出的 GIF 没有源
+    private var exportSource: URL? {
+        if entry.isExported { return entry.sourceURL }
+        return entry.isGIF ? nil : entry.url
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
@@ -408,7 +417,13 @@ struct RecordRow: View {
             }
             .frame(width: 56, height: 34).clipShape(RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.url.lastPathComponent).font(DS.body).foregroundStyle(DS.text).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(entry.url.lastPathComponent).font(DS.body).foregroundStyle(DS.text).lineLimit(1)
+                    if entry.isExported {
+                        DSChip(L10n.t("已导出", "Exported"), tone: .accent)
+                            .help(L10n.t("由 \(sourceName) 导出", "Exported from \(sourceName)"))
+                    }
+                }
                 Text("\(RecordUtil.durationText(entry.duration)) · \(ByteCountFormatter.string(fromByteCount: entry.bytes, countStyle: .file)) · "
                      + Date(timeIntervalSince1970: entry.createdAt).formatted(date: .abbreviated, time: .shortened))
                     .font(DS.small).foregroundStyle(DS.faint)
@@ -416,8 +431,12 @@ struct RecordRow: View {
             Spacer()
             if hovering {
                 DSIconButton("play", help: L10n.t("打开", "Open"), size: 26) { NSWorkspace.shared.open(entry.url) }
-                if !entry.isGIF {
-                    DSIconButton("wand-sparkles", help: L10n.t("导出…", "Export…"), size: 26) { RecordExportController.shared.show(url: entry.url) }
+                // 导出永远从原始录屏出发:导出成品点这里会打开它的原始文件;原始文件已删就不给入口
+                if let src = exportSource {
+                    DSIconButton("wand-sparkles",
+                                 help: entry.isExported ? L10n.t("从原始录屏重新导出…", "Re-export from the original…")
+                                                        : L10n.t("编辑并导出…", "Edit & Export…"),
+                                 size: 26) { RecordExportController.shared.show(url: src) }
                 }
                 DSIconButton("folder-open", help: L10n.t("在访达中显示", "Reveal"), size: 26) {
                     NSWorkspace.shared.activateFileViewerSelecting([entry.url])

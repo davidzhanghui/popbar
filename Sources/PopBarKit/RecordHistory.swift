@@ -11,8 +11,16 @@ struct RecordEntry: Codable, Equatable {
     var bytes: Int64
     /// GIF 导出产物,也算一条录制记录
     var isGIF: Bool
+    /// 导出成品的原始录屏路径;nil = 本身就是原始录屏(旧数据没有这个字段,解码为 nil)
+    var source: String? = nil
 
     var url: URL { URL(fileURLWithPath: path) }
+    var isExported: Bool { source != nil }
+    /// 原始录屏仍在磁盘上时才返回
+    var sourceURL: URL? {
+        guard let source, FileManager.default.fileExists(atPath: source) else { return nil }
+        return URL(fileURLWithPath: source)
+    }
     var exists: Bool { FileManager.default.fileExists(atPath: path) }
 }
 
@@ -29,14 +37,27 @@ final class RecordHistory {
 
     private init() { load() }
 
-    func add(url: URL, duration: Double, isGIF: Bool = false) {
+    func add(url: URL, duration: Double, isGIF: Bool = false, source: URL? = nil) {
         let e = RecordEntry(path: url.path, createdAt: Date().timeIntervalSince1970,
-                            duration: duration, bytes: RecordUtil.fileSize(url), isGIF: isGIF)
+                            duration: duration, bytes: RecordUtil.fileSize(url), isGIF: isGIF,
+                            source: source?.path)
         entries.removeAll { $0.path == e.path }
         entries.insert(e, at: 0)
         prune()
         save()
         NotificationCenter.default.post(name: Self.didChange, object: self)
+    }
+
+    /// 导出成品 → 原始录屏(多次导出也追到最初那一份);不是导出成品返回 nil
+    func originalURL(for url: URL) -> URL? {
+        var path = url.path
+        var seen: Set<String> = [path]
+        while let src = entries.first(where: { $0.path == path })?.source, !seen.contains(src) {
+            seen.insert(src)
+            path = src
+        }
+        guard path != url.path, FileManager.default.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
     func remove(path: String) {
@@ -92,7 +113,6 @@ final class RecordHistory {
             for (title, sel) in [
                 (L10n.t("播放", "Play"), #selector(RecordMenuActions.open(_:))),
                 (L10n.t("编辑并导出…", "Edit & Export…"), #selector(RecordMenuActions.exportVideo(_:))),
-                (L10n.t("导出 GIF…", "Export GIF…"), #selector(RecordMenuActions.exportGIF(_:))),
                 (L10n.t("在 Finder 中显示", "Show in Finder"), #selector(RecordMenuActions.reveal(_:))),
                 (L10n.t("复制路径", "Copy Path"), #selector(RecordMenuActions.copyPath(_:))),
                 (L10n.t("复制文件", "Copy File"), #selector(RecordMenuActions.copyFile(_:))),
@@ -185,11 +205,6 @@ final class RecordMenuActions: NSObject {
             return
         }
         Task { @MainActor in RecordHistory.shared.remove(path: u.path) }
-    }
-
-    @objc func exportGIF(_ item: NSMenuItem) {
-        guard let u = url(item) else { return }
-        Task { @MainActor in GIFExportController.shared.show(url: u) }
     }
 
     /// 统一导出面板:裁剪 / 压缩 / 涟漪 / 摄像头 / 水印(FR-36)
