@@ -259,6 +259,7 @@ struct SnapPage: View {
         DSPageShell(L10n.t("截屏", "Screenshot"),
                     subtitle: L10n.t("快捷键 \(KeyCombo.display(ConfigStore.shared.config.hotkeys.snap))；框选后可标注、贴图、长截屏",
                                      "Shortcut \(KeyCombo.display(ConfigStore.shared.config.hotkeys.snap)); annotate, pin or scroll after selecting")) {
+            DSButton(L10n.t("刷新", "Refresh"), icon: "refresh-cw", kind: .ghost) { reload() }
             DSButton(L10n.t("设置", "Settings"), icon: "settings", kind: .ghost) { AppRouter.openSettings(.media) }
             DSButton(L10n.t("截屏", "Capture"), icon: "scan", kind: .primary) {
                 DeckController.shared.close()
@@ -364,6 +365,7 @@ struct RecordPage: View {
         DSPageShell(L10n.t("录屏", "Recording"),
                     subtitle: L10n.t("快捷键 \(KeyCombo.display(ConfigStore.shared.config.hotkeys.record))；录制中再按一次停止",
                                      "Shortcut \(KeyCombo.display(ConfigStore.shared.config.hotkeys.record)); press again to stop")) {
+            DSButton(L10n.t("刷新", "Refresh"), icon: "refresh-cw", kind: .ghost) { reload() }
             DSButton(L10n.t("设置", "Settings"), icon: "settings", kind: .ghost) { AppRouter.openSettings(.media) }
             DSButton(RecordSession.shared.isRecording ? L10n.t("停止录制", "Stop") : L10n.t("开始录屏", "Record"),
                      icon: "circle-dot", kind: .primary) {
@@ -389,8 +391,14 @@ struct RecordPage: View {
                 }
             }
         }
-        .onAppear { RecordHistory.shared.prune(); entries = RecordHistory.shared.entries }
+        .onAppear(perform: reload)
         .onReceive(changed) { _ in entries = RecordHistory.shared.entries }
+    }
+
+    /// 去掉磁盘上已不存在的条目后重新读取
+    private func reload() {
+        RecordHistory.shared.prune()
+        entries = RecordHistory.shared.entries
     }
 }
 

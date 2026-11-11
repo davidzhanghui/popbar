@@ -200,21 +200,50 @@ public struct DSCard<Content: View>: View {
     }
 }
 
+/// 设置页分组的小标题，右侧可放操作（如「添加服务」）
+public struct DSSectionHeader<Trailing: View>: View {
+    let title: String
+    let trailing: Trailing
+    public init(_ title: String, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title
+        self.trailing = trailing()
+    }
+    public var body: some View {
+        HStack(alignment: .lastTextBaseline) {
+            Text(title).font(DS.font(12, .semibold)).foregroundStyle(DS.muted)
+            Spacer(minLength: 8)
+            trailing
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
+public extension DSSectionHeader where Trailing == EmptyView {
+    init(_ title: String) { self.init(title, trailing: { EmptyView() }) }
+}
+
 /// 设置页分组：卡片里放若干 DSSettingRow，行间用细线分隔（DSDivider）
 public struct DSGroup<Content: View>: View {
     let title: String?
+    let footer: String?
     let content: Content
-    public init(_ title: String? = nil, @ViewBuilder content: () -> Content) {
+    public init(_ title: String? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
+        self.footer = footer
         self.content = content()
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let title { DSEyebrow(title).padding(.leading, 2) }
+            if let title { DSSectionHeader(title) }
             VStack(spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(DS.surface))
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(DS.border, lineWidth: 1))
+                .dsCardBackground()
+            if let footer {
+                Text(footer).font(DS.font(11.5)).foregroundStyle(DS.faint)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+            }
         }
     }
 }
@@ -240,20 +269,22 @@ public struct DSSettingRow<Control: View>: View {
         self.control = control()
     }
     public var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .center, spacing: 20) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(DS.font(13, .medium)).foregroundStyle(DS.text)
                 if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle).font(DS.caption).foregroundStyle(subtitleTone == .danger ? DS.danger : DS.muted)
+                    Text(subtitle).font(DS.font(11.5)).foregroundStyle(subtitleTone == .danger ? DS.danger : DS.muted)
+                        .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 8)
-            control
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // 控件保持自身尺寸，说明文字在剩余宽度里换行，不把按钮挤变形
+            control.fixedSize()
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(minHeight: 52)
+        .padding(.vertical, 11)
+        .frame(minHeight: 50)
     }
 }
 
@@ -565,7 +596,8 @@ public extension View {
 
     /// 卡片样式（surface + 1pt border + 圆角 10），用于不方便包 DSCard 的地方
     func dsCardBackground(radius: CGFloat = Theme.Radius.card) -> some View {
-        background(RoundedRectangle(cornerRadius: radius).fill(DS.surface))
+        background(RoundedRectangle(cornerRadius: radius).fill(DS.surface)
+            .shadow(color: DS.shadow.opacity(0.35), radius: 1, y: 0.5))
             .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(DS.border, lineWidth: 1))
     }
 }

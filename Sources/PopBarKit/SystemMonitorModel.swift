@@ -34,10 +34,28 @@ struct ProcessRow: Identifiable, Equatable {
     let powerScore: Double
 }
 
+struct FanReading: Equatable {
+    var rpm: Double
+    var min: Double
+    var max: Double
+}
+
 struct StatusSnapshot: Equatable {
     var cpuPercent: Double = 0
+    var cpuUser: Double = 0
+    var cpuSystem: Double = 0
+    var loadAvg: [Double] = [0, 0, 0]
     var perCore: [Double] = []
+    var cpuBrand: String = ""
+    var pCores: Int = 0
+    var eCores: Int = 0
     var cpuWatts: Double = 0
+    /// 有真实功耗来源才显示瓦数,否则隐藏而不是显示 0W
+    var hasCPUPower = false
+    var hasGPUPower = false
+    var hasGPUUtil = false
+    var gpuName: String = ""
+    var gpuMem: UInt64 = 0
     var gpuPercent: Double = 0
     var gpuWatts: Double = 0
     var aneWatts: Double = 0
@@ -51,19 +69,42 @@ struct StatusSnapshot: Equatable {
     var memUsed: UInt64 = 0
     var memPhys: UInt64 = 0
     var swapUsed: UInt64 = 0
+    var memApp: UInt64 = 0
+    var memWired: UInt64 = 0
+    var memCompressed: UInt64 = 0
+    var memCached: UInt64 = 0
+    var memFree: UInt64 = 0
     var pressure: Int = 0
+    var fans: [FanReading] = []
+    /// SMC PSTR 整机功耗,0 表示没有
+    var systemWatts: Double = 0
+    var dcInWatts: Double = 0
     var batteryLevel: Double = 0
     var batteryHealth: Double = 100
     var batteryCycles: Int = 0
     var hasBattery: Bool = false
     var isCharging: Bool = false
     var isAC: Bool = false
+    var batteryTemp: Double = 0
+    var batteryVoltage: Double = 0
+    /// 正:充电;负:放电
+    var batteryWatts: Double = 0
+    var timeToEmpty: Int = -1
+    var timeToFull: Int = -1
+    var adapterWatts: Int = 0
+    var capacityNow: Int = 0
+    var capacityFull: Int = 0
+    var capacityDesign: Int = 0
     var diskTotal: UInt64 = 0
     var diskAvail: UInt64 = 0
+    var diskRead: Double = 0
+    var diskWrite: Double = 0
     var netDown: Double = 0
     var netUp: Double = 0
     var netIface: String = ""
     var isWifi: Bool = true
+    var netRxTotal: UInt64 = 0
+    var netTxTotal: UInt64 = 0
     var groups: [ProcessGroup] = []
     var topPowerName: String = "—"
     var health = HealthReport(score: 100, band: L10n.t("很好", "Excellent"), factors: [])
@@ -159,6 +200,9 @@ final class SystemMonitorModel: ObservableObject {
     private var prevProcAt: Date?
     private var prevDiskIO: UInt64 = 0
     private var haveDiskIO = false
+    private var prevDiskRead: UInt64 = 0
+    private var prevDiskWrite: UInt64 = 0
+    private var haveDiskBytes = false
     private var prevRx: UInt64 = 0
     private var prevTx: UInt64 = 0
     private var haveNet = false
@@ -170,6 +214,13 @@ final class SystemMonitorModel: ObservableObject {
         guard !running else { return }
         running = true
         sampler = cm_sampler_create()
+        if let sampler {
+            var info = CMSystemInfo()
+            cm_system_info(sampler, &info)
+            display.cpuBrand = cChars(info.cpu_brand).trimmingCharacters(in: .whitespaces)
+            display.pCores = Int(info.pcores)
+            display.eCores = Int(info.ecores)
+        }
         task = Task { [weak self] in
             await self?.tick()
             while let self, !Task.isCancelled {
@@ -206,13 +257,24 @@ final class SystemMonitorModel: ObservableObject {
         var next = display
         let cpu = blend(display.cpuPercent, raw.cpu.package_percent)
         next.cpuPercent = cpu
+        next.cpuUser = blend(display.cpuUser, raw.cpu.user_percent)
+        next.cpuSystem = blend(display.cpuSystem, raw.cpu.system_percent)
+        next.loadAvg = [raw.cpu.load_avg.0, raw.cpu.load_avg.1, raw.cpu.load_avg.2]
         next.perCore = copyCores(raw.cpu)
+        next.hasCPUPower = raw.chip.has_cpu_power != 0
+        next.hasGPUPower = raw.chip.has_gpu_power != 0
+        next.hasGPUUtil = raw.chip.has_gpu_util != 0
+        next.gpuName = cChars(raw.chip.gpu_name)
+        next.gpuMem = raw.chip.gpu_mem_bytes
         next.cpuWatts = blend(display.cpuWatts, raw.chip.cpu_watts)
         next.gpuPercent = blend(display.gpuPercent, raw.chip.gpu_percent)
         next.gpuWatts = blend(display.gpuWatts, raw.chip.gpu_watts)
         next.aneWatts = raw.chip.ane_watts
         next.dramWatts = raw.chip.dram_watts
         next.chipWatts = next.cpuWatts + next.gpuWatts + next.aneWatts + next.dramWatts
+        next.fans = copyFans(raw.sensors)
+        next.systemWatts = raw.sensors.system_watts > 0 ? blend(display.systemWatts, raw.sensors.system_watts) : 0
+        next.dcInWatts = raw.sensors.dcin_watts
 
         if raw.temp.have_cpu != 0 {
             next.cpuTemp = blend(display.cpuTemp == 0 ? raw.temp.cpu_temp : display.cpuTemp, raw.temp.cpu_temp)
@@ -232,6 +294,11 @@ final class SystemMonitorModel: ObservableObject {
         next.memUsed = raw.memory.used_bytes
         next.memPhys = raw.memory.phys_bytes
         next.swapUsed = raw.memory.swap_used
+        next.memApp = raw.memory.app_bytes
+        next.memWired = raw.memory.wired_bytes
+        next.memCompressed = raw.memory.compressed_bytes
+        next.memCached = raw.memory.cached_bytes
+        next.memFree = raw.memory.free_bytes
         next.pressure = Int(raw.memory.pressure_level)
 
         next.hasBattery = raw.battery.has_battery != 0
@@ -240,6 +307,15 @@ final class SystemMonitorModel: ObservableObject {
         next.batteryCycles = Int(raw.battery.cycle_count)
         next.isCharging = raw.battery.is_charging != 0
         next.isAC = raw.battery.is_ac != 0
+        next.batteryTemp = raw.battery.temperature
+        next.batteryVoltage = raw.battery.voltage
+        next.batteryWatts = blend(display.batteryWatts, raw.battery.watts)
+        next.timeToEmpty = Int(raw.battery.time_to_empty)
+        next.timeToFull = Int(raw.battery.time_to_full)
+        next.adapterWatts = Int(raw.battery.adapter_watts)
+        next.capacityNow = Int(raw.battery.cur_capacity_mah)
+        next.capacityFull = Int(raw.battery.max_capacity_mah)
+        next.capacityDesign = Int(raw.battery.design_capacity_mah)
 
         next.diskTotal = raw.disk.total_bytes
         next.diskAvail = raw.disk.available_important
@@ -256,13 +332,29 @@ final class SystemMonitorModel: ObservableObject {
         prevRx = raw.net.rx_bytes
         prevTx = raw.net.tx_bytes
         haveNet = true
+        next.netRxTotal = raw.net.rx_bytes
+        next.netTxTotal = raw.net.tx_bytes
 
+        // 磁盘读写:优先用 IOBlockStorageDriver 的累计字节(不受进程退出影响),没有再退回进程 rusage 之和
         var diskDelta: UInt64 = 0
-        if haveDiskIO, raw.procs.diskio_total >= prevDiskIO {
-            diskDelta = raw.procs.diskio_total - prevDiskIO
+        let dRead = raw.disk.read_bytes, dWrite = raw.disk.write_bytes
+        if dRead > 0 || dWrite > 0 {
+            if haveDiskBytes, dRead >= prevDiskRead, dWrite >= prevDiskWrite, elapsed >= 0.2 {
+                let r = dRead - prevDiskRead, w = dWrite - prevDiskWrite
+                diskDelta = r + w
+                next.diskRead = blend(display.diskRead, Double(r) / elapsed)
+                next.diskWrite = blend(display.diskWrite, Double(w) / elapsed)
+            }
+            prevDiskRead = dRead
+            prevDiskWrite = dWrite
+            haveDiskBytes = true
+        } else {
+            if haveDiskIO, raw.procs.diskio_total >= prevDiskIO {
+                diskDelta = raw.procs.diskio_total - prevDiskIO
+            }
+            prevDiskIO = raw.procs.diskio_total
+            haveDiskIO = true
         }
-        prevDiskIO = raw.procs.diskio_total
-        haveDiskIO = true
 
         if wantProcs {
             var rows: [ProcessRow] = []
@@ -348,6 +440,14 @@ private struct CProc {
     var phys_footprint: UInt64
     var cpu_ns: UInt64
     var diskio: UInt64
+}
+
+private func copyFans(_ s: CMSensorSample) -> [FanReading] {
+    let n = max(0, min(Int(s.fan_count), Int(CM_MAX_FANS)))
+    let rpm = withUnsafeBytes(of: s.fan_rpm) { Array($0.bindMemory(to: Double.self)) }
+    let lo = withUnsafeBytes(of: s.fan_min) { Array($0.bindMemory(to: Double.self)) }
+    let hi = withUnsafeBytes(of: s.fan_max) { Array($0.bindMemory(to: Double.self)) }
+    return (0..<n).map { FanReading(rpm: rpm[$0], min: lo[$0], max: hi[$0]) }
 }
 
 private func copyCores(_ cpu: CMCPUSample) -> [Double] {
@@ -523,10 +623,12 @@ enum HealthScore {
 }
 
 enum LoadLabel {
-    static func from(watts: Double) -> String {
-        if watts < 20 { return L10n.t("低负载", "Light") }
-        if watts < 60 { return L10n.t("正常", "Normal") }
-        if watts < 85 { return L10n.t("繁忙", "Busy") }
+    /// 按 CPU 占用率分档。原先按芯片瓦数分档,Apple Silicon 日常远低于 20W、Intel 拿不到功耗,
+    /// 结果几乎永远显示「低负载」;占用率在两种架构上都可靠
+    static func from(percent: Double) -> String {
+        if percent < 25 { return L10n.t("低负载", "Light") }
+        if percent < 60 { return L10n.t("正常", "Normal") }
+        if percent < 85 { return L10n.t("繁忙", "Busy") }
         return L10n.t("高负载", "Heavy")
     }
 }

@@ -12,7 +12,7 @@ struct GeneralSettings: View {
     @EnvironmentObject var e: ConfigEditor
 
     var body: some View {
-        DSGroup {
+        DSGroup(L10n.t("外观", "Appearance")) {
             DSSettingRow(L10n.t("语言", "Language")) {
                 DSSegmented(selection: e.bind(\.language), options: [
                     ("system", L10n.t("跟随系统", "System")), ("zh", "中文"), ("en", "English"),
@@ -29,7 +29,8 @@ struct GeneralSettings: View {
                          subtitle: L10n.t("浮动条、截屏与录屏工具条的按钮按功能着色", "Tint buttons on the selection, screenshot and recording bars by function")) {
                 DSToggle(isOn: e.bind(\.colorIcons))
             }
-            DSDivider()
+        }
+        DSGroup(L10n.t("行为", "Behavior")) {
             DSSettingRow(L10n.t("登录时启动", "Launch at Login")) { DSToggle(isOn: e.bind(\.launchAtLogin)) }
             DSDivider()
             DSSettingRow(L10n.t("暂停划词", "Pause Selection"),
@@ -45,7 +46,7 @@ struct GeneralSettings: View {
                 ])
             }
         }
-        DSGroup {
+        DSGroup(L10n.t("其他", "More")) {
             DSSettingRow(L10n.t("欢迎与权限", "Welcome & Permissions"),
                          subtitle: L10n.t("辅助功能、输入监控等；也可从 Deck 侧栏底部进入",
                                           "Accessibility, Input Monitoring, and more; also in the Deck sidebar footer")) {
@@ -53,8 +54,8 @@ struct GeneralSettings: View {
             }
             DSDivider()
             DSSettingRow(L10n.t("配置文件", "Config File"),
-                         subtitle: L10n.t("可以手动编辑，保存后自动重新读取。配置文件包含 API Key，分享前请删除。",
-                                          "Editable by hand; reloaded on save. It contains your API keys, so remove them before sharing.")) {
+                         subtitle: L10n.t("可手动编辑，保存后自动重新读取；其中包含 API Key，分享前请删除",
+                                          "Editable by hand; reloaded on save. It contains your API keys, so remove them before sharing")) {
                 DSButton(L10n.t("在访达中显示", "Show in Finder")) {
                     NSWorkspace.shared.activateFileViewerSelecting([PopBarConfig.fileURL])
                 }
@@ -72,7 +73,7 @@ struct SelectionSettings: View {
     @EnvironmentObject var e: ConfigEditor
 
     var body: some View {
-        DSGroup {
+        DSGroup(L10n.t("触发", "Trigger")) {
             DSSettingRow(L10n.t("触发方式", "Trigger"), subtitle: L10n.t("选中文字后怎样弹出浮动条", "How the bar appears after selecting text")) {
                 DSSegmented(selection: e.bind(\.triggerMode), options: [
                     (.both, L10n.t("拖拽 + 双击", "Drag + Double-click")), (.drag, L10n.t("仅拖拽", "Drag only")),
@@ -115,7 +116,7 @@ struct BarSettings: View {
     private var ordered: [ToolbarItem] { BuiltinActions.materializedItems(e.c.toolbar.items) }
 
     var body: some View {
-        DSGroup {
+        DSGroup(L10n.t("基本", "Basics")) {
             DSSettingRow(L10n.t("智能胶囊", "Smart Capsule"),
                          subtitle: L10n.t("识别到链接、算式、颜色、路径等内容时，在最左侧给出一键操作", "One-tap action for links, math, colors, paths and more")) {
                 DSToggle(isOn: e.bind(\.toolbar.smartCapsule))
@@ -308,9 +309,6 @@ struct ModuleSettings: View {
     private let cols = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
-        Text(L10n.t("关闭的模块不出现在侧栏、浮动条和菜单里，快捷键不注册，也不在后台运行。",
-                    "Disabled modules disappear from the sidebar, bar and menu; their shortcuts and background work stop."))
-            .font(DS.caption).foregroundStyle(DS.muted)
         LazyVGrid(columns: cols, spacing: 12) {
             ForEach(ModuleRegistry.shared.all, id: \.id) { m in
                 let on = e.c.isModuleEnabled(m.id)
@@ -342,7 +340,7 @@ struct TodaySettings: View {
     @EnvironmentObject var e: ConfigEditor
 
     var body: some View {
-        DSGroup {
+        DSGroup(L10n.t("存储", "Storage")) {
             DSSettingRow(L10n.t("存放位置", "Folder"),
                          subtitle: e.c.todo.dir.isEmpty ? L10n.t("默认（Application Support）；一天一个 Markdown 文件", "Default (Application Support); one Markdown file per day")
                                                         : e.c.todo.dir) {

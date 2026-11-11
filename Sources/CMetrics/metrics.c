@@ -1,4 +1,5 @@
 #include "CMetrics.h"
+#include "cm_internal.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
@@ -118,6 +119,10 @@ struct CMSampler {
 
     IOReportAPI ior;
     HIDAPI hid;
+    int ior_unavailable;   // 本机没有 Energy Model / GPU Stats 通道(Intel),不再反复尝试
+    CMSMC *smc;
+    CMSystemInfo info;
+    double proc_tick_ns;   // rusage 的 ri_user_time 单位(Apple Silicon 为 mach tick,≈41.67ns)
 };
 
 static mach_timebase_info_data_t g_timebase;
@@ -279,7 +284,7 @@ static void iterate_samples(IOReportAPI *api, CFDictionaryRef samples, EnergyAcc
 static void poll_chip(CMSampler *s, CMChipSample *out, double dt) {
     memset(out, 0, sizeof(*out));
     IOReportAPI *api = &s->ior;
-    if (!api->ready) return;
+    if (!api->ready || s->ior_unavailable) return;
     if (!s->ior_channels) {
         CFMutableDictionaryRef ch = NULL;
         if (api->copy_group) {
@@ -292,6 +297,8 @@ static void poll_chip(CMSampler *s, CMChipSample *out, double dt) {
                 }
             }
         }
+#if defined(__arm64__)
+        // 只在 Apple Silicon 上兜底订阅全部通道;Intel 没有能耗通道,订阅全部只会白白消耗 CPU
         if (!ch && api->copy_all) {
             CFDictionaryRef all = api->copy_all(0, 0);
             if (all) {
@@ -299,9 +306,14 @@ static void poll_chip(CMSampler *s, CMChipSample *out, double dt) {
                 CFRelease(all);
             }
         }
+#endif
         s->ior_channels = ch;
-        if (!s->ior_channels) return;
+        if (!s->ior_channels) {
+            s->ior_unavailable = 1;
+            return;
+        }
         s->ior_sub = api->create_sub(NULL, s->ior_channels, &s->ior_subbed, 0, NULL);
+        if (!s->ior_sub) s->ior_unavailable = 1;
     }
     if (!s->ior_sub || !api->create_samples) return;
     CFMutableDictionaryRef use_ch = s->ior_subbed ? s->ior_subbed : s->ior_channels;
@@ -342,7 +354,10 @@ static void poll_chip(CMSampler *s, CMChipSample *out, double dt) {
     if (acc.gpu_total > 0) {
         out->gpu_percent = 100.0 * (double)acc.gpu_active / (double)acc.gpu_total;
         if (out->gpu_percent > 100) out->gpu_percent = 100;
+        out->has_gpu_util = 1;
     }
+    out->has_cpu_power = acc.has_cpu_energy || acc.cpu_cluster > 0;
+    out->has_gpu_power = acc.has_gpu_mj || acc.gpu_energy > 0;
     if (out->gpu_watts > 80 && s->last_gpu_watts < 1) {
         out->gpu_watts = s->last_gpu_watts;
     }
@@ -374,7 +389,7 @@ static void poll_cpu(CMSampler *s, CMCPUSample *out) {
     out->core_count = (int)cores;
 
     processor_cpu_load_info_t cur = (processor_cpu_load_info_t)info;
-    double sum_used = 0, sum_total = 0;
+    double sum_used = 0, sum_total = 0, sum_user = 0, sum_sys = 0;
     if (s->have_prev_cpu && s->prev_ncpu == ncpu && s->prev_ticks) {
         processor_cpu_load_info_t prev = (processor_cpu_load_info_t)s->prev_ticks;
         for (unsigned int i = 0; i < cores; i++) {
@@ -394,9 +409,21 @@ static void poll_cpu(CMSampler *s, CMCPUSample *out) {
                 out->per_core[i] = pct;
                 sum_used += used;
                 sum_total += total;
+                sum_user += du + dn;
+                sum_sys += ds;
             }
         }
-        if (sum_total > 0) out->package_percent = 100.0 * sum_used / sum_total;
+        if (sum_total > 0) {
+            out->package_percent = 100.0 * sum_used / sum_total;
+            out->user_percent = 100.0 * sum_user / sum_total;
+            out->system_percent = 100.0 * sum_sys / sum_total;
+        }
+    }
+    double la[3] = {0, 0, 0};
+    if (getloadavg(la, 3) == 3) {
+        out->load_avg[0] = la[0];
+        out->load_avg[1] = la[1];
+        out->load_avg[2] = la[2];
     }
     if (s->prev_ticks) {
         vm_deallocate(mach_task_self(), (vm_address_t)s->prev_ticks, s->prev_tick_count * sizeof(integer_t));
@@ -432,6 +459,11 @@ static void poll_memory(CMMemorySample *out) {
     if (phys > 0 && used > phys) used = phys;
     out->used_bytes = used;
     if (phys > 0) out->used_percent = 100.0 * (double)used / (double)phys;
+    out->app_bytes = (uint64_t)app_pages * (uint64_t)pagesize;
+    out->wired_bytes = (uint64_t)vm.wire_count * (uint64_t)pagesize;
+    out->compressed_bytes = (uint64_t)vm.compressor_page_count * (uint64_t)pagesize;
+    out->cached_bytes = ((uint64_t)vm.external_page_count + (uint64_t)vm.purgeable_count) * (uint64_t)pagesize;
+    out->free_bytes = (uint64_t)vm.free_count * (uint64_t)pagesize;
 
     int pressure = 3;
     len = sizeof pressure;
@@ -538,9 +570,20 @@ static int64_t cf_int64(CFTypeRef v) {
     return -1;
 }
 
+static int64_t reg_int(io_registry_entry_t e, CFStringRef key) {
+    CFTypeRef v = IORegistryEntryCreateCFProperty(e, key, kCFAllocatorDefault, 0);
+    if (!v) return INT64_MIN;
+    int64_t n = INT64_MIN;
+    if (CFGetTypeID(v) == CFNumberGetTypeID()) CFNumberGetValue(v, kCFNumberSInt64Type, &n);
+    CFRelease(v);
+    return n;
+}
+
 static void poll_battery(CMBatterySample *out) {
     memset(out, 0, sizeof(*out));
     out->health_percent = 100;
+    out->time_to_empty = -1;
+    out->time_to_full = -1;
     CFTypeRef blob = IOPSCopyPowerSourcesInfo();
     if (blob) {
         CFArrayRef list = IOPSCopyPowerSourcesList(blob);
@@ -559,11 +602,21 @@ static void poll_battery(CMBatterySample *out) {
                     if (ch) out->is_charging = CFBooleanGetValue(ch);
                     CFStringRef state = CFDictionaryGetValue(d, CFSTR(kIOPSPowerSourceStateKey));
                     if (state && CFEqual(state, CFSTR(kIOPSACPowerValue))) out->is_ac = 1;
+                    int64_t tte = cf_int64(CFDictionaryGetValue(d, CFSTR(kIOPSTimeToEmptyKey)));
+                    int64_t ttf = cf_int64(CFDictionaryGetValue(d, CFSTR(kIOPSTimeToFullChargeKey)));
+                    if (tte > 0 && tte < 24 * 60) out->time_to_empty = (int)tte;
+                    if (ttf > 0 && ttf < 24 * 60) out->time_to_full = (int)ttf;
                 }
             }
             CFRelease(list);
         }
         CFRelease(blob);
+    }
+    CFDictionaryRef adapter = IOPSCopyExternalPowerAdapterDetails();
+    if (adapter) {
+        int64_t w = cf_int64(CFDictionaryGetValue(adapter, CFSTR(kIOPSPowerAdapterWattsKey)));
+        if (w > 0 && w < 1000) out->adapter_watts = (int)w;
+        CFRelease(adapter);
     }
 
     io_service_t svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"));
@@ -592,6 +645,23 @@ static void poll_battery(CMBatterySample *out) {
             if (v > 0 && v <= 100) out->health_percent = (double)v;
             CFRelease(sp);
         }
+        // 温度(0.01°C)、电压(mV)、瞬时电流(mA,放电为负)、容量(mAh):参考 stats Modules/Battery/readers.swift
+        int64_t t = reg_int(svc, CFSTR("Temperature"));
+        if (t > 0 && t < 10000) out->temperature = (double)t / 100.0;
+        int64_t mv = reg_int(svc, CFSTR("Voltage"));
+        int64_t ma = reg_int(svc, CFSTR("InstantAmperage"));
+        if (ma == INT64_MIN) ma = reg_int(svc, CFSTR("Amperage"));
+        if (ma != INT64_MIN && ma > INT32_MAX) ma = (int32_t)(uint32_t)ma;   // 个别机型把负数存成无符号
+        if (mv > 0 && mv != INT64_MIN) {
+            out->voltage = (double)mv / 1000.0;
+            if (ma != INT64_MIN) out->watts = out->voltage * (double)ma / 1000.0;
+        }
+        int64_t cur = reg_int(svc, CFSTR("AppleRawCurrentCapacity"));
+        int64_t max = reg_int(svc, CFSTR("AppleRawMaxCapacity"));
+        int64_t des = reg_int(svc, CFSTR("DesignCapacity"));
+        if (cur > 0 && cur != INT64_MIN) out->cur_capacity_mah = (int)cur;
+        if (max > 0 && max != INT64_MIN) out->max_capacity_mah = (int)max;
+        if (des > 0 && des != INT64_MIN) out->design_capacity_mah = (int)des;
         CFTypeRef cycles = IORegistryEntryCreateCFProperty(svc, CFSTR("CycleCount"), kCFAllocatorDefault, 0);
         if (cycles) {
             int64_t v = cf_int64(cycles);
@@ -622,6 +692,7 @@ static void poll_disk(CMDiskSample *out) {
         CFRelease(avail);
     }
     CFRelease(url);
+    cm_disk_io(&out->read_bytes, &out->write_bytes);
 }
 
 static void poll_net(CMSampler *s, CMNetCounters *out) {
@@ -670,7 +741,7 @@ static int proc_sort_mem(const void *a, const void *b) {
     return 0;
 }
 
-static void poll_procs(CMProcSample *out) {
+static void poll_procs(CMProcSample *out, double tick_ns) {
     memset(out, 0, sizeof(*out));
     int bufsize = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
     if (bufsize <= 0) return;
@@ -702,7 +773,10 @@ static void poll_procs(CMProcSample *out) {
         tmp[m].pid = pid;
         snprintf(tmp[m].name, sizeof tmp[m].name, "%s", name);
         tmp[m].phys_footprint = ru.ri_phys_footprint;
-        tmp[m].cpu_ns = ru.ri_user_time + ru.ri_system_time;
+        // ri_user_time / ri_system_time 的单位是 mach tick:Intel 上 1 tick = 1ns,
+        // Apple Silicon 上 1 tick ≈ 41.67ns,不换算会把进程 %CPU 低估约 41 倍
+        uint64_t ticks = ru.ri_user_time + ru.ri_system_time;
+        tmp[m].cpu_ns = tick_ns == 1.0 ? ticks : (uint64_t)((double)ticks * tick_ns);
         tmp[m].diskio = ru.ri_diskio_bytesread + ru.ri_diskio_byteswritten;
         diskio += tmp[m].diskio;
         m++;
@@ -762,6 +836,20 @@ CMSampler *cm_sampler_create(void) {
     if (!s) return NULL;
     ior_load(&s->ior);
     hid_load(&s->hid);
+    s->smc = cm_smc_open();
+    cm_read_system_info(&s->info);
+    // 用硬件时基频率换算(Rosetta 下 mach_timebase_info 会被翻译成 1/1,但内核给的仍是原生 tick)
+    s->proc_tick_ns = 0;
+    uint64_t tbf = 0;
+    size_t len = sizeof tbf;
+    if (sysctlbyname("hw.tbfrequency", &tbf, &len, NULL, 0) == 0 && tbf >= 1000000 && tbf <= 2000000000ULL) {
+        s->proc_tick_ns = 1e9 / (double)tbf;
+    }
+    if (s->proc_tick_ns <= 0) {
+        pthread_once(&g_timebase_once, init_timebase);
+        s->proc_tick_ns = (double)g_timebase.numer / (double)g_timebase.denom;
+    }
+    if (s->proc_tick_ns > 0.999 && s->proc_tick_ns < 1.001) s->proc_tick_ns = 1.0;
     return s;
 }
 
@@ -775,6 +863,7 @@ void cm_sampler_destroy(CMSampler *s) {
     if (s->ior_subbed) CFRelease(s->ior_subbed);
     if (s->ior_channels) CFRelease(s->ior_channels);
     if (s->ior.handle) dlclose(s->ior.handle);
+    cm_smc_close(s->smc);
     free(s);
 }
 
@@ -791,11 +880,46 @@ int cm_sampler_poll(CMSampler *s, CMSnapshot *out) {
     poll_cpu(s, &out->cpu);
     poll_memory(&out->memory);
     poll_chip(s, &out->chip, dt > 0 ? dt : 0.5);
+    {
+        // GPU 占用率优先用 IOAccelerator(与活动监视器同源,Intel/AMD/Apple 都有),没有再用 IOReport 的频率驻留
+        CMChipSample g;
+        memset(&g, 0, sizeof g);
+        if (cm_gpu_accel(&g)) {
+            out->chip.gpu_percent = g.gpu_percent;
+            out->chip.has_gpu_util = 1;
+        }
+        out->chip.gpu_mem_bytes = g.gpu_mem_bytes;
+        memcpy(out->chip.gpu_name, g.gpu_name, sizeof g.gpu_name);
+        // Intel:CPU / GPU 功耗来自 SMC
+        double w = 0;
+        if (!out->chip.has_cpu_power && cm_smc_cpu_power(s->smc, &w)) {
+            out->chip.cpu_watts = w;
+            out->chip.has_cpu_power = 1;
+        }
+        if (!out->chip.has_gpu_power && cm_smc_gpu_power(s->smc, &w)) {
+            out->chip.gpu_watts = w;
+            out->chip.has_gpu_power = 1;
+        }
+        out->chip.valid = 1;
+    }
     poll_temp(&s->hid, &out->temp);
+    {
+        // HID 没找到 GPU 专用传感器时 poll_temp 会用 CPU 温度顶替;先撤掉,让 SMC 有机会给出真实值
+        int gpu_from_cpu = out->temp.have_gpu && out->temp.have_cpu && out->temp.gpu_temp == out->temp.cpu_temp;
+        CMTempSample t = out->temp;
+        if (gpu_from_cpu) t.have_gpu = 0;
+        cm_smc_temps(s->smc, &t);
+        if (!t.have_gpu && t.have_cpu) {   // 仍然没有 GPU 温度:沿用 SoC / CPU 温度(Apple Silicon 同一块芯片)
+            t.gpu_temp = t.cpu_temp;
+            t.have_gpu = 1;
+        }
+        out->temp = t;
+    }
+    cm_smc_sensors(s->smc, &out->sensors);
     poll_battery(&out->battery);
     poll_disk(&out->disk);
     poll_net(s, &out->net);
-    poll_procs(&out->procs);
+    poll_procs(&out->procs, s->proc_tick_ns);
 
     if (!s->drive_checked_mach || mach_to_sec(now - s->drive_checked_mach) > 30) {
         s->cached_drive_failing = walk_drive_failing();
@@ -804,4 +928,9 @@ int cm_sampler_poll(CMSampler *s, CMSnapshot *out) {
     out->drive_failing = s->cached_drive_failing;
     out->uptime_sec = uptime_seconds();
     return 0;
+}
+
+void cm_system_info(CMSampler *s, CMSystemInfo *out) {
+    if (!s || !out) return;
+    *out = s->info;
 }

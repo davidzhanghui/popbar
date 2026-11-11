@@ -15,15 +15,20 @@ enum DeckPage: Hashable {
 @MainActor
 final class DeckState: ObservableObject {
     @Published var page: DeckPage = .module("today") {
-        didSet { if oldValue != page { DeckController.shared.pageChanged(from: oldValue, to: page) } }
+        didSet {
+            if page != .settings { returnPage = page }
+            if oldValue != page { DeckController.shared.pageChanged(from: oldValue, to: page) }
+        }
     }
+    /// 设置模式下侧栏「返回」回到的页面（最近一次停留的非设置页）
+    var returnPage: DeckPage = .module("today")
     @Published var settings: SettingsSection = .general
     /// 侧栏角标等需要定期刷新的东西
     @Published var tick = 0
 }
 
 /// Deck 主窗口：取代所有 ToolPanel 浮窗和两个设置窗口。
-/// 普通 NSWindow + 透明标题栏；默认 980×660，最小 820×520，记住位置和大小。
+/// 普通 NSWindow（Esc 关闭）+ 透明标题栏；默认 980×660，最小 820×520，记住位置和大小。
 @MainActor
 final class DeckController: NSObject, NSWindowDelegate {
     static let shared = DeckController()
@@ -113,7 +118,7 @@ final class DeckController: NSObject, NSWindowDelegate {
     }
 
     private func makeWindow() -> NSWindow {
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
+        let w = EscClosableWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: false)
         w.titleVisibility = .hidden
@@ -183,45 +188,87 @@ struct DeckSidebar: View {
     @ObservedObject var state: DeckState
     @ObservedObject var registry: ModuleRegistry
 
+    /// 两栏布局：进入设置后，侧栏整体切换成设置的分组导航，「返回」回到之前的页面
+    private var inSettings: Bool { state.page == .settings }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 40)   // 红绿灯
-            brand.padding(.horizontal, 16).padding(.bottom, 18)
+            Group {
+                if inSettings { settingsHeader } else { brand }
+            }
+            .frame(height: 36, alignment: .leading)
+            .padding(.horizontal, 16).padding(.bottom, 14)
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(DeckGroup.allCases, id: \.self) { g in
-                        let mods = registry.enabled.filter { $0.group == g }
-                        if !mods.isEmpty {
-                            VStack(alignment: .leading, spacing: 2) {
-                                DSEyebrow(g.title).padding(.horizontal, 12).padding(.bottom, 4)
-                                ForEach(mods, id: \.id) { m in
-                                    SidebarRow(icon: m.icon, title: m.title, badge: m.badge,
-                                               selected: state.page == .module(m.id)) {
-                                        state.page = .module(m.id)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Group {
+                    if inSettings { settingsNav } else { moduleNav }
                 }
                 .padding(.horizontal, 8)
+                .padding(.bottom, 8)
                 .id(state.tick)
             }
+            .id(inSettings)
+            .transition(.opacity)
             Spacer(minLength: 0)
             Rectangle().fill(DS.border).frame(height: 1).padding(.horizontal, 12)
             VStack(spacing: 2) {
-                // 欢迎与权限：侧栏常驻入口；缺辅助功能/输入监控时用角标提醒
-                SidebarRow(icon: missingCriticalPermissions > 0 ? "shield-alert" : "shield-check",
-                           title: L10n.t("欢迎与权限", "Welcome & Permissions"),
-                           badge: missingCriticalPermissions > 0 ? missingCriticalPermissions : nil,
-                           selected: state.page == .welcome) { state.page = .welcome }
-                SidebarRow(icon: "settings", title: L10n.t("设置", "Settings"), badge: nil,
-                           selected: state.page == .settings) { state.page = .settings }
+                if inSettings {
+                    SidebarRow(icon: SettingsSection.about.icon, title: SettingsSection.about.title, badge: nil,
+                               selected: state.settings == .about) { state.settings = .about }
+                } else {
+                    // 欢迎与权限：侧栏常驻入口；缺辅助功能/输入监控时用角标提醒
+                    SidebarRow(icon: missingCriticalPermissions > 0 ? "shield-alert" : "shield-check",
+                               title: L10n.t("欢迎与权限", "Welcome & Permissions"),
+                               badge: missingCriticalPermissions > 0 ? missingCriticalPermissions : nil,
+                               selected: state.page == .welcome) { state.page = .welcome }
+                    SidebarRow(icon: "settings", title: L10n.t("设置", "Settings"), badge: nil,
+                               selected: false) { state.page = .settings }
+                }
             }
             .padding(8)
             .id(state.tick)
         }
         .background(DS.bg)
+        .animation(.easeOut(duration: 0.16), value: inSettings)
+    }
+
+    private var moduleNav: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(DeckGroup.allCases, id: \.self) { g in
+                let mods = registry.enabled.filter { $0.group == g }
+                if !mods.isEmpty {
+                    SidebarSection(title: g.title) {
+                        ForEach(mods, id: \.id) { m in
+                            SidebarRow(icon: m.icon, title: m.title, badge: m.badge,
+                                       selected: state.page == .module(m.id)) {
+                                state.page = .module(m.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var settingsNav: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(SettingsGroup.allCases, id: \.self) { g in
+                SidebarSection(title: g.title) {
+                    ForEach(g.sections) { s in
+                        SidebarRow(icon: s.icon, title: s.title, badge: nil, selected: state.settings == s) {
+                            state.settings = s
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 设置模式的侧栏页头：返回按钮 + 「设置」
+    private var settingsHeader: some View {
+        SidebarBackButton(title: L10n.t("设置", "Settings")) {
+            state.page = state.returnPage == .settings ? .module("today") : state.returnPage
+        }
     }
 
     /// 划词必备权限缺失数（辅助功能、输入监控）
@@ -243,6 +290,44 @@ struct DeckSidebar: View {
     }
 }
 
+/// 侧栏里的一组：小标题 + 若干行
+struct SidebarSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(DS.font(11, .semibold))
+                .foregroundStyle(DS.faint)
+                .padding(.horizontal, 12).padding(.bottom, 4)
+            content
+        }
+    }
+}
+
+/// 设置模式侧栏顶部的返回按钮
+struct SidebarBackButton: View {
+    let title: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Icon("chevron-left", size: 15, color: hovering ? DS.text : DS.muted)
+                    .frame(width: 26, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(hovering ? DS.hover : DS.surface2))
+                Text(title).font(DS.font(15, .semibold)).foregroundStyle(DS.text)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(L10n.t("返回", "Back"))
+    }
+}
+
 struct SidebarRow: View {
     let icon: String
     let title: String
@@ -255,12 +340,12 @@ struct SidebarRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Icon(icon, size: 15, color: selected ? DS.accent : DS.muted)
-                Text(title).font(DS.font(13, selected ? .medium : .regular)).foregroundStyle(DS.text)
-                Spacer()
+                Text(title).font(DS.font(13, selected ? .medium : .regular)).foregroundStyle(DS.text).lineLimit(1)
+                Spacer(minLength: 4)
                 if let badge { Text("\(badge)").font(DS.small).foregroundStyle(DS.faint).monospacedDigit() }
             }
             .padding(.horizontal, 12)
-            .frame(height: 34)
+            .frame(height: 32)
             .background(RoundedRectangle(cornerRadius: Theme.Radius.button)
                 .fill(selected ? DS.surface : (hovering ? DS.hover : .clear))
                 .shadow(color: selected ? DS.shadow.opacity(0.5) : .clear, radius: 1.5, y: 0.5))

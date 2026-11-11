@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import AVFoundation
 import PopBarCore
 import PopBarPlatform
 import PopBarDesign
@@ -12,11 +13,18 @@ struct MediaSettings: View {
     @State private var micTesting = false
     @State private var mic = MicLevelMonitor()
 
-    private var mics: [(String, String)] {
-        [("", L10n.t("系统默认", "System default"))] + MicPermission.devices().map { ($0.id, $0.name) }
+    @State private var mics: [(String, String)] = []
+    @State private var cameras: [(String, String)] = []
+
+    /// 重新枚举麦克风 / 摄像头（插拔设备后列表才会更新）
+    private func refreshDevices() {
+        let def = ("", L10n.t("系统默认", "System default"))
+        mics = [def] + MicPermission.devices().map { ($0.id, $0.name) }
+        cameras = [def] + CameraPermission.devices().map { ($0.id, $0.name) }
     }
-    private var cameras: [(String, String)] {
-        [("", L10n.t("系统默认", "System default"))] + CameraPermission.devices().map { ($0.id, $0.name) }
+
+    private var refreshButton: some View {
+        DSIconButton("refresh-cw", help: L10n.t("刷新设备列表", "Refresh devices")) { refreshDevices() }
     }
 
     var body: some View {
@@ -45,7 +53,7 @@ struct MediaSettings: View {
             }
         }
 
-        DSGroup(L10n.t("录屏", "Recording")) {
+        DSGroup(L10n.t("录屏画面", "Recording Video")) {
             DSSettingRow(L10n.t("帧率", "Frame Rate")) {
                 DSSegmented(selection: e.bind(\.snap.record.fps), options: [(30, "30"), (60, "60")])
             }
@@ -63,7 +71,9 @@ struct MediaSettings: View {
             }
             DSDivider()
             DSSettingRow(L10n.t("录制鼠标指针", "Show Cursor")) { DSToggle(isOn: e.bind(\.snap.record.showsCursor)) }
-            DSDivider()
+        }
+
+        DSGroup(L10n.t("录屏声音", "Recording Audio")) {
             DSSettingRow(L10n.t("系统声音", "System Audio"), subtitle: L10n.t("PopBar 自己的声音始终排除", "PopBar's own sounds are always excluded")) {
                 DSToggle(isOn: e.bind(\.snap.record.systemAudio))
             }
@@ -72,6 +82,7 @@ struct MediaSettings: View {
                 HStack(spacing: 8) {
                     if e.c.snap.record.microphone {
                         DSMenuPicker(selection: e.bind(\.snap.record.microphoneDevice), options: mics, width: 170)
+                        refreshButton
                         DSButton(micTesting ? L10n.t("停止", "Stop") : L10n.t("测试", "Test"), kind: .ghost) { toggleMic() }
                         if micTesting { DSProgress(Double(micLevel)).frame(width: 60) }
                     }
@@ -83,7 +94,9 @@ struct MediaSettings: View {
                     }))
                 }
             }
-            DSDivider()
+        }
+
+        DSGroup(L10n.t("录制流程", "Recording Flow")) {
             DSSettingRow(L10n.t("最长时长", "Max Duration"), subtitle: L10n.t("0 表示不限", "0 means unlimited")) {
                 DSNumberField(value: e.bind(\.snap.record.maxDuration), range: 0...7200, suffix: L10n.t("秒", "s"))
             }
@@ -144,7 +157,12 @@ struct MediaSettings: View {
             }
             if e.c.snap.record.camera.enabled {
                 DSDivider()
-                DSSettingRow(L10n.t("设备", "Device")) { DSMenuPicker(selection: e.bind(\.snap.record.camera.device), options: cameras, width: 200) }
+                DSSettingRow(L10n.t("设备", "Device")) {
+                    HStack(spacing: 8) {
+                        DSMenuPicker(selection: e.bind(\.snap.record.camera.device), options: cameras, width: 200)
+                        refreshButton
+                    }
+                }
                 DSDivider()
                 DSSettingRow(L10n.t("位置", "Position")) {
                     DSSegmented(selection: e.bind(\.snap.record.camera.position), options: corners)
@@ -183,7 +201,7 @@ struct MediaSettings: View {
             }
         }
 
-        DSGroup(L10n.t("导出", "Export")) {
+        DSGroup(L10n.t("视频导出", "Video Export")) {
             DSSettingRow(L10n.t("录完自动导出", "Auto Export"), subtitle: L10n.t("录制结束直接按下面的参数出成品", "Export with these settings right after recording")) {
                 DSToggle(isOn: e.bind(\.snap.record.export.autoExport))
             }
@@ -203,17 +221,22 @@ struct MediaSettings: View {
             }
             DSDivider()
             DSSettingRow(L10n.t("导出后复制到剪贴板", "Copy After Export")) { DSToggle(isOn: e.bind(\.snap.record.export.copyToClipboard)) }
-            DSDivider()
-            DSSettingRow(L10n.t("GIF 帧率", "GIF FPS")) {
+        }
+
+        DSGroup("GIF") {
+            DSSettingRow(L10n.t("帧率", "Frame Rate")) {
                 DSSegmented(selection: e.bind(\.snap.record.gif.fps), options: [(5, "5"), (10, "10"), (15, "15")])
             }
             DSDivider()
-            DSSettingRow(L10n.t("GIF 宽度", "GIF Width")) {
+            DSSettingRow(L10n.t("宽度", "Width")) {
                 DSSegmented(selection: e.bind(\.snap.record.gif.width), options: [(0, L10n.t("原始", "Original")), (800, "800"), (480, "480")])
             }
             DSDivider()
-            DSSettingRow(L10n.t("GIF 到剪贴板", "Copy GIF")) { DSToggle(isOn: e.bind(\.snap.record.gif.copyToClipboard)) }
+            DSSettingRow(L10n.t("导出后复制到剪贴板", "Copy After Export")) { DSToggle(isOn: e.bind(\.snap.record.gif.copyToClipboard)) }
         }
+        .onAppear { refreshDevices() }
+        .onReceive(NotificationCenter.default.publisher(for: AVCaptureDevice.wasConnectedNotification)) { _ in refreshDevices() }
+        .onReceive(NotificationCenter.default.publisher(for: AVCaptureDevice.wasDisconnectedNotification)) { _ in refreshDevices() }
         .onDisappear { mic.stop(); micTesting = false }
     }
 

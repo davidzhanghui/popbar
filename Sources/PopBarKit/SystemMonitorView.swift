@@ -145,13 +145,38 @@ private struct CPUTile: View {
     let s: StatusSnapshot
 
     var body: some View {
-        HUDTile(title: "CPU", accent: SysTheme.cpu) {
+        HUDTile(title: "CPU", accent: SysTheme.cpu, help: tip) {
             BigNumber(text: pct(s.cpuPercent), extra: s.cpuTemp > 0 ? temp(s.cpuTemp) : nil)
             PerCoreStrip(values: s.perCore)
                 .frame(height: 24)
                 .padding(.top, 4)
-            FootRow(left: LoadLabel.from(watts: s.chipWatts), right: watts(s.cpuWatts))
+            FootRow(left: LoadLabel.from(percent: s.cpuPercent) + " · " + L10n.t("负载 ", "Load ")
+                        + String(format: "%.2f", s.loadAvg.first ?? 0),
+                    right: s.hasCPUPower ? watts(s.cpuWatts) : coreText)
         }
+    }
+
+    private var coreText: String {
+        if s.pCores > 0 { return "\(s.pCores)P+\(s.eCores)E" }
+        return L10n.t("\(s.perCore.count) 核", "\(s.perCore.count) cores")
+    }
+
+    private var tip: String {
+        var lines: [String] = []
+        if !s.cpuBrand.isEmpty { lines.append(s.cpuBrand) }
+        if s.pCores > 0 {
+            lines.append(L10n.t("\(s.pCores) 性能核 + \(s.eCores) 能效核", "\(s.pCores) performance + \(s.eCores) efficiency cores"))
+        } else {
+            lines.append(L10n.t("\(s.perCore.count) 个逻辑核", "\(s.perCore.count) logical cores"))
+        }
+        let idle = max(0, 100 - s.cpuUser - s.cpuSystem)
+        lines.append(L10n.t("用户 \(pct1(s.cpuUser)) · 系统 \(pct1(s.cpuSystem)) · 空闲 \(pct1(idle))",
+                            "User \(pct1(s.cpuUser)) · System \(pct1(s.cpuSystem)) · Idle \(pct1(idle))"))
+        let la = s.loadAvg.map { String(format: "%.2f", $0) }.joined(separator: " / ")
+        lines.append(L10n.t("平均负载(1/5/15 分钟) \(la)", "Load average (1/5/15 min) \(la)"))
+        if s.hasCPUPower { lines.append(L10n.t("CPU 功耗 \(watts(s.cpuWatts))", "CPU power \(watts(s.cpuWatts))")) }
+        if s.cpuTemp > 0 { lines.append(L10n.t("CPU 温度 \(temp(s.cpuTemp))", "CPU temperature \(temp(s.cpuTemp))")) }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -159,16 +184,41 @@ private struct GPUTile: View {
     let s: StatusSnapshot
 
     var body: some View {
-        HUDTile(title: "GPU", accent: SysTheme.gpu) {
-            BigNumber(text: pct(s.gpuPercent), extra: s.gpuTemp > 0 ? temp(s.gpuTemp) : nil)
+        HUDTile(title: "GPU", accent: SysTheme.gpu, help: tip) {
+            BigNumber(text: s.hasGPUUtil ? pct(s.gpuPercent) : "—", extra: s.gpuTemp > 0 ? temp(s.gpuTemp) : nil)
             Sparkline(values: s.gpuHistory, color: SysTheme.gpu)
                 .frame(height: 24)
                 .padding(.top, 4)
-            FootRow(left: s.aneWatts + s.dramWatts > 0
-                        ? String(format: "ANE %.1fW · DRAM %.1fW", s.aneWatts, s.dramWatts)
-                        : L10n.t("芯片功耗", "Chip power"),
-                    right: watts(s.gpuWatts))
+            FootRow(left: left, right: right)
         }
+    }
+
+    private var left: String {
+        if s.aneWatts + s.dramWatts > 0 {
+            return String(format: "ANE %.1fW · DRAM %.1fW", s.aneWatts, s.dramWatts)
+        }
+        return s.gpuName.isEmpty ? L10n.t("图形处理器", "Graphics") : s.gpuName
+    }
+
+    private var right: String {
+        if s.hasGPUPower { return watts(s.gpuWatts) }
+        if s.gpuMem > 0 { return L10n.t("显存 ", "VRAM ") + bytes(s.gpuMem) }
+        return ""
+    }
+
+    private var tip: String {
+        var lines: [String] = []
+        if !s.gpuName.isEmpty { lines.append(s.gpuName) }
+        lines.append(s.hasGPUUtil ? L10n.t("占用率 \(pct(s.gpuPercent))", "Utilization \(pct(s.gpuPercent))")
+                                  : L10n.t("本机未提供 GPU 占用率", "GPU utilization unavailable on this Mac"))
+        if s.gpuMem > 0 { lines.append(L10n.t("显存占用 \(bytes(s.gpuMem))", "Memory in use \(bytes(s.gpuMem))")) }
+        if s.hasGPUPower { lines.append(L10n.t("GPU 功耗 \(watts(s.gpuWatts))", "GPU power \(watts(s.gpuWatts))")) }
+        if s.aneWatts + s.dramWatts > 0 {
+            lines.append(String(format: L10n.t("神经网络引擎 %.2fW · 内存 %.2fW", "Neural Engine %.2fW · DRAM %.2fW"),
+                                s.aneWatts, s.dramWatts))
+        }
+        if s.gpuTemp > 0 { lines.append(L10n.t("GPU 温度 \(temp(s.gpuTemp))", "GPU temperature \(temp(s.gpuTemp))")) }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -176,7 +226,7 @@ private struct MemoryTile: View {
     let s: StatusSnapshot
 
     var body: some View {
-        HUDTile(title: L10n.t("内存", "Memory"), accent: SysTheme.mem) {
+        HUDTile(title: L10n.t("内存", "Memory"), accent: SysTheme.mem, help: tip) {
             BigNumber(text: pct(s.memPercent),
                       extra: PressureLabel.from(s.pressure),
                       extraColor: s.pressure == 0 ? SysTheme.secondary : .orange)
@@ -187,13 +237,26 @@ private struct MemoryTile: View {
                     right: L10n.t("交换 ", "Swap ") + bytes(s.swapUsed))
         }
     }
+
+    private var tip: String {
+        [
+            L10n.t("已用 \(bytes(s.memUsed)) / \(bytes(s.memPhys))", "Used \(bytes(s.memUsed)) of \(bytes(s.memPhys))"),
+            L10n.t("App 内存 \(bytes(s.memApp))", "App memory \(bytes(s.memApp))"),
+            L10n.t("联动内存 \(bytes(s.memWired))", "Wired \(bytes(s.memWired))"),
+            L10n.t("被压缩 \(bytes(s.memCompressed))", "Compressed \(bytes(s.memCompressed))"),
+            L10n.t("缓存文件 \(bytes(s.memCached))", "Cached files \(bytes(s.memCached))"),
+            L10n.t("空闲 \(bytes(s.memFree))", "Free \(bytes(s.memFree))"),
+            L10n.t("已使用的交换 \(bytes(s.swapUsed))", "Swap used \(bytes(s.swapUsed))"),
+            PressureLabel.from(s.pressure),
+        ].joined(separator: "\n")
+    }
 }
 
 private struct BatteryTile: View {
     let s: StatusSnapshot
 
     var body: some View {
-        HUDTile(title: L10n.t("电池", "Battery"), accent: SysTheme.battery) {
+        HUDTile(title: L10n.t("电池", "Battery"), accent: SysTheme.battery, help: s.hasBattery ? tip : nil) {
             if s.hasBattery {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(pct(s.batteryLevel))
@@ -206,11 +269,13 @@ private struct BatteryTile: View {
                     BatteryRing(percent: s.batteryHealth)
                 }
                 Text(L10n.t("健康 \(pct(s.batteryHealth)) · \(s.batteryCycles) 循环",
-                            "Health \(pct(s.batteryHealth)) · \(s.batteryCycles) cycles"))
+                            "Health \(pct(s.batteryHealth)) · \(s.batteryCycles) cycles")
+                     + (s.batteryTemp > 0 ? " · " + temp(s.batteryTemp) : ""))
                     .font(.system(size: 11))
                     .foregroundStyle(SysTheme.secondary)
+                    .lineLimit(1)
                     .padding(.top, 8)
-                Text(L10n.t("\(s.topPowerName) 最耗电", "\(s.topPowerName) uses the most"))
+                Text(flowLine)
                     .font(.system(size: 11))
                     .foregroundStyle(SysTheme.secondary)
                     .lineLimit(1)
@@ -231,6 +296,45 @@ private struct BatteryTile: View {
         }
     }
 
+    /// 第三行:充放电功率与剩余时间;拿不到时退回「最耗电」应用
+    private var flowLine: String {
+        let w = abs(s.batteryWatts)
+        if s.isCharging, w >= 0.1 {
+            let t = s.timeToFull > 0 ? L10n.t(" · 约 \(hm(s.timeToFull)) 充满", " · full in \(hm(s.timeToFull))") : ""
+            return L10n.t("充电 ", "Charging ") + watts(w) + t
+        }
+        if !s.isAC, w >= 0.1 {
+            let t = s.timeToEmpty > 0 ? L10n.t(" · 约剩 \(hm(s.timeToEmpty))", " · \(hm(s.timeToEmpty)) left") : ""
+            return L10n.t("放电 ", "Draining ") + watts(w) + t
+        }
+        if s.isAC, s.adapterWatts > 0 {
+            return L10n.t("适配器 \(s.adapterWatts)W · \(s.topPowerName) 最耗电",
+                          "\(s.adapterWatts)W adapter · \(s.topPowerName) top")
+        }
+        return L10n.t("\(s.topPowerName) 最耗电", "\(s.topPowerName) uses the most")
+    }
+
+    private var tip: String {
+        var lines: [String] = []
+        lines.append(L10n.t("电量 \(pct(s.batteryLevel)) · \(state)", "Charge \(pct(s.batteryLevel)) · \(state)"))
+        if s.capacityFull > 0 {
+            lines.append(L10n.t("容量 \(s.capacityNow) / \(s.capacityFull) mAh(设计 \(s.capacityDesign) mAh)",
+                                "Capacity \(s.capacityNow) / \(s.capacityFull) mAh (design \(s.capacityDesign) mAh)"))
+        }
+        lines.append(L10n.t("健康 \(pct(s.batteryHealth)) · 循环 \(s.batteryCycles) 次",
+                            "Health \(pct(s.batteryHealth)) · \(s.batteryCycles) cycles"))
+        if s.batteryTemp > 0 { lines.append(L10n.t("温度 ", "Temperature ") + String(format: "%.1f°", s.batteryTemp)) }
+        if s.batteryVoltage > 0 {
+            lines.append(String(format: L10n.t("电压 %.2fV · 功率 %+.1fW", "Voltage %.2fV · Power %+.1fW"),
+                                s.batteryVoltage, s.batteryWatts))
+        }
+        if s.timeToEmpty > 0 { lines.append(L10n.t("预计剩余 \(hm(s.timeToEmpty))", "Time remaining \(hm(s.timeToEmpty))")) }
+        if s.timeToFull > 0 { lines.append(L10n.t("预计 \(hm(s.timeToFull)) 充满", "Full in \(hm(s.timeToFull))")) }
+        if s.adapterWatts > 0 { lines.append(L10n.t("电源适配器 \(s.adapterWatts)W", "Power adapter \(s.adapterWatts)W")) }
+        lines.append(L10n.t("\(s.topPowerName) 最耗电", "\(s.topPowerName) uses the most"))
+        return lines.joined(separator: "\n")
+    }
+
     private var state: String {
         if s.isCharging { return L10n.t("充电中", "Charging") }
         if s.isAC { return s.batteryLevel >= 99 ? L10n.t("已充满", "Full") : L10n.t("电源适配器", "On AC") }
@@ -242,7 +346,9 @@ private struct DiskTile: View {
     let s: StatusSnapshot
 
     var body: some View {
-        HUDTile(title: L10n.t("磁盘", "Disk"), accent: SysTheme.disk) {
+        HUDTile(title: L10n.t("磁盘", "Disk"), accent: SysTheme.disk,
+                help: L10n.t("读取 \(rate(s.diskRead)) · 写入 \(rate(s.diskWrite))",
+                             "Read \(rate(s.diskRead)) · Write \(rate(s.diskWrite))")) {
             let used = s.diskTotal > s.diskAvail ? s.diskTotal - s.diskAvail : 0
             let usedFrac = frac(used: used, total: s.diskTotal)
             Text(L10n.t("可用 ", "Free ") + bytes(s.diskAvail))
@@ -264,6 +370,7 @@ private struct DiskTile: View {
                 .foregroundStyle(SysTheme.secondary)
                 .lineLimit(1)
                 .padding(.top, 6)
+            FootRow(left: L10n.t("读 ", "R ") + rate(s.diskRead), right: L10n.t("写 ", "W ") + rate(s.diskWrite))
         }
     }
 }
@@ -272,7 +379,13 @@ private struct NetworkTile: View {
     let s: StatusSnapshot
 
     var body: some View {
-        HUDTile(title: L10n.t("网络", "Network"), accent: SysTheme.net) {
+        HUDTile(title: L10n.t("网络", "Network"), accent: SysTheme.net,
+                help: [
+                    L10n.t("接口 ", "Interface ") + (s.netIface.isEmpty ? "—" : s.netIface),
+                    L10n.t("下载 \(rate(s.netDown)) · 上传 \(rate(s.netUp))", "Down \(rate(s.netDown)) · Up \(rate(s.netUp))"),
+                    L10n.t("开机以来 ↓\(bytes(s.netRxTotal)) ↑\(bytes(s.netTxTotal))",
+                           "Since boot ↓\(bytes(s.netRxTotal)) ↑\(bytes(s.netTxTotal))"),
+                ].joined(separator: "\n")) {
             Text(rate(s.netDown + s.netUp))
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .monospacedDigit()
@@ -289,7 +402,7 @@ private struct TempTile: View {
     let s: StatusSnapshot
 
     var body: some View {
-        HUDTile(title: L10n.t("温度", "Temperature"), accent: SysTheme.temp) {
+        HUDTile(title: L10n.t("温度", "Temperature"), accent: SysTheme.temp, help: tip) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(s.cpuTemp > 0 ? temp(s.cpuTemp) : "—")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
@@ -304,10 +417,42 @@ private struct TempTile: View {
                 TempBar(label: "GPU", value: s.gpuTemp)
             }
             .padding(.top, 6)
-            FootRow(left: L10n.t("5 分钟峰值 \(temp(s.cpuTempPeak))/\(temp(s.gpuTempPeak))",
-                                 "5-min peak \(temp(s.cpuTempPeak))/\(temp(s.gpuTempPeak))"),
-                    right: ThermalLabel.from(s.thermalState))
+            FootRow(left: left, right: right)
         }
+    }
+
+    private var peak: String {
+        s.cpuTemp > 0
+            ? L10n.t("5 分钟峰值 \(temp(s.cpuTempPeak))/\(temp(s.gpuTempPeak))",
+                     "5-min peak \(temp(s.cpuTempPeak))/\(temp(s.gpuTempPeak))")
+            : L10n.t("本机未提供温度传感器", "No temperature sensors")
+    }
+
+    /// 有风扇显示转速(MacBook Air 等无风扇机型显示峰值)
+    private var left: String {
+        guard !s.fans.isEmpty else { return peak }
+        let rpm = s.fans.map { String(format: "%.0f", $0.rpm) }.joined(separator: "/")
+        return L10n.t("风扇 ", "Fan ") + rpm + " rpm"
+    }
+
+    private var right: String {
+        if s.systemWatts > 0 { return L10n.t("整机 ", "System ") + watts(s.systemWatts) }
+        return ThermalLabel.from(s.thermalState)
+    }
+
+    private var tip: String {
+        var lines: [String] = [peak, L10n.t("散热状态 ", "Thermal state ") + ThermalLabel.from(s.thermalState)]
+        if s.fans.isEmpty {
+            lines.append(L10n.t("无风扇或风扇不可读", "No fans reported"))
+        } else {
+            for (i, f) in s.fans.enumerated() {
+                let range = f.max > 0 ? String(format: "(%.0f–%.0f)", f.min, f.max) : ""
+                lines.append(L10n.t("风扇 \(i + 1) ", "Fan \(i + 1) ") + String(format: "%.0f rpm ", f.rpm) + range)
+            }
+        }
+        if s.systemWatts > 0 { lines.append(L10n.t("整机功耗 ", "System power ") + watts(s.systemWatts)) }
+        if s.dcInWatts > 0 { lines.append(L10n.t("电源输入 ", "DC in ") + watts(s.dcInWatts)) }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -573,6 +718,8 @@ struct CardBackground: View {
 private struct HUDTile<Content: View>: View {
     let title: String
     let accent: Color
+    /// 悬停提示:放不进卡片的明细
+    var help: String? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -591,6 +738,8 @@ private struct HUDTile<Content: View>: View {
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(CardBackground())
+        .contentShape(Rectangle())
+        .help(help ?? "")
     }
 }
 
@@ -722,6 +871,8 @@ private struct BatteryRing: View {
 // MARK: - Format
 
 private func pct(_ v: Double) -> String { String(format: "%.0f%%", v) }
+private func pct1(_ v: Double) -> String { String(format: "%.1f%%", v) }
+private func hm(_ minutes: Int) -> String { String(format: "%d:%02d", minutes / 60, minutes % 60) }
 private func temp(_ v: Double) -> String { String(format: "%.0f°", v) }
 private func watts(_ v: Double) -> String { String(format: "%.1fW", v) }
 private func bytes(_ v: UInt64) -> String { ByteFormat.string(Int64(clamping: v)) }

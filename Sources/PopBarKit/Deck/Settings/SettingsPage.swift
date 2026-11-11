@@ -4,6 +4,27 @@ import PopBarCore
 import PopBarPlatform
 import PopBarDesign
 
+/// 设置的分组（在 Deck 侧栏里按组列出；关于放在侧栏底部）
+enum SettingsGroup: CaseIterable {
+    case basics, selection, features
+
+    var title: String {
+        switch self {
+        case .basics: return L10n.t("常规", "General")
+        case .selection: return L10n.t("划词", "Selection")
+        case .features: return L10n.t("功能", "Features")
+        }
+    }
+
+    var sections: [SettingsSection] {
+        switch self {
+        case .basics: return [.general, .modules, .hotkeys, .privacy]
+        case .selection: return [.selection, .bar, .apps, .extensions]
+        case .features: return [.ai, .media, .today]
+        }
+    }
+}
+
 /// 设置的二级导航（合并原 SettingsWindow + PreferencesWindow）
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general, selection, bar, ai, hotkeys, privacy, apps, extensions, modules, today, media, about
@@ -12,7 +33,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: return L10n.t("通用", "General")
-        case .selection: return L10n.t("划词", "Selection")
+        case .selection: return L10n.t("取词", "Selection")
         case .bar: return L10n.t("浮动条", "Bar")
         case .ai: return L10n.t("翻译与 AI", "Translate & AI")
         case .hotkeys: return L10n.t("快捷键", "Shortcuts")
@@ -23,6 +44,28 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .today: return L10n.t("待办", "To-Do")
         case .media: return L10n.t("截屏与录屏", "Capture")
         case .about: return L10n.t("关于", "About")
+        }
+    }
+
+    /// 页头副标题：一句话说明这一页管什么
+    var summary: String {
+        switch self {
+        case .general: return L10n.t("语言、外观、启动方式与配置文件", "Language, appearance, launch and the config file")
+        case .selection: return L10n.t("选中文字后，浮动条何时、如何弹出", "When and how the bar appears after you select text")
+        case .bar: return L10n.t("浮动条上的按钮、搜索引擎与朗读", "Buttons on the bar, search engine and speech")
+        case .ai: return L10n.t("翻译语言、请求参数与翻译服务", "Languages, request options and translation services")
+        case .hotkeys: return L10n.t("点击组合后直接按下新快捷键；Esc 取消，⌫ 清除。录制时全局快捷键会暂停",
+                                     "Click a shortcut and press new keys; Esc cancels, ⌫ clears. Global shortcuts pause while recording")
+        case .privacy: return L10n.t("敏感内容守卫、剪贴板记录与使用统计", "Sensitive content guard, clipboard history and usage stats")
+        case .apps: return L10n.t("给特定 App 关掉划词、只保留快捷键，或只显示指定按钮",
+                                  "Turn selection off for specific apps, keep only the shortcut, or show chosen buttons")
+        case .extensions: return L10n.t("出现在浮动条「更多」面板里的自定义动作：打开网址、运行脚本或快捷指令",
+                                        "Custom actions in the bar's More panel: open a URL, run a script or a Shortcut")
+        case .modules: return L10n.t("关闭的模块不出现在侧栏、浮动条和菜单里，快捷键不注册，也不在后台运行",
+                                     "Disabled modules leave the sidebar, bar and menu; their shortcuts and background work stop")
+        case .today: return L10n.t("待办的存放位置、系统同步与番茄钟", "Where to-dos live, system sync and Pomodoro")
+        case .media: return L10n.t("截图保存、录屏画面与声音、导出参数", "Screenshot saving, recording video and audio, export options")
+        case .about: return L10n.t("版本信息与项目主页", "Version and project homepage")
         }
     }
 
@@ -117,36 +160,19 @@ final class ConfigEditor: ObservableObject {
 struct SettingsPage: View {
     @ObservedObject var state: DeckState
     @StateObject private var editor = ConfigEditor()
-    @AppStorage("deck.settingsNavWidth") private var settingsNavWidthStorage = 190.0
 
-    private var settingsNavWidth: Binding<CGFloat> {
-        Binding(get: { CGFloat(settingsNavWidthStorage) },
-                set: { settingsNavWidthStorage = Double($0.rounded()) })
-    }
+    /// 设置内容的最大宽度：太宽时标题和右侧控件离得太远，不好对应
+    static let contentWidth: CGFloat = 680
 
     var body: some View {
-        DSPageShell(L10n.t("设置", "Settings"), subtitle: state.settings.title, scrolls: false) {
-            HStack(alignment: .top, spacing: 0) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(SettingsSection.allCases) { s in
-                        SidebarRow(icon: s.icon, title: s.title, badge: nil, selected: state.settings == s) {
-                            state.settings = s
-                        }
-                    }
-                }
-                .frame(width: settingsNavWidth.wrappedValue)
-                DSColumnResize(width: settingsNavWidth, range: 150...260)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        section
-                    }
-                    .padding(.leading, 20)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .id(state.settings)
+        // 两栏布局：设置的分组导航在 Deck 侧栏里（DeckSidebar 切到设置模式），这里只放内容
+        DSPageShell(state.settings.title, subtitle: state.settings.summary) {
+            VStack(alignment: .leading, spacing: 24) {
+                section
             }
+            .frame(maxWidth: Self.contentWidth, alignment: .leading)
         }
+        .id(state.settings)   // 换页时滚动位置回到顶部
         .environmentObject(editor)
         .onDisappear { editor.saveNow() }
     }
@@ -204,32 +230,55 @@ struct DSNumberField: View {
     }
 }
 
-/// 下拉选择（选项多于 3 个时代替分段控件）
+/// 下拉选择（选项多于 3 个时代替分段控件）。
+/// 不用 SwiftUI Menu：borderlessButton 样式会丢掉 label 的背景并把箭头挪到左边；这里自绘按钮，点击弹出 NSMenu。
 struct DSMenuPicker<T: Hashable>: View {
     @Binding var selection: T
     let options: [(T, String)]
     var width: CGFloat = 180
+    @State private var hovering = false
 
     var body: some View {
-        Menu {
-            ForEach(Array(options.enumerated()), id: \.offset) { _, o in
-                Button(o.1) { selection = o.0 }
-            }
-        } label: {
-            HStack {
+        Button(action: popUp) {
+            HStack(spacing: 6) {
                 Text(options.first { $0.0 == selection }?.1 ?? "—").font(DS.body).foregroundStyle(DS.text).lineLimit(1)
-                Spacer()
-                Icon("chevron-down", size: 13)
+                Spacer(minLength: 0)
+                Icon("chevron-down", size: 13, color: DS.muted)
             }
             .padding(.horizontal, 10)
             .frame(width: width, height: 28)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.button).fill(DS.surface))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.button).fill(hovering ? DS.surface2 : DS.surface))
             .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button).strokeBorder(DS.borderStrong, lineWidth: 1))
+            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .fixedSize()
     }
+
+    private func popUp() {
+        let menu = NSMenu()
+        var current: NSMenuItem?
+        for (value, title) in options {
+            let item = ClosureMenuItem(title: title) { selection = value }
+            if value == selection { item.state = .on; current = item }
+            menu.addItem(item)
+        }
+        // 屏幕坐标弹出：当前项对齐到鼠标位置，和系统弹出按钮的手感一致
+        menu.popUp(positioning: current, at: NSEvent.mouseLocation, in: nil)
+    }
+}
+
+/// 带闭包的菜单项
+final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+    init(title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+    }
+    required init(coder: NSCoder) { fatalError() }
+    @objc private func fire() { handler() }
 }
 
 /// 滑块（0~1 或任意范围），右侧显示数值

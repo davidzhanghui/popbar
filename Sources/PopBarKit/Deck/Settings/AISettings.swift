@@ -33,7 +33,7 @@ struct AISettings: View {
     private var index: Int? { e.c.providers.firstIndex { $0.id == selected } }
 
     var body: some View {
-        DSGroup(L10n.t("翻译", "Translation")) {
+        DSGroup(L10n.t("语言", "Languages")) {
             DSSettingRow(L10n.t("源语言", "From")) { DSMenuPicker(selection: e.bind(\.sourceLanguage), options: langs) }
             DSDivider()
             DSSettingRow(L10n.t("目标语言", "To"), subtitle: L10n.t("自动：原文是首选语言时译成第二语言，其余译成首选语言", "Auto: your primary language → second language, everything else → primary")) {
@@ -49,7 +49,8 @@ struct AISettings: View {
                          subtitle: L10n.t("当前：\(TranslateLanguage.title(prefs.secondary))", "Now: \(TranslateLanguage.title(prefs.secondary))")) {
                 DSMenuPicker(selection: e.bind(\.secondaryLanguage), options: secondaryLangs)
             }
-            DSDivider()
+        }
+        DSGroup(L10n.t("请求", "Requests")) {
             DSSettingRow(L10n.t("超时", "Timeout")) {
                 DSNumberField(value: Binding(get: { Int(e.c.timeout) }, set: { v in e.update { $0.timeout = Double(v) } }),
                               range: 5...300, suffix: L10n.t("秒", "s"))
@@ -62,7 +63,8 @@ struct AISettings: View {
             DSSettingRow(L10n.t("温度", "Temperature"), subtitle: L10n.t("越低越稳定", "Lower is more literal")) {
                 DSSlider(value: e.bind(\.temperature), range: 0...2)
             }
-            DSDivider()
+        }
+        DSGroup(L10n.t("显示", "Display")) {
             DSSettingRow(L10n.t("截图 OCR 之后", "After Screenshot OCR")) {
                 DSSegmented(selection: e.bind(\.ocr.after), options: [
                     (.panel, L10n.t("翻译面板", "Translate")), (.bar, L10n.t("浮动条", "Bar")),
@@ -76,9 +78,8 @@ struct AISettings: View {
             }
         }
 
-        HStack {
-            DSEyebrow(L10n.t("翻译服务", "Services"))
-            Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+        DSSectionHeader(L10n.t("翻译服务", "Services")) {
             Menu {
                 ForEach(Array(Self.presets.enumerated()), id: \.offset) { _, p in
                     Button(p.name) { add(p) }
@@ -86,9 +87,13 @@ struct AISettings: View {
                 Divider()
                 Button(L10n.t("空白服务", "Blank")) { add(.blank(index: e.c.providers.count + 1)) }
             } label: {
-                Label(L10n.t("添加服务", "Add Service"), systemImage: "plus")
+                HStack(spacing: 4) {
+                    Icon("plus", size: 13, color: DS.accent)
+                    Text(L10n.t("添加服务", "Add Service")).font(DS.font(12, .medium)).foregroundStyle(DS.accent)
+                }
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
         }
         if e.c.providers.isEmpty {
@@ -121,6 +126,7 @@ struct AISettings: View {
                 }
             }
             .dsCardBackground()
+        }
         }
     }
 
@@ -248,9 +254,6 @@ struct HotkeySettings: View {
     @State private var recording: String?
 
     var body: some View {
-        Text(L10n.t("点击右侧的组合后直接按下新的快捷键；Esc 取消，⌫ 清除。录制时全局快捷键会暂停。",
-                    "Click a shortcut and press the new keys; Esc cancels, ⌫ clears. Global shortcuts pause while recording."))
-            .font(DS.caption).foregroundStyle(DS.muted)
         let all = manager.allBindings
         let titles = Dictionary(all.map { ($0.binding.id, $0.binding.title) }, uniquingKeysWith: { a, _ in a })
         let preview = HotkeyAnalysis.issues(all.filter(\.moduleEnabled).map { (id: $0.binding.id, spec: e.c.hotkeys[keyPath: $0.binding.keyPath]) })
@@ -341,9 +344,6 @@ struct AppRuleSettings: View {
     @State private var editing: String?
 
     var body: some View {
-        Text(L10n.t("给特定 App 关掉划词、只保留快捷键，或只显示指定按钮。",
-                    "Turn selection off for specific apps, keep only the shortcut, or show chosen buttons."))
-            .font(DS.caption).foregroundStyle(DS.muted)
         VStack(spacing: 0) {
             ForEach(Array(e.c.appRules.enumerated()), id: \.element.bundleID) { i, rule in
                 if i > 0 { DSDivider() }
@@ -421,9 +421,6 @@ struct ExtensionSettings: View {
     @State private var editing: String?
 
     var body: some View {
-        Text(L10n.t("扩展是出现在浮动条「更多」面板里的自定义动作：打开网址、运行脚本或快捷指令。",
-                    "Extensions are custom actions in the bar's More panel: open a URL, run a script or a Shortcut."))
-            .font(DS.caption).foregroundStyle(DS.muted)
         VStack(spacing: 0) {
             ForEach(Array(e.c.extensions.enumerated()), id: \.element.id) { i, ext in
                 if i > 0 { DSDivider() }

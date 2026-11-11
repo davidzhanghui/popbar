@@ -3,6 +3,8 @@
 #
 #   ./build.sh            # release 构建 + dmg
 #   ./build.sh --debug    # debug 构建（增量快，不打 dmg），供 restart.sh 开发用
+#   ARCH=x86_64 ./build.sh     # 为 Intel Mac 交叉编译（默认取本机架构）
+#   ARCH=universal ./build.sh  # arm64 + x86_64 通用包
 set -e
 cd "$(dirname "$0")"
 
@@ -17,11 +19,16 @@ for arg in "$@"; do
 done
 
 APP=build.noindex/PopBar.app
-arch=$(uname -m)
+arch=${ARCH:-$(uname -m)}
+case "$arch" in
+    universal) ARCH_FLAGS=(--arch arm64 --arch x86_64) ;;
+    arm64|x86_64) ARCH_FLAGS=(--arch "$arch") ;;
+    *) echo "不支持的 ARCH:$arch(可用:arm64 / x86_64 / universal)" >&2; exit 2 ;;
+esac
 
 mkdir -p build build.noindex
-swift build -c "$CONFIG" --arch "$arch" --product PopBar
-BIN=$(swift build -c "$CONFIG" --arch "$arch" --show-bin-path)/PopBar
+swift build -c "$CONFIG" "${ARCH_FLAGS[@]}" --product PopBar
+BIN=$(swift build -c "$CONFIG" "${ARCH_FLAGS[@]}" --show-bin-path)/PopBar
 
 # 先删后增:避免改名/删除的资源在包里留下幽灵文件
 rm -rf "$APP"
