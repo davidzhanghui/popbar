@@ -21,7 +21,7 @@ struct TodayPage: View {
             DSButton(L10n.t("钉在桌面", "Pin to Desktop"), icon: "pin") { TodayPinWindow.shared.pin() }
         } content: {
             TodoView(store: store, pomo: pomo)
-                .frame(maxWidth: 560, maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: 620, maxHeight: .infinity, alignment: .top)
         }
     }
 }
@@ -143,41 +143,59 @@ struct ClipboardPage: View {
         return items.filter { ClipboardItemText.title($0).localizedCaseInsensitiveContains(query) }
     }
 
+    private var recording: Binding<Bool> {
+        Binding(get: { config.enabled }, set: { v in
+            var c = ConfigStore.shared.config
+            c.clipboardHistory.enabled = v
+            try? ConfigStore.shared.save(c)
+        })
+    }
+
     var body: some View {
         DSPageShell(L10n.t("剪贴板", "Clipboard"),
                     subtitle: L10n.t("最近 \(config.limit) 条；⌥⌘V 打开速选面板", "Last \(config.limit) items; ⌥⌘V opens the picker")) {
             if config.enabled && !items.isEmpty {
                 DSButton(L10n.t("清空", "Clear"), icon: "trash-2", kind: .ghost) { ClipboardHistory.shared.clear() }
             }
-        } content: {
-            DSGroup {
-                DSSettingRow(L10n.t("记录剪贴板", "Record Clipboard"),
-                             subtitle: L10n.t("密码管理器复制的内容和临时写入会自动跳过", "Password-manager copies and transient writes are skipped")) {
-                    DSToggle(isOn: Binding(get: { config.enabled }, set: { v in
-                        var c = ConfigStore.shared.config
-                        c.clipboardHistory.enabled = v
-                        try? ConfigStore.shared.save(c)
-                    }))
-                }
+            // 记录开关收进页头：列表才是这一页的主角
+            HStack(spacing: 8) {
+                Text(config.enabled ? L10n.t("记录中", "Recording") : L10n.t("已暂停", "Paused"))
+                    .font(DS.font(12.5, .medium)).foregroundStyle(config.enabled ? DS.text2 : DS.muted)
+                DSToggle(isOn: recording)
             }
+            .padding(.leading, 12).padding(.trailing, 8).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).fill(DS.surface))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).strokeBorder(DS.borderStrong, lineWidth: 1))
+            .help(L10n.t("密码管理器复制的内容和临时写入会自动跳过", "Password-manager copies and transient writes are skipped"))
+        } content: {
             if !config.enabled {
                 DSEmptyState(icon: "clipboard", title: L10n.t("剪贴板记录已暂停", "Clipboard history is paused"),
-                             message: L10n.t("打开上面的「记录剪贴板」后，复制过的文字、图片和文件会出现在这里。",
-                                             "Turn on Record Clipboard above; copied text, images and files will show up here."))
+                             message: L10n.t("开启后，复制过的文字、图片和文件会出现在这里。密码管理器复制的内容和临时写入会自动跳过。",
+                                             "When on, copied text, images and files show up here. Password-manager copies and transient writes are skipped."),
+                             actionTitle: L10n.t("开始记录", "Start Recording")) { recording.wrappedValue = true }
                     .dsCardBackground()
             } else if items.isEmpty {
                 DSEmptyState(icon: "clipboard", title: L10n.t("还没有记录", "Nothing yet"),
                              message: L10n.t("复制一段文字试试。", "Copy something to get started."))
                     .dsCardBackground()
             } else {
-                DSField(L10n.t("搜索", "Search"), text: $query)
-                VStack(spacing: 0) {
-                    ForEach(Array(filtered.enumerated()), id: \.element.id) { i, item in
-                        if i > 0 { DSDivider(inset: 14) }
-                        ClipboardRow(item: item, index: i)
+                DSSearchField(L10n.t("搜索剪贴板", "Search clipboard"), text: $query)
+                if filtered.isEmpty {
+                    DSEmptyState(icon: "search", title: L10n.t("没有匹配的记录", "No matches"),
+                                 message: L10n.t("换个关键词试试。", "Try a different keyword."))
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { i, item in
+                            if i > 0 { DSDivider(inset: 14) }
+                            ClipboardRow(item: item, index: i)
+                        }
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .dsCardBackground()
+                    Text(L10n.t("点击一行即可复制；密码管理器复制的内容和临时写入会自动跳过。",
+                                "Click a row to copy. Password-manager copies and transient writes are skipped."))
+                        .font(DS.font(11.5)).foregroundStyle(DS.faint).padding(.horizontal, 4)
                 }
-                .dsCardBackground()
             }
         }
         .onReceive(changed) { _ in items = ClipboardHistory.shared.items }
@@ -200,10 +218,40 @@ enum ClipboardItemText {
 
     static func icon(_ item: ClipboardHistory.Item) -> String {
         switch item.payload {
-        case .text: return "type"
+        case .text(let s): return isURL(s) ? "link" : "type"
         case .image: return "image"
         case .files: return "file"
         }
+    }
+
+    /// 图标块的颜色：链接、文字、图片、文件各一种
+    static func tint(_ item: ClipboardHistory.Item) -> Color {
+        guard IconPalette.enabled else { return DS.muted }
+        switch item.payload {
+        case .text(let s): return Color(nsColor: isURL(s) ? IconPalette.sky : IconPalette.blue)
+        case .image: return Color(nsColor: IconPalette.pink)
+        case .files: return Color(nsColor: IconPalette.amber)
+        }
+    }
+
+    static func isURL(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !t.contains(" ") && (t.hasPrefix("http://") || t.hasPrefix("https://"))
+    }
+
+    /// 文本正好是一个十六进制色值（#RGB / #RRGGBB / #RRGGBBAA）时，行首直接画出这个颜色
+    static func swatch(_ item: ClipboardHistory.Item) -> Color? {
+        guard case .text(let s) = item.payload else { return nil }
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.hasPrefix("#") else { return nil }
+        var hex = String(t.dropFirst())
+        guard [3, 6, 8].contains(hex.count), hex.allSatisfy(\.isHexDigit) else { return nil }
+        if hex.count == 3 { hex = hex.map { "\($0)\($0)" }.joined() }
+        guard let v = UInt64(hex, radix: 16) else { return nil }
+        let rgb = hex.count == 8 ? v >> 8 : v
+        let alpha = hex.count == 8 ? Double(v & 0xFF) / 255 : 1
+        return Color(.sRGB, red: Double((rgb >> 16) & 0xFF) / 255, green: Double((rgb >> 8) & 0xFF) / 255,
+                     blue: Double(rgb & 0xFF) / 255, opacity: alpha)
     }
 
     static func time(_ d: Date) -> String {
@@ -218,33 +266,61 @@ struct ClipboardRow: View {
     let item: ClipboardHistory.Item
     let index: Int
     @State private var hovering = false
+    @State private var copied = false
 
     var body: some View {
         HStack(spacing: 12) {
-            if let thumb = item.thumbnail {
-                Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fill)
-                    .frame(width: 28, height: 28).clipShape(RoundedRectangle(cornerRadius: 5))
-            } else {
-                Icon(ClipboardItemText.icon(item), size: 15).frame(width: 28, height: 28)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(DS.surface2))
-            }
+            leading
             VStack(alignment: .leading, spacing: 2) {
                 Text(ClipboardItemText.title(item)).font(DS.body).foregroundStyle(DS.text).lineLimit(1)
                 Text(ClipboardItemText.time(item.time)).font(DS.small).foregroundStyle(DS.faint)
             }
-            Spacer()
-            if item.pinned { DSChip(L10n.t("置顶", "Pinned"), tone: .accent) }
-            if hovering {
-                DSIconButton("copy", help: L10n.t("复制", "Copy"), size: 26) { ClipboardHistory.shared.writeBack(item) }
-                DSIconButton(item.pinned ? "pin-off" : "pin", help: L10n.t("置顶", "Pin"), size: 26) { ClipboardHistory.shared.togglePin(item) }
-                DSIconButton("trash-2", help: L10n.t("删除", "Delete"), size: 26) { ClipboardHistory.shared.remove(item) }
+            Spacer(minLength: 8)
+            if copied {
+                DSChip(L10n.t("已复制", "Copied"), tone: .success, icon: "check").transition(.opacity.combined(with: .scale(scale: 0.9)))
+            } else if hovering {
+                HStack(spacing: 2) {
+                    DSIconButton("copy", help: L10n.t("复制", "Copy"), size: 26) { copy() }
+                    DSIconButton(item.pinned ? "pin-off" : "pin", tint: item.pinned ? DS.accent : nil,
+                                 help: item.pinned ? L10n.t("取消置顶", "Unpin") : L10n.t("置顶", "Pin"), size: 26) {
+                        ClipboardHistory.shared.togglePin(item)
+                    }
+                    DSIconButton("trash-2", help: L10n.t("删除", "Delete"), size: 26) { ClipboardHistory.shared.remove(item) }
+                }
+                .transition(.opacity)
+            } else if item.pinned {
+                Icon("pin", size: 13, color: DS.accent).frame(width: 26, height: 26)
             }
         }
         .padding(.horizontal, 14)
-        .frame(height: 50)
+        .frame(height: 54)
         .contentShape(Rectangle())
         .background(hovering ? DS.hover : .clear)
+        .animation(.easeOut(duration: 0.1), value: hovering)
+        .animation(.easeOut(duration: 0.15), value: copied)
         .onHover { hovering = $0 }
+        .onTapGesture { copy() }
+    }
+
+    @ViewBuilder private var leading: some View {
+        if let thumb = item.thumbnail {
+            Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fill)
+                .frame(width: 30, height: 30).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(DS.border, lineWidth: 1))
+        } else if let swatch = ClipboardItemText.swatch(item) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(swatch)
+                .frame(width: 30, height: 30)
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.black.opacity(0.1), lineWidth: 1))
+        } else {
+            DSIconTile(ClipboardItemText.icon(item), color: ClipboardItemText.tint(item), size: 30)
+        }
+    }
+
+    /// 写回剪贴板，并在行尾亮 1.2 秒「已复制」
+    private func copy() {
+        ClipboardHistory.shared.writeBack(item)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
     }
 }
 
@@ -253,7 +329,7 @@ struct ClipboardRow: View {
 struct SnapPage: View {
     @State private var entries: [SnapHistory.Entry] = []
     @State private var historyOn = ConfigStore.shared.config.snap.history.enabled
-    private let cols = [GridItem(.adaptive(minimum: 170), spacing: 12)]
+    private let cols = [GridItem(.adaptive(minimum: 190), spacing: 14)]
 
     var body: some View {
         DSPageShell(L10n.t("截屏", "Screenshot"),
@@ -282,7 +358,7 @@ struct SnapPage: View {
                              message: L10n.t("按 \(KeyCombo.display(ConfigStore.shared.config.hotkeys.snap)) 截一张试试。", "Press the shortcut to capture."))
                     .dsCardBackground()
             } else {
-                LazyVGrid(columns: cols, spacing: 12) {
+                LazyVGrid(columns: cols, spacing: 14) {
                     ForEach(entries, id: \.url) { e in SnapTile(entry: e) { reload() } }
                 }
             }
@@ -315,16 +391,19 @@ struct SnapTile: View {
     let entry: SnapHistory.Entry
     let onChange: () -> Void
     @State private var hovering = false
+    @State private var thumb: NSImage?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8).fill(DS.surface2)
-                if let img = NSImage(contentsOf: entry.url) {
-                    Image(nsImage: img).resizable().aspectRatio(contentMode: .fit).padding(6)
+                DS.surface2
+                if let thumb {
+                    Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fit).padding(8)
+                        .shadow(color: DS.shadow.opacity(0.5), radius: 3, y: 1)
+                        .transition(.opacity)
                 }
                 if hovering {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 2) {
                         DSIconButton("copy", tint: DS.text, help: L10n.t("复制", "Copy"), size: 26) {
                             if let img = SnapPage.load(entry) { SnapOutput.copy(img, scale: entry.scale) }
                         }
@@ -339,19 +418,56 @@ struct SnapTile: View {
                             onChange()
                         }
                     }
-                    .padding(4)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(DS.surface))
+                    .padding(3)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(DS.surface)
+                        .shadow(color: DS.shadow, radius: 6, y: 2))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DS.border, lineWidth: 1))
                     .frame(maxHeight: .infinity, alignment: .bottom)
-                    .padding(6)
+                    .padding(8)
+                    .transition(.opacity.combined(with: .offset(y: 4)))
                 }
             }
-            .frame(height: 110)
-            Text(entry.date.formatted(date: .abbreviated, time: .shortened)).font(DS.small).foregroundStyle(DS.muted)
-            Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))").font(DS.small).foregroundStyle(DS.faint)
+            .frame(height: 124)
+            Rectangle().fill(DS.border).frame(height: 1)
+            HStack(spacing: 6) {
+                Text(SnapTile.dateText(entry.date))
+                    .font(DS.small).foregroundStyle(DS.text2).lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))")
+                    .font(DS.small).monospacedDigit().foregroundStyle(DS.faint).lineLimit(1).layoutPriority(1)
+            }
+            .padding(.horizontal, 10).frame(height: 32)
         }
-        .padding(10)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .dsCardBackground()
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .onHover { hovering = $0 }
+        // 双击用默认应用打开原图
+        .onTapGesture(count: 2) { NSWorkspace.shared.open(entry.url) }
+        .help(L10n.t("双击打开", "Double-click to open"))
+        .task(id: entry.url) {
+            let url = entry.url
+            let cg = await Task.detached(priority: .userInitiated) { SnapTile.downsample(url, maxPixel: 520) }.value
+            if let cg { withAnimation(.easeOut(duration: 0.15)) { thumb = NSImage(cgImage: cg, size: .zero) } }
+        }
+    }
+
+    /// 今年的截图不带年份，窄卡片里也放得下
+    static func dateText(_ d: Date) -> String {
+        let sameYear = Calendar.current.isDate(d, equalTo: Date(), toGranularity: .year)
+        let style: Date.FormatStyle = sameYear ? .dateTime.month().day().hour().minute()
+                                               : .dateTime.year().month().day().hour().minute()
+        return d.formatted(style.locale(Locale(identifier: L10n.isEnglish ? "en_US" : "zh_CN")))
+    }
+
+    /// 只解码缩略图大小（原图常是整屏 Retina 截图，每次重绘都全尺寸解码会卡）
+    nonisolated static func downsample(_ url: URL, maxPixel: Int) -> CGImage? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                     kCGImageSourceCreateThumbnailWithTransform: true,
+                                     kCGImageSourceThumbnailMaxPixelSize: maxPixel]
+        return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
     }
 }
 
@@ -384,6 +500,7 @@ struct RecordPage: View {
                         RecordRow(entry: e)
                     }
                 }
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 .dsCardBackground()
                 HStack {
                     Spacer()
@@ -423,7 +540,8 @@ struct RecordRow: View {
                 if let thumb { Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fill) }
                 else { Icon(entry.isGIF ? "image" : "film", size: 15) }
             }
-            .frame(width: 56, height: 34).clipShape(RoundedRectangle(cornerRadius: 6))
+            .frame(width: 64, height: 40).clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(DS.border, lineWidth: 1))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(entry.url.lastPathComponent).font(DS.body).foregroundStyle(DS.text).lineLimit(1)
@@ -456,10 +574,12 @@ struct RecordRow: View {
             }
         }
         .padding(.horizontal, 14)
-        .frame(height: 56)
+        .frame(height: 62)
         .contentShape(Rectangle())
         .background(hovering ? DS.hover : .clear)
+        .animation(.easeOut(duration: 0.1), value: hovering)
         .onHover { hovering = $0 }
+        .onTapGesture(count: 2) { NSWorkspace.shared.open(entry.url) }
         .task(id: entry.path) {
             let req = QLThumbnailGenerator.Request(fileAt: entry.url, size: CGSize(width: 112, height: 68),
                                                    scale: 2, representationTypes: .thumbnail)

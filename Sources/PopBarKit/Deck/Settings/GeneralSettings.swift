@@ -26,7 +26,7 @@ struct GeneralSettings: View {
             }
             DSDivider()
             DSSettingRow(L10n.t("彩色图标", "Colorful Icons"),
-                         subtitle: L10n.t("浮动条、截屏与录屏工具条的按钮按功能着色", "Tint buttons on the selection, screenshot and recording bars by function")) {
+                         subtitle: L10n.t("Deck 侧栏，以及浮动条、截屏与录屏工具条的按钮按功能着色", "Tint the Deck sidebar and the selection, screenshot and recording bars by function")) {
                 DSToggle(isOn: e.bind(\.colorIcons))
             }
         }
@@ -313,9 +313,8 @@ struct ModuleSettings: View {
             ForEach(ModuleRegistry.shared.all, id: \.id) { m in
                 let on = e.c.isModuleEnabled(m.id)
                 HStack(alignment: .top, spacing: 12) {
-                    Icon(m.icon, size: 16, color: on ? DS.accent : DS.muted)
-                        .frame(width: 32, height: 32)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(on ? DS.accentSoft : DS.surface2))
+                    DSIconTile(m.icon, color: on ? (DeckTint.module(m.id) ?? DS.accent) : DS.muted, size: 34,
+                               filled: on && IconPalette.enabled)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(m.title).font(DS.font(13, .medium)).foregroundStyle(DS.text)
@@ -329,6 +328,7 @@ struct ModuleSettings: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
                 .dsCardBackground()
+                .animation(.easeOut(duration: 0.15), value: on)
             }
         }
     }

@@ -108,7 +108,8 @@ struct WelcomePage: View {
                 tip("keyboard", KeyCombo.display(ConfigStore.shared.config.hotkeys.showBar), L10n.t("用键盘选中后按它唤起", "Summon after selecting with the keyboard"))
                 tip("layout-grid", KeyCombo.display(ConfigStore.shared.config.hotkeys.deck), L10n.t("打开 Deck：工具与设置都在这里", "Open the Deck: tools and settings"))
             }
-            DSEyebrow(L10n.t("权限", "Permissions"))
+            .fixedSize(horizontal: false, vertical: true)   // 三张卡片等高
+            permissionsHeader.id(refresh)
             VStack(spacing: 0) {
                 ForEach(Array(PermissionCheck.needed.enumerated()), id: \.element) { i, k in
                     if i > 0 { DSDivider() }
@@ -128,35 +129,49 @@ struct WelcomePage: View {
         }
     }
 
-    private func tip(_ icon: String, _ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Icon(icon, size: 18, color: DS.accent)
-            Text(title).font(DS.font(14, .semibold)).foregroundStyle(DS.text)
-            Text(text).font(DS.caption).foregroundStyle(DS.muted).fixedSize(horizontal: false, vertical: true)
+    /// 「权限」小标题 + 授权进度（全部就绪时变绿）
+    private var permissionsHeader: some View {
+        let known = PermissionCheck.needed.compactMap { PermissionCheck.granted($0) }
+        let ok = known.filter { $0 }.count
+        return DSSectionHeader(L10n.t("权限", "Permissions")) {
+            DSChip(ok == known.count ? L10n.t("全部就绪", "All set") : L10n.t("已授权 \(ok)/\(known.count)", "\(ok)/\(known.count) granted"),
+                   tone: ok == known.count ? .success : .warning,
+                   icon: ok == known.count ? "check" : "triangle-alert")
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+        .padding(.top, 6)
+    }
+
+    private func tip(_ icon: String, _ title: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            DSIconTile(icon, color: DS.accent, size: 34)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(DS.font(14, .semibold)).foregroundStyle(DS.text)
+                Text(text).font(DS.caption).foregroundStyle(DS.muted).lineSpacing(1.5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 78, maxHeight: .infinity, alignment: .topLeading)
         .dsCardBackground()
     }
 
     private func permissionRow(_ k: PermissionKind) -> some View {
         let granted = PermissionCheck.granted(k)
         return HStack(spacing: 12) {
-            Icon(PermissionCheck.icon(k), size: 16, color: granted == true ? DS.success : DS.muted)
-                .frame(width: 32, height: 32)
-                .background(RoundedRectangle(cornerRadius: 8).fill(granted == true ? DS.successSoft : DS.surface2))
+            DSIconTile(PermissionCheck.icon(k), color: granted == true ? DS.success : DS.muted, size: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(PermissionCheck.title(k)).font(DS.font(13, .medium)).foregroundStyle(DS.text)
                 Text(PermissionCheck.reason(k)).font(DS.caption).foregroundStyle(DS.muted)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
+            Spacer(minLength: 12)
             switch granted {
             case .some(true): DSChip(L10n.t("已授权", "Granted"), tone: .success, icon: "check")
             case .some(false): DSButton(L10n.t("去授权", "Allow"), kind: .primary) { Task { await PermissionCheck.request(k) } }
             case .none: DSChip(L10n.t("首次使用时询问", "Asked on first use"))
             }
         }
-        .padding(.horizontal, 16).frame(height: 62)
+        .padding(.horizontal, 16).frame(minHeight: 64)
     }
 
     private func finish() {

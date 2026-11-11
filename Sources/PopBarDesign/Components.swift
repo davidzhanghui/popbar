@@ -21,6 +21,18 @@ public extension Text {
 
 // MARK: - 按钮
 
+/// 按下时轻微缩小 + 变暗，松开回弹；所有自绘按钮共用，保证「点下去有反应」
+public struct DSPressStyle: ButtonStyle {
+    let scale: CGFloat
+    public init(scale: CGFloat = 0.97) { self.scale = scale }
+    public func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
 public enum DSButtonKind { case primary, secondary, ghost, danger }
 
 public struct DSButton: View {
@@ -47,6 +59,14 @@ public struct DSButton: View {
         }
     }
 
+    private var shadowColor: Color {
+        switch kind {
+        case .primary: return DS.accent.opacity(enabled ? 0.28 : 0)
+        case .secondary: return DS.shadow.opacity(0.35)
+        default: return .clear
+        }
+    }
+
     public var body: some View {
         let c = colors
         Button(action: action) {
@@ -57,12 +77,21 @@ public struct DSButton: View {
             .foregroundStyle(c.fg)
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.button).fill(hovering && enabled ? c.hover : c.bg))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button).strokeBorder(c.border, lineWidth: 1))
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
+                    .fill(hovering && enabled ? c.hover : c.bg)
+                    .shadow(color: shadowColor, radius: kind == .primary ? 3 : 1, y: 1))
+            // 主按钮顶部一道高光，立体一点
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
+                .fill(LinearGradient(colors: [.white.opacity(kind == .primary ? 0.16 : 0), .clear],
+                                     startPoint: .top, endPoint: .bottom))
+                .allowsHitTesting(false))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).strokeBorder(c.border, lineWidth: 1))
             .contentShape(Rectangle())
             .opacity(enabled ? 1 : 0.45)
+            .animation(.easeOut(duration: 0.12), value: hovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DSPressStyle())
         .onHover { hovering = $0 }
     }
 }
@@ -87,10 +116,11 @@ public struct DSIconButton: View {
         Button(action: action) {
             Icon(icon, size: 16, color: tint ?? DS.muted)
                 .frame(width: size, height: size)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.button).fill(hovering ? DS.hover : .clear))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).fill(hovering ? DS.hover : .clear))
                 .contentShape(Rectangle())
+                .animation(.easeOut(duration: 0.1), value: hovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DSPressStyle(scale: 0.92))
         .onHover { hovering = $0 }
         .help(help ?? "")
     }
@@ -100,16 +130,20 @@ public struct DSIconButton: View {
 
 public struct DSToggle: View {
     @Binding var isOn: Bool
+    @Environment(\.isEnabled) private var enabled
     public init(isOn: Binding<Bool>) { _isOn = isOn }
     public var body: some View {
-        Button { withAnimation(.easeOut(duration: 0.12)) { isOn.toggle() } } label: {
+        Button { isOn.toggle() } label: {
             ZStack(alignment: isOn ? .trailing : .leading) {
                 Capsule().fill(isOn ? DS.accent : DS.borderStrong)
-                Circle().fill(Color.white).frame(width: 14, height: 14).padding(2)
-                    .shadow(color: .black.opacity(0.15), radius: 1, y: 0.5)
+                Capsule().strokeBorder(Color.black.opacity(0.06), lineWidth: 0.5)
+                Circle().fill(Color.white).frame(width: 16, height: 16).padding(2)
+                    .shadow(color: .black.opacity(0.22), radius: 1.5, y: 0.5)
             }
-            .frame(width: 32, height: 18)
+            .frame(width: 36, height: 20)
             .contentShape(Rectangle())
+            .opacity(enabled ? 1 : 0.5)
+            .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isOn)
         }
         .buttonStyle(.plain)
     }
@@ -118,27 +152,37 @@ public struct DSToggle: View {
 public struct DSSegmented<T: Hashable>: View {
     @Binding var selection: T
     let options: [(T, String)]
+    @Namespace private var ns
+    @State private var hovered: Int?
     public init(selection: Binding<T>, options: [(T, String)]) {
         _selection = selection
         self.options = options
     }
     public var body: some View {
         HStack(spacing: 2) {
-            ForEach(Array(options.enumerated()), id: \.offset) { _, opt in
+            ForEach(Array(options.enumerated()), id: \.offset) { i, opt in
                 let selected = opt.0 == selection
                 Button { selection = opt.0 } label: {
                     Text(opt.1)
-                        .font(DS.font(12.5, selected ? .medium : .regular))
-                        .foregroundStyle(selected ? DS.text : DS.muted)
-                        .padding(.horizontal, 10)
+                        .font(DS.font(12.5, .medium))
+                        .foregroundStyle(selected ? DS.text : (hovered == i ? DS.text2 : DS.muted))
+                        .padding(.horizontal, 11)
                         .frame(height: 24)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? DS.surface : .clear)
-                            .shadow(color: selected ? DS.shadow.opacity(0.6) : .clear, radius: 1, y: 0.5))
+                        .background {
+                            // 选中块在选项之间滑动，而不是瞬移
+                            if selected {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(DS.surface)
+                                    .shadow(color: DS.shadow.opacity(0.7), radius: 1.5, y: 0.5)
+                                    .matchedGeometryEffect(id: "thumb", in: ns)
+                            }
+                        }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .onHover { hovered = $0 ? i : (hovered == i ? nil : hovered) }
             }
         }
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: selection)
         .padding(2)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.button).fill(DS.surface2))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button).strokeBorder(DS.border, lineWidth: 1))
@@ -195,8 +239,7 @@ public struct DSCard<Content: View>: View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(DS.surface))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(DS.border, lineWidth: 1))
+            .dsCardBackground()
     }
 }
 
@@ -210,7 +253,7 @@ public struct DSSectionHeader<Trailing: View>: View {
     }
     public var body: some View {
         HStack(alignment: .lastTextBaseline) {
-            Text(title).font(DS.font(12, .semibold)).foregroundStyle(DS.muted)
+            Text(title).font(DS.font(12, .semibold)).foregroundStyle(DS.muted).kerning(0.2)
             Spacer(minLength: 8)
             trailing
         }
@@ -288,6 +331,29 @@ public struct DSSettingRow<Control: View>: View {
     }
 }
 
+// MARK: - 图标块
+
+/// 圆角方块图标：`filled` 是实色渐变底 + 白色图标（侧栏导航），否则是同色浅底 + 彩色图标（列表行）
+public struct DSIconTile: View {
+    let icon: String
+    let color: Color
+    let size: CGFloat
+    let filled: Bool
+    public init(_ icon: String, color: Color, size: CGFloat = 28, filled: Bool = false) {
+        self.icon = icon
+        self.color = color
+        self.size = size
+        self.filled = filled
+    }
+    public var body: some View {
+        let shape = RoundedRectangle(cornerRadius: size * 0.29, style: .continuous)
+        Icon(icon, size: (size * 0.56).rounded(), color: filled ? .white : color)
+            .frame(width: size, height: size)
+            .background(shape.fill(filled ? AnyShapeStyle(color.gradient) : AnyShapeStyle(color.opacity(0.13))))
+            .overlay(shape.strokeBorder(Color.black.opacity(filled ? 0.08 : 0), lineWidth: 0.5))
+    }
+}
+
 // MARK: - 标签 / 快捷键
 
 public enum DSTone { case neutral, accent, success, danger, warning }
@@ -354,9 +420,11 @@ public struct DSEmptyState: View {
     }
     public var body: some View {
         VStack(spacing: 10) {
-            Icon(icon, size: 22, color: DS.muted)
-                .frame(width: 44, height: 44)
-                .background(Circle().fill(DS.surface2))
+            Icon(icon, size: 24, color: DS.muted)
+                .frame(width: 56, height: 56)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(DS.surface2))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(DS.border, lineWidth: 1))
+                .padding(.bottom, 4)
             Text(title).font(DS.font(14, .semibold)).foregroundStyle(DS.text)
             if let message {
                 Text(message).font(DS.caption).foregroundStyle(DS.muted)
@@ -366,7 +434,7 @@ public struct DSEmptyState: View {
                 DSButton(actionTitle, kind: .primary, action: action).padding(.top, 4)
             }
         }
-        .padding(28)
+        .padding(.horizontal, 28).padding(.vertical, 40)
         .frame(maxWidth: .infinity)
     }
 }
@@ -377,6 +445,7 @@ public struct DSField: View {
     let placeholder: String
     @Binding var text: String
     let mono: Bool
+    @FocusState private var focused: Bool
     public init(_ placeholder: String, text: Binding<String>, mono: Bool = false) {
         self.placeholder = placeholder
         _text = text
@@ -387,11 +456,64 @@ public struct DSField: View {
             .textFieldStyle(.plain)
             .font(mono ? DS.mono : DS.body)
             .foregroundStyle(DS.text)
+            .focused($focused)
             .padding(.horizontal, 10)
             .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.button).fill(DS.surface2))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button).strokeBorder(DS.borderStrong, lineWidth: 1))
+            .dsFieldChrome(focused: focused)
     }
+}
+
+/// 搜索框：放大镜 + 输入 + 一键清空；聚焦时描边变强调色
+public struct DSSearchField: View {
+    let placeholder: String
+    @Binding var text: String
+    @FocusState private var focused: Bool
+    public init(_ placeholder: String, text: Binding<String>) {
+        self.placeholder = placeholder
+        _text = text
+    }
+    public var body: some View {
+        HStack(spacing: 7) {
+            Icon("search", size: 14, color: focused ? DS.accent : DS.faint)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(DS.body)
+                .foregroundStyle(DS.text)
+                .focused($focused)
+                .onExitCommand { if text.isEmpty { focused = false } else { text = "" } }
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Icon("x", size: 10, color: DS.surface)
+                        .frame(width: 15, height: 15)
+                        .background(Circle().fill(DS.faint))
+                }
+                .buttonStyle(DSPressStyle(scale: 0.88))
+                .transition(.opacity.combined(with: .scale(scale: 0.7)))
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .dsFieldChrome(focused: focused)
+        .animation(.easeOut(duration: 0.12), value: text.isEmpty)
+    }
+}
+
+/// 输入框的统一外观：未聚焦是浅灰底细边，聚焦后底色提亮、边变强调色并带一圈柔光
+struct DSFieldChrome: ViewModifier {
+    let focused: Bool
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
+        content
+            .background(shape.fill(focused ? DS.surface : DS.surface2))
+            .overlay(shape.strokeBorder(focused ? DS.accent : DS.borderStrong, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.button + 3, style: .continuous)
+                .fill(DS.accentSoft).padding(-3).opacity(focused ? 1 : 0))
+            .animation(.easeOut(duration: 0.14), value: focused)
+    }
+}
+
+public extension View {
+    func dsFieldChrome(focused: Bool) -> some View { modifier(DSFieldChrome(focused: focused)) }
 }
 
 /// 显示为掩码的输入框（API Key）。只影响显示：存储方式不变，仍明文写进 config.json
@@ -399,6 +521,7 @@ public struct DSSecureField: View {
     let placeholder: String
     @Binding var text: String
     @State private var reveal = false
+    @FocusState private var focused: Bool
     public init(_ placeholder: String, text: Binding<String>) {
         self.placeholder = placeholder
         _text = text
@@ -411,13 +534,13 @@ public struct DSSecureField: View {
             .textFieldStyle(.plain)
             .font(DS.mono)
             .foregroundStyle(DS.text)
+            .focused($focused)
             Button { reveal.toggle() } label: { Icon(reveal ? "eye-off" : "eye", size: 14) }
-                .buttonStyle(.plain)
+                .buttonStyle(DSPressStyle(scale: 0.9))
         }
         .padding(.horizontal, 10)
         .frame(height: 30)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.button).fill(DS.surface2))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button).strokeBorder(DS.borderStrong, lineWidth: 1))
+        .dsFieldChrome(focused: focused)
     }
 }
 
@@ -505,29 +628,43 @@ public struct DSPageShell<Actions: View, Content: View>: View {
         self.content = content()
     }
 
+    @State private var scrolled = false
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title).font(DS.font(Theme.FontSize.title + 2, .semibold)).foregroundStyle(DS.text)
-                    if let subtitle { Text(subtitle).font(DS.caption).foregroundStyle(DS.muted) }
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title).font(DS.font(Theme.FontSize.title + 2, .bold)).foregroundStyle(DS.text).kerning(-0.2)
+                    if let subtitle {
+                        Text(subtitle).font(DS.caption).foregroundStyle(DS.muted)
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Spacer()
-                HStack(spacing: 8) { actions }
+                Spacer(minLength: 8)
+                HStack(spacing: 8) { actions }.fixedSize()
             }
             .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .padding(.bottom, 18)
+            .padding(.top, 30)
+            .padding(.bottom, 16)
             if scrolls {
+                // 内容滚到页头下面时，页头底部浮出一条发丝线，交代层次
+                Rectangle().fill(DS.border).frame(height: 1)
+                    .opacity(scrolled ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: scrolled)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) { content }
                         .padding(.horizontal, 36)
+                        .padding(.top, 4)
                         .padding(.bottom, 28)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 2 } action: { _, v in
+                    scrolled = v
                 }
             } else {
                 VStack(alignment: .leading, spacing: 16) { content }
                     .padding(.horizontal, 36)
+                    .padding(.top, 5)
                     .padding(.bottom, 24)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -547,17 +684,22 @@ public extension DSPageShell where Actions == EmptyView {
 public struct DSColumnResize: View {
     @Binding private var width: CGFloat
     private let range: ClosedRange<CGFloat>
+    private let defaultWidth: CGFloat?
     @State private var hovering = false
     @State private var dragOrigin: CGFloat?
 
-    public init(width: Binding<CGFloat>, range: ClosedRange<CGFloat>) {
+    /// defaultWidth：双击分隔条恢复到这个宽度
+    public init(width: Binding<CGFloat>, range: ClosedRange<CGFloat>, defaultWidth: CGFloat? = nil) {
         self._width = width
         self.range = range
+        self.defaultWidth = defaultWidth
     }
 
     public var body: some View {
         ZStack {
-            Rectangle().fill(hovering ? DS.borderStrong : DS.border).frame(width: 1)
+            Rectangle().fill(hovering || dragOrigin != nil ? DS.accent.opacity(0.55) : DS.border)
+                .frame(width: hovering || dragOrigin != nil ? 2 : 1)
+                .animation(.easeOut(duration: 0.12), value: hovering)
         }
         .frame(width: 7)
         .frame(maxHeight: .infinity)
@@ -575,6 +717,9 @@ public struct DSColumnResize: View {
                 }
                 .onEnded { _ in dragOrigin = nil }
         )
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            if let defaultWidth { withAnimation(.easeOut(duration: 0.18)) { width = defaultWidth } }
+        })
     }
 }
 
@@ -587,6 +732,7 @@ public struct DSHoverRow: ViewModifier {
         content
             .background(RoundedRectangle(cornerRadius: Theme.Radius.button)
                 .fill(selected ? DS.accentSoft : (hovering ? DS.hover : .clear)))
+            .animation(.easeOut(duration: 0.1), value: hovering)
             .onHover { hovering = $0 }
     }
 }
@@ -596,8 +742,9 @@ public extension View {
 
     /// 卡片样式（surface + 1pt border + 圆角 10），用于不方便包 DSCard 的地方
     func dsCardBackground(radius: CGFloat = Theme.Radius.card) -> some View {
-        background(RoundedRectangle(cornerRadius: radius).fill(DS.surface)
-            .shadow(color: DS.shadow.opacity(0.35), radius: 1, y: 0.5))
-            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(DS.border, lineWidth: 1))
+        background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(DS.surface)
+            .shadow(color: DS.shadow.opacity(0.22), radius: 5, y: 2)
+            .shadow(color: DS.shadow.opacity(0.3), radius: 0.5, y: 0.5))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(DS.border, lineWidth: 1))
     }
 }

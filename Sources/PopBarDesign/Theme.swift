@@ -8,6 +8,8 @@ import SwiftUI
 /// 深色模式不另外手调。界面代码只引用这里的语义名：AppKit 用 `Theme.*`，SwiftUI 用 `DS.*`。
 public enum Theme {
     public static let bg            = dyn("bg", 0xF7F6F3, 0x161615)
+    /// Deck 侧栏底色：比 bg 深一档，让内容区「浮」在侧栏旁边
+    public static let sidebar       = dyn("sidebar", 0xEEECE7, 0x0F0F0E)
     public static let surface       = dyn("surface", 0xFFFFFF, 0x1F1E1C)
     public static let surface2      = dyn("surface2", 0xF1EFEB, 0x282725)
     public static let hover         = dyn("hover", 0x1C1B19, 0x0D, 0xEDEBE7, 0x12)
@@ -36,7 +38,7 @@ public enum Theme {
     public enum Radius {
         public static let capsule: CGFloat = 19
         public static let panel: CGFloat = 12
-        public static let card: CGFloat = 10
+        public static let card: CGFloat = 12
         public static let button: CGFloat = 8
         public static let checkbox: CGFloat = 5
     }
@@ -98,6 +100,7 @@ public enum Theme {
 /// SwiftUI 侧的令牌（桥接到同一组动态 NSColor）
 public enum DS {
     public static let bg = Color(nsColor: Theme.bg)
+    public static let sidebar = Color(nsColor: Theme.sidebar)
     public static let surface = Color(nsColor: Theme.surface)
     public static let surface2 = Color(nsColor: Theme.surface2)
     public static let hover = Color(nsColor: Theme.hover)
