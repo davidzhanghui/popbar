@@ -12,7 +12,7 @@ import PopBarDesign
 ///
 /// 判断文件类型只认 magic bytes,不信扩展名:docx 改名成 .pdf 会被拒,
 /// 不会让 CUPS 过滤器崩在半路。页数与缩略图用系统 PDFKit,不再依赖 poppler。
-enum PrintFileKind: String, Codable { case pdf, image, heic, webp, text }
+enum PrintFileKind: String, Codable { case pdf, image, heic, webp, text, office }
 
 struct PrintSniff: Equatable {
     var kind: PrintFileKind
@@ -27,10 +27,16 @@ struct PreparedFile: Identifiable, Equatable {
     var url: URL                   // 实际提交的文件(转换后的)
     var mime: String               // 提交时的 MIME
     var originalMime: String
-    var kind: PrintFileKind        // 转换后的类别(heic/webp 已变 image,text 已变 pdf)
+    var kind: PrintFileKind        // 转换后的类别(heic/webp 已变 image,text/office 已变 pdf)
     var size: Int
     var pages: Int?
     var warnings: [String] = []
+    /// 原始文件(预览「原文件」用;划词打印等没有原文件时为 nil)
+    var source: URL? = nil
+    /// 原始扩展名(小写),列表里的类型角标用
+    var sourceExt: String = ""
+    /// 做过的转换,如「Word→PDF · LibreOffice」;没转换为空
+    var conversion: String = ""
 }
 
 enum PrintFiles {
@@ -38,7 +44,9 @@ enum PrintFiles {
 
     // MARK: - magic 嗅探
 
-    static func sniff(_ head: Data) -> PrintSniff? {
+    /// `ext` 只用来细分已由 magic 确认的容器(ZIP / OLE2 里装的是 Word 还是 Excel),不能单凭扩展名放行
+    static func sniff(_ head: Data, ext: String = "") -> PrintSniff? {
+        let ext = ext.lowercased()
         let b = [UInt8](head.prefix(8192))
         func starts(_ bytes: [UInt8], at o: Int = 0) -> Bool {
             b.count >= o + bytes.count && Array(b[o..<o + bytes.count]) == bytes
@@ -60,18 +68,44 @@ enum PrintFiles {
                 return .init(kind: .heic, mime: "image/heic", ext: "heic")
             }
         }
+        // Office / iWork:ZIP(OOXML、ODF、新版 iWork 单文件)与 OLE2(doc/xls/ppt)容器,再按扩展名细分
+        if starts([0x50, 0x4b, 0x03, 0x04]), PrintOffice.zipExts.contains(ext) {
+            return .init(kind: .office, mime: PrintOffice.mime(ext: ext), ext: ext)
+        }
+        if starts([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), PrintOffice.oleExts.contains(ext) {
+            return .init(kind: .office, mime: PrintOffice.mime(ext: ext), ext: ext)
+        }
+        if starts(Array("{\\rtf".utf8)) { return .init(kind: .office, mime: "application/rtf", ext: "rtf") }
         // 纯文本:没有 NUL 字节,控制字符占比极低(UTF-8 / GBK / UTF-16 带 BOM 之外的常见编码都能过)
         if !b.isEmpty, !b.contains(0) {
             let ctrl = b.filter { $0 < 32 && ![9, 10, 12, 13, 27].contains($0) }.count
-            if ctrl * 100 < b.count { return .init(kind: .text, mime: "text/plain", ext: "txt") }
+            if ctrl * 100 < b.count {
+                // HTML 按网页排版打印,而不是打出源码
+                if ["html", "htm"].contains(ext) { return .init(kind: .office, mime: "text/html", ext: ext) }
+                return .init(kind: .text, mime: "text/plain", ext: "txt")
+            }
         }
         return nil
     }
 
     // MARK: - 准备
 
-    static func prepare(_ source: URL, staging: URL = PrintStorage.stagingDir) -> Result<PreparedFile, PrintError> {
+    static let supportedSummary = L10n.t("PDF / Word / Excel / PPT / Pages / Numbers / Keynote / ODF / RTF / HTML / 图片 / 纯文本",
+                                         "PDF / Word / Excel / PPT / Pages / Numbers / Keynote / ODF / RTF / HTML / images / plain text")
+
+    /// `onStage` 报告耗时步骤(如「LibreOffice 转换中」),界面上显示在文件行里
+    static func prepare(_ source: URL, staging: URL = PrintStorage.stagingDir,
+                        onStage: (String) -> Void = { _ in }) -> Result<PreparedFile, PrintError> {
         let fm = FileManager.default
+        let srcExt = source.pathExtension.lowercased()
+        // 旧版 iWork 文档是目录包:没有 magic 可嗅,只能认扩展名 + 包内结构
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: source.path, isDirectory: &isDir), isDir.boolValue {
+            guard ["pages", "numbers", "key", "rtfd"].contains(srcExt) else {
+                return .failure(.message(L10n.t("不能打印文件夹", "Folders cannot be printed")))
+            }
+            return prepareOffice(source, ext: srcExt, size: directorySize(source), staging: staging, onStage: onStage)
+        }
         guard let attrs = try? fm.attributesOfItem(atPath: source.path), let size = (attrs[.size] as? NSNumber)?.intValue else {
             return .failure(.message(L10n.t("无法读取文件", "Cannot read the file")))
         }
@@ -84,10 +118,10 @@ enum PrintFiles {
         }
         let head = (try? fh.read(upToCount: 8192)) ?? Data()
         try? fh.close()
-        guard let sn = sniff(head) else {
-            return .failure(.message(L10n.t("无法识别的文件类型（支持 PDF / JPG / PNG / GIF / TIFF / BMP / WEBP / HEIC / 纯文本）",
-                                            "Unrecognized file type (PDF / JPG / PNG / GIF / TIFF / BMP / WEBP / HEIC / plain text)")))
+        guard let sn = sniff(head, ext: srcExt) else {
+            return .failure(.message(L10n.t("无法识别的文件类型（支持 ", "Unrecognized file type (supported: ") + supportedSummary + L10n.t("）", ")")))
         }
+        if sn.kind == .office { return prepareOffice(source, ext: sn.ext, size: size, staging: staging, onStage: onStage) }
 
         try? fm.createDirectory(at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let token = UUID().uuidString
@@ -131,8 +165,56 @@ enum PrintFiles {
         case .text: pages = nil
         default: break
         }
+        var conversion = ""
+        if sn.kind == .text && kind == .pdf { conversion = L10n.t("文本→PDF", "Text→PDF") }
+        if sn.kind == .heic && mime == "image/jpeg" { conversion = "HEIC→JPEG" }
+        if sn.kind == .webp && mime == "image/png" { conversion = "WebP→PNG" }
         return .success(PreparedFile(id: token, displayName: source.lastPathComponent, url: url, mime: mime,
-                                     originalMime: sn.mime, kind: kind, size: size, pages: pages, warnings: warnings))
+                                     originalMime: sn.mime, kind: kind, size: size, pages: pages, warnings: warnings,
+                                     source: source, sourceExt: srcExt.isEmpty ? sn.ext : srcExt, conversion: conversion))
+    }
+
+    /// Office / iWork / 富文本:复制进暂存区 → 转 PDF → 读页数。原件在暂存区里转换,不碰用户的文件
+    static func prepareOffice(_ source: URL, ext: String, size: Int, staging: URL,
+                              onStage: (String) -> Void) -> Result<PreparedFile, PrintError> {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let token = UUID().uuidString
+        let copy = staging.appendingPathComponent("\(token)-src.\(ext)")
+        let out = staging.appendingPathComponent("\(token).pdf")
+        do { try fm.copyItem(at: source, to: copy) } catch {
+            return .failure(.message(L10n.t("复制文件失败：", "Copy failed: ") + error.localizedDescription))
+        }
+        defer { try? fm.removeItem(at: copy) }
+        let r = PrintOffice.convert(copy, ext: ext, to: out) { engine in
+            onStage(L10n.t("\(engine) 转换中…", "Converting with \(engine)…"))
+        }
+        switch r {
+        case .failure(let e):
+            try? fm.removeItem(at: out)
+            return .failure(e)
+        case .success(let engine):
+            guard let doc = PDFDocument(url: out), doc.pageCount > 0 else {
+                try? fm.removeItem(at: out)
+                return .failure(.message(L10n.t("转换结果不是有效的 PDF", "The converted file is not a valid PDF")))
+            }
+            var warnings: [String] = []
+            if engine == L10n.t("系统排版", "System"), PrintOffice.family(ext: ext) == .word {
+                warnings.append(L10n.t("用系统排版转换：页眉页脚、浮动图形可能丢失。安装 LibreOffice 可获得更准确的版式",
+                                       "Converted with the system engine: headers, footers and floating shapes may be lost. Install LibreOffice for accurate layout"))
+            }
+            return .success(PreparedFile(id: token, displayName: source.lastPathComponent, url: out, mime: "application/pdf",
+                                         originalMime: PrintOffice.mime(ext: ext), kind: .pdf, size: size, pages: doc.pageCount,
+                                         warnings: warnings, source: source, sourceExt: ext,
+                                         conversion: "\(PrintOffice.label(ext: ext))→PDF · \(engine)"))
+        }
+    }
+
+    static func directorySize(_ url: URL) -> Int {
+        guard let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total = 0
+        for case let f as URL in e { total += (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0 }
+        return total
     }
 
     /// 由一段选中文字生成待打印文件(划词打印)
@@ -146,7 +228,8 @@ enum PrintFiles {
         }
         let size = (try? fm.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
         return .success(PreparedFile(id: token, displayName: title, url: out, mime: "application/pdf",
-                                     originalMime: "text/plain", kind: .pdf, size: size, pages: doc.pageCount))
+                                     originalMime: "text/plain", kind: .pdf, size: size, pages: doc.pageCount,
+                                     sourceExt: "txt", conversion: L10n.t("文本→PDF", "Text→PDF")))
     }
 
     static func readText(_ url: URL) -> String? {

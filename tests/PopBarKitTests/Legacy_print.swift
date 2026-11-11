@@ -61,6 +61,20 @@ func runPrintTests() async {
     expectEqual(PrintFiles.sniff("中文文本内容测试".data(using: String.Encoding(rawValue: gbk))!)?.kind, .text, "GBK 文本")
     expect(sn([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x08]) == nil, "docx/zip(含 NUL)不识别")
     expect(sn([1, 2, 3, 4, 5, 6, 7, 8]) == nil, "纯二进制不识别")
+    let zipHead = Data([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00])
+    let oleHead = Data([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0])
+    expectEqual(PrintFiles.sniff(zipHead, ext: "docx")?.kind, .office, "zip + docx → office")
+    expectEqual(PrintFiles.sniff(zipHead, ext: "XLSX")?.kind, .office, "zip + XLSX(大写)→ office")
+    expectEqual(PrintFiles.sniff(zipHead, ext: "key")?.kind, .office, "zip + key → office")
+    expect(PrintFiles.sniff(zipHead, ext: "pdf") == nil, "zip + pdf 扩展名 → 拒绝")
+    expect(PrintFiles.sniff(zipHead, ext: "doc") == nil, "zip + doc(应为 OLE2)→ 拒绝")
+    expectEqual(PrintFiles.sniff(oleHead, ext: "xls")?.kind, .office, "OLE2 + xls → office")
+    expect(PrintFiles.sniff(oleHead, ext: "docx") == nil, "OLE2 + docx → 拒绝")
+    expectEqual(PrintFiles.sniff(Data("{\\rtf1\\ansi hello}".utf8))?.mime, "application/rtf", "rtf 按内容识别,不当纯文本")
+    expectEqual(PrintFiles.sniff(Data("<html><body>hi</body></html>".utf8), ext: "html")?.kind, .office, "html 按网页排版")
+    expectEqual(PrintFiles.sniff(Data("<html>".utf8), ext: "txt")?.kind, .text, "非 html 扩展名仍是文本")
+    expectEqual(PrintOffice.family(ext: "pptx"), .slide, "pptx 属演示")
+    expectEqual(PrintOffice.family(ext: "numbers"), .sheet, "numbers 属表格")
 
     section("打印 · 文件准备")
     let fakePDF = tmp.appendingPathComponent("fake.pdf")      // docx 改名成 .pdf
@@ -102,6 +116,36 @@ func runPrintTests() async {
     if case .success(let f) = PrintFiles.prepare(text: "选中的一段文字\nsecond line", title: "sel", staging: tmp.appendingPathComponent("st")) {
         expectEqual(f.pages, 1, "划词文字生成 1 页 PDF")
     } else { expect(false, "划词文字准备成功") }
+
+    section("打印 · Office / 富文本转换")
+    let rtf = tmp.appendingPathComponent("doc.rtf")
+    try? "{\\rtf1\\ansi {\\b Title} \\par Body paragraph one \\par Second}".write(to: rtf, atomically: true, encoding: .utf8)
+    if case .success(let f) = PrintFiles.prepare(rtf, staging: tmp.appendingPathComponent("st")) {
+        expectEqual(f.mime, "application/pdf", "rtf → PDF")
+        expectEqual(f.pages, 1, "rtf 1 页")
+        expect(f.conversion.contains("RTF→PDF"), "记录转换说明:\(f.conversion)")
+        expectEqual(f.source, rtf, "保留原文件路径用于预览对照")
+        expect((PDFDocument(url: f.url)?.string ?? "").contains("Body paragraph one"), "PDF 里有正文文字")
+    } else { expect(false, "rtf 准备成功") }
+    let html = tmp.appendingPathComponent("page.html")
+    try? "<html><body><h1>Hello</h1><table border=1><tr><td>单元格A</td><td>B</td></tr></table></body></html>".write(to: html, atomically: true, encoding: .utf8)
+    if case .success(let f) = PrintFiles.prepare(html, staging: tmp.appendingPathComponent("st")) {
+        expect((PDFDocument(url: f.url)?.string ?? "").contains("单元格A"), "html 表格文字进了 PDF")
+    } else { expect(false, "html 准备成功") }
+    // 用系统 textutil 生成真实 docx,走完整转换链(有 LibreOffice / Pages 时用它们,否则系统排版)
+    let docxSrc = tmp.appendingPathComponent("gen.txt")
+    try? String(repeating: "Word 文档测试段落，用来验证 docx 转 PDF 与自动分页。\n", count: 200).write(to: docxSrc, atomically: true, encoding: .utf8)
+    let docx = tmp.appendingPathComponent("gen.docx")
+    _ = Shell.run("/usr/bin/textutil", ["-convert", "docx", "-output", docx.path, docxSrc.path])
+    if FileManager.default.fileExists(atPath: docx.path) {
+        let out = tmp.appendingPathComponent("native.pdf")
+        expect(PrintOffice.renderNative(docx, ext: "docx", to: out), "docx 系统排版转换")
+        expect((PDFDocument(url: out)?.pageCount ?? 0) >= 2, "docx 长文自动分页(\(PDFDocument(url: out)?.pageCount ?? 0) 页)")
+    } else { expect(false, "textutil 生成 docx") }
+    let fakeDocx = tmp.appendingPathComponent("bad.docx")
+    try? Data([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0, 1, 2, 3]).write(to: fakeDocx)
+    let tmpNoEngine = tmp.appendingPathComponent("bad.pdf")
+    expect(!PrintOffice.renderNative(fakeDocx, ext: "docx", to: tmpNoEngine), "损坏的 docx 系统排版返回失败")
 
     // MARK: 页码
 

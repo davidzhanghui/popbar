@@ -44,7 +44,7 @@ struct PrintSubmitView: View {
     }
 
     private var confirmText: String {
-        var s = "\(printer?.displayName ?? model.printer) · " + L10n.t("\(model.items.count) 个文件", "\(model.items.count) file(s)")
+        var s = "\(printer?.displayName ?? model.printer) · " + L10n.t("\(model.pendingCount) 个文件", "\(model.pendingCount) file(s)")
         if let n = model.sheetEstimate() { s += L10n.t(" · 约 \(n) 页", " · about \(n) page(s)") }
         s += L10n.t(" · \(model.options.copies) 份", " · \(model.options.copies) copies")
         return s
@@ -54,9 +54,8 @@ struct PrintSubmitView: View {
 
     private var dropZone: some View {
         VStack(spacing: 8) {
-            Image(systemName: model.preparing ? "hourglass" : "arrow.down.doc").font(.system(size: 22)).foregroundStyle(SysTheme.brand)
-            Text(model.preparing ? L10n.t("正在准备文件…", "Preparing files…")
-                 : L10n.t("把文件拖到这里，或", "Drop files here, or"))
+            Image(systemName: "arrow.down.doc").font(.system(size: 22)).foregroundStyle(SysTheme.brand)
+            Text(L10n.t("把文件拖到这里，或", "Drop files here, or"))
                 .font(.system(size: 12)).foregroundStyle(SysTheme.secondary)
             HStack(spacing: 8) {
                 PBtn(title: L10n.t("选择文件…", "Choose files…"), symbol: "folder", prominent: true) {
@@ -68,8 +67,9 @@ struct PrintSubmitView: View {
                     } else { model.message = L10n.t("剪贴板里没有文字", "The clipboard has no text") }
                 }
             }
-            Text(L10n.t("支持 PDF / 图片（JPG PNG GIF TIFF BMP WEBP HEIC）/ 纯文本；类型按文件内容识别，不看扩展名",
-                        "PDF / images (JPG PNG GIF TIFF BMP WEBP HEIC) / plain text — detected by content, not extension"))
+            Text(L10n.t("支持 ", "Supports ") + PrintFiles.supportedSummary
+                 + L10n.t("；Office / iWork 自动转 PDF（优先 LibreOffice，其次 Pages / Numbers / Keynote）",
+                          " — Office / iWork are converted to PDF (LibreOffice first, then Pages / Numbers / Keynote)"))
                 .font(.system(size: 10)).foregroundStyle(SysTheme.tertiary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 14).padding(.horizontal, 10)
@@ -92,46 +92,57 @@ struct PrintSubmitView: View {
     private var fileList: some View {
         PSection(title: L10n.t("待打印（\(model.items.count)）", "To print (\(model.items.count))"),
                  trailing: AnyView(HStack(spacing: 6) {
-                    if model.items.contains(where: { $0.status == .done }) {
-                        PBtn(title: L10n.t("清除已完成", "Clear done")) { model.clearFinished() }
+                    statusSummary
+                    if model.items.contains(where: \.isDone) {
+                        PBtn(title: L10n.t("清除已提交", "Clear submitted")) { model.clearFinished() }
+                    }
+                    if model.items.contains(where: { if case .invalid = $0.status { return true }; return false }) {
+                        PBtn(title: L10n.t("清除无法打印", "Clear unprintable")) { model.clearInvalid() }
                     }
                     PBtn(title: L10n.t("清空", "Clear all"), disabled: model.busy) { model.clear() }
                  })) {
             VStack(spacing: 0) {
-                ForEach(model.items) { item in
-                    HStack(spacing: 10) {
-                        FileThumb(file: item.file)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.file.displayName).font(.system(size: 12.5)).lineLimit(1).truncationMode(.middle)
-                            Text(fileInfo(item.file)).font(.system(size: 10.5)).foregroundStyle(SysTheme.secondary)
-                            if case .failed(let why) = item.status {
-                                Text(why).font(.system(size: 10.5)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        Spacer()
-                        switch item.status {
-                        case .ready: EmptyView()
-                        case .submitting: ProgressView().controlSize(.small)
-                        case .done: PBadge(text: L10n.t("已提交", "Submitted"), color: .green, filled: true)
-                        case .failed: PBadge(text: L10n.t("失败", "Failed"), color: .red, filled: true)
-                        }
-                        if item.status != .submitting {
-                            PIcon(symbol: "xmark", help: L10n.t("移除", "Remove")) { model.remove(item.id) }
-                        }
-                    }
-                    .padding(.vertical, 5)
-                    Divider().opacity(0.4)
+                ForEach(Array(model.items.enumerated()), id: \.element.id) { idx, item in
+                    FileRow(item: item, job: jobRecord(item), busy: model.busy,
+                            preview: { if let f = item.file { PrintPreviewWindow.shared.show(f) } },
+                            retry: { retry(item) },
+                            remove: { model.remove(item.id) })
+                    if idx < model.items.count - 1 { Divider().opacity(0.35).padding(.leading, 54) }
                 }
             }
         }
     }
 
-    private func fileInfo(_ f: PreparedFile) -> String {
-        var p = [ByteCountFormatter.string(fromByteCount: Int64(f.size), countStyle: .file)]
-        if let n = f.pages { p.append(L10n.t("\(n) 页", "\(n) pg")) }
-        if f.originalMime == "text/plain" { p.append(L10n.t("文本→PDF", "text→PDF")) }
-        if f.originalMime == "image/heic" { p.append(L10n.t("HEIC→JPEG", "HEIC→JPEG")) }
-        return p.joined(separator: " · ")
+    /// 标题栏右侧的状态计数:2 就绪 · 1 转换中 · 1 失败
+    private var statusSummary: some View {
+        var ready = 0, prep = 0, bad = 0, done = 0
+        for it in model.items {
+            switch it.status {
+            case .ready: ready += 1
+            case .preparing, .submitting: prep += 1
+            case .invalid, .failed: bad += 1
+            case .done: done += 1
+            }
+        }
+        return HStack(spacing: 4) {
+            if prep > 0 { PBadge(text: L10n.t("\(prep) 处理中", "\(prep) working"), color: SysTheme.brand) }
+            if ready > 0 { PBadge(text: L10n.t("\(ready) 就绪", "\(ready) ready"), color: Color(red: 0.25, green: 0.70, blue: 0.40)) }
+            if bad > 0 { PBadge(text: L10n.t("\(bad) 异常", "\(bad) issue(s)"), color: .red) }
+            if done > 0 { PBadge(text: L10n.t("\(done) 已提交", "\(done) sent"), color: SysTheme.secondary) }
+        }
+    }
+
+    private func jobRecord(_ item: PrintSubmitModel.Item) -> JobRecord? {
+        if case .done(let id) = item.status { return center.data.job(id) }
+        return nil
+    }
+
+    private func retry(_ item: PrintSubmitModel.Item) {
+        switch item.status {
+        case .invalid: model.retryPrepare(item.id)
+        case .failed: Task { await model.retrySubmit(item.id, center: center) }
+        default: break
+        }
     }
 
     // MARK: 打印机与预设
@@ -302,7 +313,8 @@ struct PrintSubmitView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.items.isEmpty ? L10n.t("还没有文件", "No files yet")
-                     : L10n.t("\(model.items.count) 个文件", "\(model.items.count) file(s)")
+                     : model.pendingCount == 0 ? (model.preparing ? L10n.t("正在准备文件…", "Preparing files…") : L10n.t("没有待提交的文件", "Nothing left to print"))
+                     : L10n.t("\(model.pendingCount) 个文件待打印", "\(model.pendingCount) file(s) to print")
                         + (model.sheetEstimate().map { L10n.t(" · 约 \($0) 页", " · about \($0) page(s)") } ?? ""))
                     .font(.system(size: 12, weight: .semibold))
                 Text(printer.map { L10n.t("发送到 \($0.displayName)", "Send to \($0.displayName)") } ?? L10n.t("请选择打印机", "Choose a printer"))
@@ -320,24 +332,169 @@ struct PrintSubmitView: View {
         .background(CardBackground())
     }
 
-    private var hasPending: Bool {
-        model.items.contains { if case .done = $0.status { return false } else { return true } }
+    private var hasPending: Bool { model.pendingCount > 0 }
+}
+
+/// 待打印列表的一行:缩略图(点开预览)· 名称与说明 · 状态 · 操作
+private struct FileRow: View {
+    let item: PrintSubmitModel.Item
+    let job: JobRecord?
+    let busy: Bool
+    let preview: () -> Void
+    let retry: () -> Void
+    let remove: () -> Void
+    @State private var hover = false
+
+    private static let green = Color(red: 0.25, green: 0.70, blue: 0.40)
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: preview) { FileThumb(item: item, hover: hover && item.file != nil) }
+                .buttonStyle(.plain).disabled(item.file == nil)
+                .help(item.file == nil ? "" : L10n.t("点击预览", "Click to preview"))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                detail
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { if item.file != nil { preview() } }
+            status
+            HStack(spacing: 4) {
+                if canRetry {
+                    PIcon(symbol: "arrow.clockwise", help: L10n.t("重试", "Retry"), tint: SysTheme.brand, action: retry)
+                }
+                if item.file != nil {
+                    PIcon(symbol: "eye", help: L10n.t("预览", "Preview"), action: preview)
+                }
+                if item.status != .submitting {
+                    PIcon(symbol: "xmark", help: L10n.t("移除", "Remove"), action: remove)
+                }
+            }
+        }
+        .padding(.vertical, 6).padding(.horizontal, 4)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hover ? SysTheme.track.opacity(0.6) : .clear))
+        .onHover { hover = $0 }
+    }
+
+    private var canRetry: Bool {
+        switch item.status {
+        case .invalid: return item.source != nil
+        case .failed: return !busy
+        default: return false
+        }
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch item.status {
+        case .preparing:
+            Text(item.stage ?? L10n.t("正在识别与准备…", "Detecting and preparing…"))
+                .font(.system(size: 10.5)).foregroundStyle(SysTheme.brand)
+        case .invalid(let why), .failed(let why):
+            if let f = item.file { Text(PrintFileInfo.line(f)).font(.system(size: 10.5)).foregroundStyle(SysTheme.secondary) }
+            Label(why, systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 10.5)).foregroundStyle(.red).labelStyle(.titleAndIcon)
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        default:
+            if let f = item.file { Text(PrintFileInfo.line(f)).font(.system(size: 10.5)).foregroundStyle(SysTheme.secondary).lineLimit(1) }
+        }
+    }
+
+    @ViewBuilder private var status: some View {
+        switch item.status {
+        case .preparing:
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.mini)
+                PBadge(text: item.stage == nil ? L10n.t("准备中", "Preparing") : L10n.t("转换中", "Converting"), color: SysTheme.brand)
+            }
+        case .invalid:
+            PBadge(text: L10n.t("无法打印", "Unprintable"), color: .orange, filled: true)
+        case .ready:
+            PBadge(text: L10n.t("就绪", "Ready"), color: Self.green)
+        case .submitting:
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.mini)
+                PBadge(text: L10n.t("提交中", "Submitting"), color: SysTheme.brand)
+            }
+        case .done:
+            if let j = job {
+                // 提交后跟踪 CUPS 作业的实时状态:排队 → 打印中 → 已完成 / 出错
+                HStack(spacing: 4) {
+                    if j.state == .processing { ProgressView().controlSize(.mini) }
+                    PBadge(text: PrintStyle.jobStateText(j) + (j.cupsJobId > 0 ? " #\(j.cupsJobId)" : ""),
+                           color: PrintStyle.jobColor(j), filled: j.state == .completed || j.state == .aborted)
+                }
+                .help(L10n.t("作业状态会自动刷新；完整记录见「作业」页", "Job state refreshes automatically — see the Jobs tab for details"))
+            } else {
+                PBadge(text: L10n.t("已提交", "Submitted"), color: Self.green, filled: true)
+            }
+        case .failed:
+            PBadge(text: L10n.t("提交失败", "Failed"), color: .red, filled: true)
+        }
     }
 }
 
-/// 文件缩略图:首页,异步生成
+/// 文件缩略图:首页,异步生成;左下角类型角标,悬停时显示「预览」
 private struct FileThumb: View {
-    let file: PreparedFile
+    let item: PrintSubmitModel.Item
+    var hover = false
     @State private var image: NSImage?
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 5, style: .continuous).fill(SysTheme.track)
             if let image { Image(nsImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous)) }
-            else { Image(systemName: "doc").foregroundStyle(SysTheme.tertiary) }
+            else if item.status == .preparing { ProgressView().controlSize(.mini) }
+            else { Image(systemName: icon).foregroundStyle(SysTheme.tertiary) }
+            if hover {
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.35))
+                Image(systemName: "eye.fill").font(.system(size: 12)).foregroundStyle(.white)
+            }
         }
-        .frame(width: 34, height: 44)
-        .task(id: file.id) { image = await PrintFiles.renderThumbnail(file: file.url, kind: file.kind, page: 1, side: 120) }
+        .frame(width: 36, height: 46)
+        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(SysTheme.cardBorder, lineWidth: 0.5))
+        .overlay(alignment: .bottomLeading) {
+            if !typeLabel.isEmpty {
+            Text(typeLabel).font(.system(size: 7.5, weight: .bold)).foregroundStyle(.white)
+                .padding(.horizontal, 3).padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 2.5, style: .continuous).fill(typeColor))
+                .offset(x: -3, y: 3)
+            }
+        }
+        .task(id: item.file?.id) {
+            guard let f = item.file else { image = nil; return }
+            image = await PrintFiles.renderThumbnail(file: f.url, kind: f.kind, page: 1, side: 120)
+        }
+    }
+
+    private var ext: String { (item.file?.sourceExt).flatMap { $0.isEmpty ? nil : $0 } ?? (item.source?.pathExtension.lowercased() ?? "") }
+
+    private var typeLabel: String {
+        switch PrintOffice.family(ext: ext) {
+        case .word: return ext == "pages" ? "PAGES" : "DOC"
+        case .sheet: return ext == "numbers" ? "NUM" : "XLS"
+        case .slide: return ext == "key" ? "KEY" : "PPT"
+        case .rich: return ext.hasPrefix("htm") ? "HTML" : "RTF"
+        case nil:
+            if ext == "pdf" { return "PDF" }
+            if ext.isEmpty { return item.file != nil ? "TXT" : "" }
+            return String(ext.uppercased().prefix(4))
+        }
+    }
+
+    private var typeColor: Color {
+        switch PrintOffice.family(ext: ext) {
+        case .word: return Color(red: 0.17, green: 0.36, blue: 0.85)
+        case .sheet: return Color(red: 0.13, green: 0.55, blue: 0.30)
+        case .slide: return Color(red: 0.85, green: 0.38, blue: 0.16)
+        case .rich: return Color(red: 0.45, green: 0.45, blue: 0.55)
+        case nil: return ext == "pdf" ? Color(red: 0.86, green: 0.20, blue: 0.20) : Color(red: 0.50, green: 0.40, blue: 0.80)
+        }
+    }
+
+    private var icon: String {
+        if case .invalid = item.status { return "doc.badge.ellipsis" }
+        return "doc"
     }
 }
 
