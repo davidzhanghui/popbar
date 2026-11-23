@@ -27,12 +27,18 @@ jobs:
           tests/run.sh --static-only
 
       - name: Build & package
-        run: ./build.sh   # dmg 文件名自动带 uname -m 架构后缀
+        run: |
+          ./build.sh   # dmg 文件名自动带 uname -m 架构后缀
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build.noindex/PopBar.app/Contents/Info.plist)
+          ARCH=$(uname -m)
+          ditto -c -k --keepParent build.noindex/PopBar.app "build/PopBar-${VERSION}-${ARCH}.app.zip"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmg-${{ matrix.os }}
-          path: build/*.dmg
+          name: release-${{ matrix.os }}
+          path: |
+            build/*.dmg
+            build/*.app.zip
 
   # 两个架构都成功后,把 dmg 一起挂到同一个 Release
   release:
@@ -86,15 +92,26 @@ jobs:
             printf '\n---\n\n%s\n' "$AUTO" >> release-notes.md
           fi
 
-      - name: Create release & upload DMGs
+      - name: Create release & upload signed artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          (cd dist && sha256sum *.dmg > SHA256SUMS.txt)
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::Missing RELEASE_SIGNING_KEY secret"
+            exit 1
+          fi
+          (cd dist && sha256sum *.dmg *.app.zip > SHA256SUMS.txt)
           cat dist/SHA256SUMS.txt
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > /tmp/release-signing.pem
+          chmod 600 /tmp/release-signing.pem
+          openssl pkeyutl -sign -inkey /tmp/release-signing.pem -rawin -in dist/SHA256SUMS.txt -out dist/SHA256SUMS.txt.sig
+          openssl pkey -in /tmp/release-signing.pem -pubout -out /tmp/release-signing.pub.pem
+          openssl pkeyutl -verify -pubin -inkey /tmp/release-signing.pub.pem -rawin -in dist/SHA256SUMS.txt -sigfile dist/SHA256SUMS.txt.sig
+          rm -f /tmp/release-signing.pem /tmp/release-signing.pub.pem
           ls -l dist/
-          gh release create "$RELEASE_TAG" dist/*.dmg dist/SHA256SUMS.txt \
+          gh release create "$RELEASE_TAG" dist/*.dmg dist/*.app.zip dist/SHA256SUMS.txt dist/SHA256SUMS.txt.sig \
             -R "$GITHUB_REPOSITORY" \
             --title "PopBar $RELEASE_TAG" \
             --notes-file release-notes.md

@@ -499,8 +499,10 @@ struct UsageConfig: Codable, Equatable {
 
 /// 自动更新
 struct UpdateConfig: Codable, Equatable {
-    /// 启动时自动在后台检查新版本
+    /// 自动在后台检查并静默预下载新版本（每 6 小时）
     var autoCheck: Bool = true
+    /// 以后自动下载并安装更新（开启后就绪不弹窗打扰，退出应用时静默安装）
+    var autoInstall: Bool = false
 
     init() {}
 
@@ -508,6 +510,7 @@ struct UpdateConfig: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = UpdateConfig()
         autoCheck = (try? c.decode(Bool.self, forKey: .autoCheck)) ?? d.autoCheck
+        autoInstall = (try? c.decode(Bool.self, forKey: .autoInstall)) ?? d.autoInstall
     }
 }
 

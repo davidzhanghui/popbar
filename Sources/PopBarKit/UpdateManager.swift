@@ -2,7 +2,11 @@ import Cocoa
 import CryptoKit
 import PopBarCore
 
-/// 轻量应用内自动更新：检查 GitHub Releases → 流式下载对应架构 DMG → 校验 SHA256 与签名 → 覆盖安装并重启。
+/// 轻量应用内自动更新（借鉴 Stonebrook / Sparkle 2 范式）：
+/// - 启动与运行期每 6 小时后台检查（网络失败按 1/2/4/6 小时指数退避）；
+/// - 发现新版本后后台静默预下载 → 强制 Ed25519 离线验签（`SHA256SUMS.txt.sig`）→ 校验 SHA-256 → 解压验签暂存；
+/// - 就绪后弹出非阻塞的 Muse 风格决策窗：支持「跳过这个版本 / 退出应用时安装 / 安装并重启应用」与就地勾选「以后自动下载并安装更新」；
+/// - 保留 PopBar 录屏保护、同卷原子替换、AppTranslocation / 只读 DMG 识别与可取消流式下载。
 @MainActor
 final class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
@@ -13,9 +17,15 @@ final class UpdateManager: ObservableObject {
     private static let latestAPIURL = URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!
 
     private static let lastCheckKey = "PopBarUpdateLastCheckAt"
+    private static let retryAfterKey = "PopBarUpdateRetryAfter"
+    private static let failureCountKey = "PopBarUpdateFailureCount"
     private static let skippedVersionKey = "PopBarUpdateSkippedVersion"
-    /// 启动自动检查的最小间隔（24 小时）
-    private static let autoCheckInterval: TimeInterval = 24 * 3600
+    private static let pendingUpdateKey = "PopBarUpdatePendingJSON"
+
+    private struct PendingUpdate: Codable {
+        let release: UpdateRelease
+        let stagedPath: String
+    }
 
     enum State: Equatable {
         case idle
@@ -23,8 +33,11 @@ final class UpdateManager: ObservableObject {
         case upToDate(Date)
         case available(UpdateRelease)
         case downloading(UpdateRelease, progress: Double, received: Int64, total: Int64)
+        case preparing(UpdateRelease, stage: String)
+        /// 已下载、验签并解压就绪，随时可秒装或退出时安装
+        case ready(UpdateRelease, stagedURL: URL)
         case installing(UpdateRelease, stage: String)
-        case manualInstall(UpdateRelease, dmgURL: URL, reason: String)
+        case manualInstall(UpdateRelease, packageURL: URL, reason: String)
         case failed(String, UpdateRelease?)
     }
 
@@ -36,7 +49,7 @@ final class UpdateManager: ObservableObject {
         }
     }
 
-    /// 已发现的新版本（供侧栏角标与菜单栏常驻展示）
+    /// 已发现或已就绪的新版本（供侧栏角标与菜单栏常驻展示）
     @Published private(set) var availableRelease: UpdateRelease? {
         didSet {
             if availableRelease != oldValue {
@@ -45,17 +58,35 @@ final class UpdateManager: ObservableObject {
         }
     }
 
+    /// 本次会话用户是否已显式选择「退出应用时安装」
+    @Published private(set) var installOnQuitArmed: Bool = false {
+        didSet {
+            if installOnQuitArmed != oldValue {
+                NotificationCenter.default.post(name: Self.stateChanged, object: nil)
+            }
+        }
+    }
+
+    /// 上次退出替换失败时记录的提示信息（下次启动展示一次）
+    @Published private(set) var lastInstallFailure: String?
     @Published private(set) var lastCheckedAt: Date?
     @Published private(set) var skippedVersion: String?
 
     private var activeTask: Task<Void, Never>?
     private var activeDownload: DownloadHandle?
+    private var periodicTimer: Timer?
+    private var promptedVersion: String?
 
     var hasUpdate: Bool { availableRelease != nil }
 
+    var isReady: Bool {
+        if case .ready = state { return true }
+        return false
+    }
+
     var isBusy: Bool {
         switch state {
-        case .checking, .downloading, .installing: return true
+        case .checking, .downloading, .preparing, .installing: return true
         default: return false
         }
     }
@@ -82,51 +113,109 @@ final class UpdateManager: ObservableObject {
         skippedVersion = UserDefaults.standard.string(forKey: Self.skippedVersionKey)
     }
 
-    // MARK: - 检查更新
+    // MARK: - 生命周期与定时检查
 
-    /// 启动后在后台静默检查：受 `update.autoCheck` 与 24 小时节流控制；失败不打扰用户。
-    func checkOnLaunch() {
-        guard ConfigStore.shared.config.update.autoCheck else { return }
-        guard !isBusy else { return }
-        let last = UserDefaults.standard.double(forKey: Self.lastCheckKey)
-        if last > 0, Date().timeIntervalSince1970 - last < Self.autoCheckInterval {
-            return
+    /// 应用启动时调用：恢复已预下载的更新、清理旧暂存、读取上次安装失败标记，并开启运行期定时检查。
+    func startLifecycle(allowAutoCheck: Bool) {
+        restorePending()
+        let keepVersion: String?
+        if case .ready(let rel, _) = state {
+            keepVersion = rel.version.description
+        } else {
+            keepVersion = nil
         }
+        Self.pruneCache(keepingVersion: keepVersion)
+        consumeInstallFailure()
+
+        periodicTimer?.invalidate()
+        periodicTimer = Timer.scheduledTimer(withTimeInterval: UpdateSchedule.periodicPollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.autoCheckIfDue()
+            }
+        }
+
+        guard allowAutoCheck else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if case .ready(let rel, _) = self.state {
+                    self.maybePresentReadyPrompt(for: rel)
+                } else {
+                    self.autoCheckIfDue()
+                }
+            }
+        }
+    }
+
+    /// 后台静默检查：受 `update.autoCheck`、6 小时间隔与失败指数退避控制；失败静默。
+    func autoCheckIfDue() {
+        guard ConfigStore.shared.config.update.autoCheck else { return }
+        guard !isBusy, !isReady else { return }
+        let last = UserDefaults.standard.double(forKey: Self.lastCheckKey)
+        let retry = UserDefaults.standard.double(forKey: Self.retryAfterKey)
+        let lastDate = last > 0 ? Date(timeIntervalSince1970: last) : nil
+        let retryDate = retry > 0 ? Date(timeIntervalSince1970: retry) : nil
+        guard UpdateSchedule.isDue(now: Date(), lastChecked: lastDate, retryAfter: retryDate) else { return }
         startCheck(manual: false)
     }
 
-    /// 用户手动触发检查更新（不受节流和已跳过版本限制）
+    /// 兼容旧入口名。
+    func checkOnLaunch() {
+        startLifecycle(allowAutoCheck: true)
+    }
+
+    /// 用户手动触发检查更新（不受节流和已跳过版本限制）；若已有就绪包直接弹出决策窗。
     func checkManually() {
+        if case .ready = state {
+            presentReadyPrompt()
+            return
+        }
         guard !isBusy else { return }
         startCheck(manual: true)
     }
 
+    /// 打开 Muse 风格更新就绪弹窗。
+    func presentReadyPrompt() {
+        guard case .ready = state else { return }
+        UpdatePromptController.shared.show()
+    }
+
+    private func maybePresentReadyPrompt(for release: UpdateRelease) {
+        if ConfigStore.shared.config.update.autoInstall { return }
+        if RecordSession.shared.isRecording { return }
+        let ver = release.version.description
+        guard promptedVersion != ver else { return }
+        promptedVersion = ver
+        UpdatePromptController.shared.show()
+    }
+
     private func startCheck(manual: Bool) {
         activeTask?.cancel()
-        if manual { state = .checking }
+        if manual {
+            lastInstallFailure = nil
+            state = .checking
+        }
         activeTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let release = try await Self.fetchLatestRelease()
                 try Task.checkCancellation()
                 let now = Date()
-                self.lastCheckedAt = now
-                UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.lastCheckKey)
+                self.recordCheckSuccess(now: now)
 
                 let isNewer: Bool
                 if let cur = Self.currentVersion {
                     isNewer = release.version > cur
                 } else {
-                    // 开发构建（无合法版本号）仅在手动检查时展示最新正式版
                     isNewer = manual
                 }
 
                 if isNewer {
-                    self.availableRelease = release
-                    self.state = .available(release)
-                    if !manual && self.skippedVersion != release.version.description {
-                        self.presentUpdateAlert(release)
+                    if !manual && self.skippedVersion == release.version.description {
+                        return
                     }
+                    self.availableRelease = release
+                    self.downloadAndPrepare(release, interactive: manual)
                 } else {
                     self.availableRelease = nil
                     if manual { self.state = .upToDate(now) }
@@ -134,6 +223,7 @@ final class UpdateManager: ObservableObject {
             } catch is CancellationError {
                 if manual { self.state = .idle }
             } catch {
+                self.recordCheckFailure()
                 if manual {
                     self.state = .failed(Self.describeError(error), self.availableRelease)
                 }
@@ -141,13 +231,245 @@ final class UpdateManager: ObservableObject {
         }
     }
 
-    /// 跳过当前发现的版本（启动自动检查不再弹窗，手动检查仍可安装）
+    // MARK: - 后台静默下载、离线验签与解压暂存
+
+    /// 下载并准备新版本（完成后进入 `.ready`，不会直接强制重启）。
+    func downloadAndPrepare(_ release: UpdateRelease? = nil, interactive: Bool = true) {
+        guard let rel = release ?? availableRelease else { return }
+        if case .ready(let existing, _) = state, existing.version == rel.version {
+            if interactive { presentReadyPrompt() }
+            return
+        }
+        guard let asset = rel.preferredPackage(for: Self.currentArch) else {
+            let msg = L10n.t("此版本未包含适配 \(Self.currentArch) 的安装包，请前往发布页手动下载",
+                             "No package found for \(Self.currentArch). Please download manually from the release page.")
+            if interactive { state = .failed(msg, rel) }
+            return
+        }
+
+        activeTask?.cancel()
+        activeDownload?.cancel()
+        state = .downloading(rel, progress: 0, received: 0, total: asset.size)
+
+        activeTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                // 1. 下载前先强校验 SHA256SUMS.txt 与 Ed25519 离线签名（缺失或验签失败立即中止，不浪费流量）
+                let expectedHash = try await Self.fetchAndVerifyExpectedSHA256(for: asset, in: rel)
+                try Task.checkCancellation()
+
+                // 2. 流式下载安装包（支持进度与取消）
+                let versionDir = Self.versionDirectory(for: rel.version.description)
+                try? FileManager.default.removeItem(at: versionDir)
+                try FileManager.default.createDirectory(at: versionDir, withIntermediateDirectories: true)
+                let archiveURL = versionDir.appendingPathComponent(asset.name)
+
+                let handle = DownloadHandle()
+                self.activeDownload = handle
+                let tempFile = try await handle.download(from: asset.downloadURL) { [weak self] received, total in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        let expected = total > 0 ? total : asset.size
+                        let progress = expected > 0 ? min(max(Double(received) / Double(expected), 0), 1) : 0
+                        self.state = .downloading(rel, progress: progress, received: received, total: expected)
+                    }
+                }
+                self.activeDownload = nil
+                try Task.checkCancellation()
+
+                try? FileManager.default.removeItem(at: archiveURL)
+                try FileManager.default.moveItem(at: tempFile, to: archiveURL)
+
+                // 3. 校验安装包大小与 SHA-256
+                self.state = .preparing(rel, stage: L10n.t("正在校验安装包完整性…", "Verifying package integrity…"))
+                try await Self.verifyArchive(archiveURL, expectedSize: asset.size, expectedSHA256: expectedHash)
+                try Task.checkCancellation()
+
+                // 4. 解压并校验 .app 结构、Bundle ID 与代码签名，暂存到缓存目录（不污染 /Applications）
+                self.state = .preparing(rel, stage: L10n.t("正在解压并验证应用…", "Extracting and verifying app…"))
+                let expectedBundleID = Bundle.main.bundleIdentifier ?? "dev.popbar.app"
+                let stagedAppURL = try await Self.extractAndVerifyApp(
+                    archiveURL: archiveURL,
+                    into: versionDir,
+                    expectedBundleID: expectedBundleID
+                )
+                try? FileManager.default.removeItem(at: archiveURL)
+                try Task.checkCancellation()
+
+                // 5. 持久化待安装信息，进入就绪态
+                self.savePending(PendingUpdate(release: rel, stagedPath: stagedAppURL.path))
+                if self.skippedVersion == rel.version.description {
+                    self.skippedVersion = nil
+                    UserDefaults.standard.removeObject(forKey: Self.skippedVersionKey)
+                }
+                Self.pruneCache(keepingVersion: rel.version.description)
+                self.availableRelease = rel
+                self.state = .ready(rel, stagedURL: stagedAppURL)
+                if !interactive {
+                    self.maybePresentReadyPrompt(for: rel)
+                }
+            } catch is CancellationError {
+                self.activeDownload = nil
+                self.state = .available(rel)
+            } catch {
+                self.activeDownload = nil
+                self.recordCheckFailure()
+                if interactive {
+                    self.state = .failed(Self.describeError(error), rel)
+                } else {
+                    self.state = .idle
+                }
+            }
+        }
+    }
+
+    /// 兼容旧调用：若已就绪直接安装重启，否则下载并准备。
+    func downloadAndInstall(_ release: UpdateRelease? = nil) {
+        if case .ready = state {
+            installReadyUpdate(relaunch: true)
+            return
+        }
+        downloadAndPrepare(release, interactive: true)
+    }
+
+    // MARK: - 就绪后的三态操作：立即重启 / 退出时安装 / 跳过
+
+    /// 立即替换并重启，或（`relaunch == false`）静默安排在退出后替换不重启。
+    func installReadyUpdate(relaunch: Bool) {
+        guard case .ready(let rel, let stagedURL) = state else { return }
+        if relaunch && RecordSession.shared.isRecording {
+            state = .failed(L10n.t("正在录屏，请先停止录制后再更新",
+                                   "Screen recording is in progress. Stop recording before updating."), rel)
+            return
+        }
+        guard FileManager.default.fileExists(atPath: stagedURL.path) else {
+            clearPendingPersistence()
+            state = .available(rel)
+            return
+        }
+
+        let target = UpdateInstallTarget.resolve(bundleURL: Bundle.main.bundleURL)
+        let parentDir = target.destinationURL.deletingLastPathComponent()
+        guard FileManager.default.isWritableFile(atPath: parentDir.path) else {
+            UpdatePromptController.shared.close()
+            let msg = L10n.t("目标目录 \(parentDir.path) 无写入权限，已为你准备好新版本应用，请点击打开后手动拖入应用程序文件夹",
+                             "No write permission for \(parentDir.path). Open the folder and drag PopBar into Applications.")
+            state = .manualInstall(rel, packageURL: stagedURL, reason: msg)
+            return
+        }
+
+        UpdatePromptController.shared.close()
+        if relaunch {
+            state = .installing(rel, stage: L10n.t("正在覆盖安装并重启…", "Installing and relaunching…"))
+        }
+
+        let uuid = UUID().uuidString
+        let siblingStaged = parentDir.appendingPathComponent(".PopBar-update-\(uuid).app")
+        let backupURL = parentDir.appendingPathComponent(".PopBar-backup-\(uuid).app")
+        do {
+            try? FileManager.default.removeItem(at: siblingStaged)
+            // 同卷优先 O(1) move，跨卷回退 ditto
+            do {
+                try FileManager.default.moveItem(at: stagedURL, to: siblingStaged)
+            } catch {
+                let copy = Shell.run("/usr/bin/ditto", [stagedURL.path, siblingStaged.path], timeout: 120)
+                guard copy.ok else { throw UpdateError.copyFailed(copy.error) }
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: siblingStaged)
+            if relaunch {
+                state = .failed(Self.describeError(error), rel)
+            }
+            return
+        }
+
+        let cacheDir = Self.updatesCacheDirectory()
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let logURL = cacheDir.appendingPathComponent("install.log")
+        let markURL = cacheDir.appendingPathComponent("install-failed")
+
+        let spawn = Shell.spawnDetached("/bin/sh", [
+            "-c", UpdateScript.swapAndRelaunch, "popbar-updater",
+            String(getpid()),
+            target.destinationURL.path,
+            siblingStaged.path,
+            backupURL.path,
+            relaunch ? "open" : "skip",
+            logURL.path,
+            markURL.path
+        ])
+        switch spawn {
+        case .success:
+            // 已交给独立替换脚本：清空状态防止 applicationWillTerminate 重复触发
+            installOnQuitArmed = false
+            clearPendingPersistence()
+            availableRelease = nil
+            state = .idle
+            if relaunch {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    NSApp.terminate(nil)
+                }
+            }
+        case .failure(let err):
+            // 移回暂存包，避免丢失已下载的新版
+            if !FileManager.default.fileExists(atPath: stagedURL.path) {
+                try? FileManager.default.moveItem(at: siblingStaged, to: stagedURL)
+            } else {
+                try? FileManager.default.removeItem(at: siblingStaged)
+            }
+            if relaunch {
+                state = .failed(L10n.t("无法启动安装进程：\(err.message)", "Cannot launch installer: \(err.message)"), rel)
+            }
+        }
+    }
+
+    /// 授权「退出应用时安装」：关闭决策窗，保留就绪包，等用户主动退出时静默替换。
+    func armInstallOnQuit() {
+        guard case .ready = state else { return }
+        installOnQuitArmed = true
+        UpdatePromptController.shared.close()
+    }
+
+    /// 在 `applicationWillTerminate` 中调用：仅当用户点了「退出应用时安装」或开启了「以后自动下载并安装更新」时才安装。
+    func installOnQuitIfAuthorized() {
+        guard case .ready = state else { return }
+        let authorized = installOnQuitArmed || ConfigStore.shared.config.update.autoInstall
+        guard authorized else { return }
+        installReadyUpdate(relaunch: false)
+    }
+
+    /// 跳过当前版本（同步清理已下载暂存包与持久化记录，防止下次启动复活）。
     func skipAvailableVersion() {
-        guard let rel = availableRelease else { return }
-        skippedVersion = rel.version.description
-        UserDefaults.standard.set(rel.version.description, forKey: Self.skippedVersionKey)
+        let version: String?
+        switch state {
+        case .available(let r), .ready(let r, _), .manualInstall(let r, _, _):
+            version = r.version.description
+        case .failed(_, let r):
+            version = r?.version.description ?? availableRelease?.version.description
+        default:
+            version = availableRelease?.version.description
+        }
+        guard let version else { return }
+        skippedVersion = version
+        UserDefaults.standard.set(version, forKey: Self.skippedVersionKey)
+        installOnQuitArmed = false
+        clearPendingPersistence()
+        try? FileManager.default.removeItem(at: Self.versionDirectory(for: version))
+        UpdatePromptController.shared.close()
         availableRelease = nil
         state = .idle
+    }
+
+    /// 就地切换「以后自动下载并安装更新」（开启时顺手确保自动检查也开启）。
+    func setAutoInstall(_ on: Bool) {
+        var cfg = ConfigStore.shared.config
+        cfg.update.autoInstall = on
+        if on { cfg.update.autoCheck = true }
+        try? ConfigStore.shared.save(cfg)
+    }
+
+    func dismissInstallFailure() {
+        lastInstallFailure = nil
     }
 
     func openReleasePage(_ release: UpdateRelease? = nil) {
@@ -167,144 +489,77 @@ final class UpdateManager: ObservableObject {
         }
     }
 
-    // MARK: - 启动弹窗
+    // MARK: - 持久化与启动恢复
 
-    private func presentUpdateAlert(_ release: UpdateRelease) {
-        let a = NSAlert()
-        a.messageText = L10n.t("发现 PopBar 新版本 v\(release.version)",
-                               "PopBar v\(release.version) is available")
-        let notes = Self.compactNotes(release.changelogText, maxLines: 6)
-        let current = Self.currentVersionString
-        let header = L10n.t("当前版本 \(current)，可一键自动下载、覆盖安装并重启。",
-                            "Current version \(current). PopBar can download, install and relaunch automatically.")
-        a.informativeText = notes.isEmpty ? header : "\(header)\n\n\(notes)"
-        a.addButton(withTitle: L10n.t("立即更新并重启", "Update & Relaunch"))
-        a.addButton(withTitle: L10n.t("稍后", "Later"))
-        a.addButton(withTitle: L10n.t("跳过此版本", "Skip This Version"))
-        NSApp.activateForUI()
-        switch a.runModal() {
-        case .alertFirstButtonReturn:
-            DeckController.shared.show(page: .settings, settings: .about)
-            downloadAndInstall(release)
-        case .alertThirdButtonReturn:
-            skipAvailableVersion()
-        default:
-            break
+    private func savePending(_ pending: PendingUpdate) {
+        if let data = try? JSONEncoder().encode(pending) {
+            UserDefaults.standard.set(data, forKey: Self.pendingUpdateKey)
         }
     }
 
-    // MARK: - 下载、校验、覆盖安装与重启
+    private func clearPendingPersistence() {
+        UserDefaults.standard.removeObject(forKey: Self.pendingUpdateKey)
+    }
 
-    func downloadAndInstall(_ release: UpdateRelease? = nil) {
-        guard let rel = release ?? availableRelease else { return }
-        if RecordSession.shared.isRecording {
-            state = .failed(L10n.t("正在录屏，请先停止录制后再更新",
-                                   "Screen recording is in progress. Stop recording before updating."), rel)
+    private func restorePending() {
+        guard let data = UserDefaults.standard.data(forKey: Self.pendingUpdateKey),
+              let pending = try? JSONDecoder().decode(PendingUpdate.self, from: data) else {
             return
         }
-        guard let asset = rel.preferredDMG(for: Self.currentArch) else {
-            state = .failed(L10n.t("此版本未包含适配 \(Self.currentArch) 的 DMG 安装包，请前往发布页手动下载",
-                                   "No DMG asset found for \(Self.currentArch). Please download manually from the release page."), rel)
-            return
-        }
+        let stagedURL = URL(fileURLWithPath: pending.stagedPath)
+        let isNewer = Self.currentVersion.map { pending.release.version > $0 } ?? false
+        let notSkipped = skippedVersion != pending.release.version.description
+        let cacheRoot = Self.updatesCacheDirectory().standardizedFileURL.path
+        let insideCache = stagedURL.standardizedFileURL.path.hasPrefix(cacheRoot + "/")
+        let bundleVersion = Self.readBundleShortVersion(at: stagedURL)
+        let versionMatches = bundleVersion.flatMap(SemVer.init) == pending.release.version
 
-        activeTask?.cancel()
-        activeDownload?.cancel()
-        state = .downloading(rel, progress: 0, received: 0, total: asset.size)
-
-        activeTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                // 1. 下载 DMG（带实时进度）
-                let cacheDir = Self.updatesCacheDirectory()
-                try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-                Self.pruneOldDownloads(in: cacheDir)
-                let dmgURL = cacheDir.appendingPathComponent(asset.name)
-                try? FileManager.default.removeItem(at: dmgURL)
-
-                let handle = DownloadHandle()
-                self.activeDownload = handle
-                let tempFile = try await handle.download(from: asset.downloadURL) { [weak self] received, total in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        let expected = total > 0 ? total : asset.size
-                        let progress = expected > 0 ? min(max(Double(received) / Double(expected), 0), 1) : 0
-                        self.state = .downloading(rel, progress: progress, received: received, total: expected)
-                    }
-                }
-                self.activeDownload = nil
-                try Task.checkCancellation()
-
-                if FileManager.default.fileExists(atPath: dmgURL.path) {
-                    try? FileManager.default.removeItem(at: dmgURL)
-                }
-                try FileManager.default.moveItem(at: tempFile, to: dmgURL)
-
-                // 2. 校验文件大小与可选 SHA256SUMS.txt
-                self.state = .installing(rel, stage: L10n.t("正在校验安装包…", "Verifying download…"))
-                try await Self.verifyDownloadedDMG(dmgURL, asset: asset, checksumAsset: rel.checksumAsset)
-                try Task.checkCancellation()
-
-                // 3. 解析目标安装位置
-                let bundleURL = Bundle.main.bundleURL
-                let expectedBundleID = Bundle.main.bundleIdentifier ?? "dev.popbar.app"
-                let target = UpdateInstallTarget.resolve(bundleURL: bundleURL)
-                let parentDir = target.destinationURL.deletingLastPathComponent()
-
-                guard FileManager.default.isWritableFile(atPath: parentDir.path) else {
-                    let msg = L10n.t("目标目录 \(parentDir.path) 无写入权限，已为你下载好安装包，请点击打开后手动拖入应用程序文件夹",
-                                     "No write permission for \(parentDir.path). The DMG is downloaded; open it and drag PopBar into Applications.")
-                    self.state = .manualInstall(rel, dmgURL: dmgURL, reason: msg)
-                    return
-                }
-
-                // 4. 挂载 DMG、校验 .app、拷贝到同目录暂存包并清理 quarantine
-                self.state = .installing(rel, stage: L10n.t("正在解压并验证应用…", "Extracting and verifying app…"))
-                let stagedURL = try await Self.extractAndStageApp(
-                    dmgURL: dmgURL,
-                    parentDir: parentDir,
-                    expectedBundleID: expectedBundleID
-                )
-                try? FileManager.default.removeItem(at: dmgURL)
-                try Task.checkCancellation()
-
-                // 5. 拉起独立后台替换重启进程，然后优雅退出当前进程
-                self.state = .installing(rel, stage: L10n.t("正在覆盖安装并重启…", "Installing and relaunching…"))
-                let backupURL = parentDir.appendingPathComponent(".PopBar-backup-\(UUID().uuidString).app")
-                let spawn = Shell.spawnDetached("/bin/sh", [
-                    "-c", UpdateScript.swapAndRelaunch, "popbar-updater",
-                    String(getpid()),
-                    target.destinationURL.path,
-                    stagedURL.path,
-                    backupURL.path
-                ])
-                switch spawn {
-                case .success:
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                    NSApp.terminate(nil)
-                case .failure(let err):
-                    try? FileManager.default.removeItem(at: stagedURL)
-                    self.state = .failed(L10n.t("无法启动安装进程：\(err.message)", "Cannot launch installer: \(err.message)"), rel)
-                }
-            } catch is CancellationError {
-                self.activeDownload = nil
-                self.state = .available(rel)
-            } catch {
-                self.activeDownload = nil
-                self.state = .failed(Self.describeError(error), rel)
-            }
+        if isNewer && notSkipped && insideCache && versionMatches && FileManager.default.fileExists(atPath: stagedURL.path) {
+            availableRelease = pending.release
+            state = .ready(pending.release, stagedURL: stagedURL)
+        } else {
+            clearPendingPersistence()
         }
     }
 
-    // MARK: - 网络与校验（后台执行）
+    private func consumeInstallFailure() {
+        let markURL = Self.updatesCacheDirectory().appendingPathComponent("install-failed")
+        guard let raw = try? String(contentsOf: markURL, encoding: .utf8) else { return }
+        try? FileManager.default.removeItem(at: markURL)
+        let msg = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastInstallFailure = msg.isEmpty
+            ? L10n.t("上次更新安装失败，已保留旧版本", "Previous update failed to install. Your previous version was kept.")
+            : L10n.t("上次更新安装失败，已保留旧版本：\(msg)", "Previous update failed to install: \(msg)")
+    }
+
+    private func recordCheckSuccess(now: Date) {
+        lastCheckedAt = now
+        UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.lastCheckKey)
+        UserDefaults.standard.set(0.0, forKey: Self.retryAfterKey)
+        UserDefaults.standard.set(0, forKey: Self.failureCountKey)
+    }
+
+    private func recordCheckFailure() {
+        let count = UserDefaults.standard.integer(forKey: Self.failureCountKey) + 1
+        UserDefaults.standard.set(count, forKey: Self.failureCountKey)
+        let retryAt = Date().addingTimeInterval(UpdateSchedule.retryDelay(failures: count))
+        UserDefaults.standard.set(retryAt.timeIntervalSince1970, forKey: Self.retryAfterKey)
+    }
+
+    // MARK: - 网络与强校验（后台执行）
 
     private enum UpdateError: LocalizedError {
         case httpStatus(Int)
         case rateLimited
+        case missingChecksum
+        case missingSignature
+        case signatureInvalid
+        case checksumMissingEntry(String)
         case sizeMismatch(expected: Int64, actual: Int64)
         case checksumMismatch
         case mountFailed(String)
-        case appNotFoundInDMG
+        case unzipFailed(String)
+        case appNotFoundInPackage
         case bundleMismatch(String)
         case codeSignInvalid(String)
         case copyFailed(String)
@@ -316,14 +571,28 @@ final class UpdateManager: ObservableObject {
             case .rateLimited:
                 return L10n.t("GitHub API 请求频率受限，请稍后再试或直接访问发布页",
                               "GitHub API rate limit reached. Try again later or open the release page.")
+            case .missingChecksum:
+                return L10n.t("发布中缺少校验文件 SHA256SUMS.txt，为安全起见已拒绝安装",
+                              "Release is missing SHA256SUMS.txt. Installation aborted for security.")
+            case .missingSignature:
+                return L10n.t("发布中缺少签名文件 SHA256SUMS.txt.sig，为安全起见已拒绝安装",
+                              "Release is missing SHA256SUMS.txt.sig. Installation aborted for security.")
+            case .signatureInvalid:
+                return L10n.t("发布签名校验失败（Ed25519 不匹配），安装包可能被篡改，已拒绝安装",
+                              "Release signature verification failed (Ed25519 mismatch). Installation aborted.")
+            case .checksumMissingEntry(let name):
+                return L10n.t("校验文件中未找到 \(name) 的摘要，已拒绝安装",
+                              "Checksum entry for \(name) not found. Installation aborted.")
             case .sizeMismatch:
                 return L10n.t("安装包大小不完整，请重试", "Downloaded file size mismatch. Please try again.")
             case .checksumMismatch:
                 return L10n.t("安装包 SHA256 校验未通过，已中止安装", "SHA256 checksum verification failed. Installation aborted.")
             case .mountFailed(let e):
                 return L10n.t("挂载 DMG 失败：\(e)", "Failed to mount DMG: \(e)")
-            case .appNotFoundInDMG:
-                return L10n.t("安装包里未找到 PopBar.app", "PopBar.app was not found inside the DMG.")
+            case .unzipFailed(let e):
+                return L10n.t("解压安装包失败：\(e)", "Failed to unzip update package: \(e)")
+            case .appNotFoundInPackage:
+                return L10n.t("安装包里未找到 PopBar.app", "PopBar.app was not found inside the package.")
             case .bundleMismatch(let id):
                 return L10n.t("安装包标识不匹配（\(id)），已中止安装", "Unexpected bundle identifier (\(id)). Installation aborted.")
             case .codeSignInvalid(let e):
@@ -356,25 +625,46 @@ final class UpdateManager: ObservableObject {
         return try UpdateRelease.parseGitHubRelease(data)
     }
 
-    private nonisolated static func verifyDownloadedDMG(_ dmgURL: URL, asset: UpdateAsset, checksumAsset: UpdateAsset?) async throws {
-        let attrs = try FileManager.default.attributesOfItem(atPath: dmgURL.path)
-        let actualSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-        if asset.size > 0 && actualSize != asset.size {
-            try? FileManager.default.removeItem(at: dmgURL)
-            throw UpdateError.sizeMismatch(expected: asset.size, actual: actualSize)
+    /// 强校验：先下载并验证 `SHA256SUMS.txt` 的 Ed25519 离线签名，再取出对应安装包的期望 SHA-256。
+    private nonisolated static func fetchAndVerifyExpectedSHA256(for asset: UpdateAsset, in release: UpdateRelease) async throws -> String {
+        guard let checksumAsset = release.checksumAsset else {
+            throw UpdateError.missingChecksum
         }
-        guard let checksumAsset else { return }
+        guard let sigAsset = release.signatureAsset else {
+            throw UpdateError.missingSignature
+        }
         let (sumData, sumResp) = try await URLSession.shared.data(for: makeRequest(url: checksumAsset.downloadURL, timeout: 15))
-        guard let http = sumResp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              let text = String(data: sumData, encoding: .utf8),
+        guard let sumHTTP = sumResp as? HTTPURLResponse, (200..<300).contains(sumHTTP.statusCode) else {
+            throw UpdateError.httpStatus((sumResp as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        let (sigData, sigResp) = try await URLSession.shared.data(for: makeRequest(url: sigAsset.downloadURL, timeout: 15))
+        guard let sigHTTP = sigResp as? HTTPURLResponse, (200..<300).contains(sigHTTP.statusCode) else {
+            throw UpdateError.httpStatus((sigResp as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        do {
+            try UpdateSignature.verify(sumData, signature: sigData)
+        } catch {
+            throw UpdateError.signatureInvalid
+        }
+        guard let text = String(data: sumData, encoding: .utf8),
               let expected = UpdateRelease.parseSHA256Sums(text, filename: asset.name) else {
-            return
+            throw UpdateError.checksumMissingEntry(asset.name)
+        }
+        return expected
+    }
+
+    private nonisolated static func verifyArchive(_ archiveURL: URL, expectedSize: Int64, expectedSHA256: String) async throws {
+        let attrs = try FileManager.default.attributesOfItem(atPath: archiveURL.path)
+        let actualSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        if expectedSize > 0 && actualSize != expectedSize {
+            try? FileManager.default.removeItem(at: archiveURL)
+            throw UpdateError.sizeMismatch(expected: expectedSize, actual: actualSize)
         }
         let actual = try await Task.detached(priority: .utility) {
-            try Self.sha256Hex(of: dmgURL)
+            try Self.sha256Hex(of: archiveURL)
         }.value
-        if actual != expected {
-            try? FileManager.default.removeItem(at: dmgURL)
+        if actual != expectedSHA256 {
+            try? FileManager.default.removeItem(at: archiveURL)
             throw UpdateError.checksumMismatch
         }
     }
@@ -391,71 +681,81 @@ final class UpdateManager: ObservableObject {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    /// 挂载 DMG → 校验 PopBar.app 与代码签名 → 拷贝到目标目录同级暂存路径 → 清理 quarantine → 卸载 DMG
-    private nonisolated static func extractAndStageApp(dmgURL: URL, parentDir: URL, expectedBundleID: String) async throws -> URL {
+    /// 解压 `.app.zip` 或挂载 `.dmg` → 校验 PopBar.app 与代码签名 → 暂存到 `versionDir/app/PopBar.app` → 清理 quarantine。
+    private nonisolated static func extractAndVerifyApp(archiveURL: URL, into versionDir: URL, expectedBundleID: String) async throws -> URL {
         try await Task.detached(priority: .userInitiated) {
             let fm = FileManager.default
-            let uuid = UUID().uuidString
-            let mountDir = fm.temporaryDirectory.appendingPathComponent("popbar-mnt-\(uuid)")
-            try fm.createDirectory(at: mountDir, withIntermediateDirectories: true)
+            let unpackedDir = versionDir.appendingPathComponent("app", isDirectory: true)
+            try? fm.removeItem(at: unpackedDir)
+            try fm.createDirectory(at: unpackedDir, withIntermediateDirectories: true)
 
-            var mounted = false
-            defer {
-                if mounted {
-                    _ = Shell.run("/usr/bin/hdiutil", ["detach", mountDir.path, "-force", "-quiet"], timeout: 30)
+            let stagedApp: URL
+            if archiveURL.lastPathComponent.lowercased().hasSuffix(".zip") {
+                let unzip = Shell.run("/usr/bin/ditto", ["-x", "-k", archiveURL.path, unpackedDir.path], timeout: 120)
+                guard unzip.ok else { throw UpdateError.unzipFailed(unzip.error) }
+                let items = (try? fm.contentsOfDirectory(at: unpackedDir, includingPropertiesForKeys: nil)) ?? []
+                guard let found = items.first(where: { $0.lastPathComponent == "PopBar.app" })
+                    ?? items.first(where: { $0.pathExtension.lowercased() == "app" }) else {
+                    throw UpdateError.appNotFoundInPackage
                 }
-                try? fm.removeItem(at: mountDir)
-            }
+                stagedApp = found
+            } else {
+                let mountDir = fm.temporaryDirectory.appendingPathComponent("popbar-mnt-\(UUID().uuidString)")
+                try fm.createDirectory(at: mountDir, withIntermediateDirectories: true)
+                var mounted = false
+                defer {
+                    if mounted {
+                        _ = Shell.run("/usr/bin/hdiutil", ["detach", mountDir.path, "-force", "-quiet"], timeout: 30)
+                    }
+                    try? fm.removeItem(at: mountDir)
+                }
+                let attach = Shell.run("/usr/bin/hdiutil", [
+                    "attach", archiveURL.path,
+                    "-nobrowse", "-readonly", "-noautoopen",
+                    "-mountpoint", mountDir.path, "-quiet"
+                ], timeout: 60)
+                guard attach.ok else { throw UpdateError.mountFailed(attach.error) }
+                mounted = true
 
-            let attach = Shell.run("/usr/bin/hdiutil", [
-                "attach", dmgURL.path,
-                "-nobrowse", "-readonly", "-noautoopen",
-                "-mountpoint", mountDir.path, "-quiet"
-            ], timeout: 60)
-            guard attach.ok else {
-                throw UpdateError.mountFailed(attach.error)
-            }
-            mounted = true
-
-            // 定位挂载卷中的 PopBar.app
-            let items = (try? fm.contentsOfDirectory(at: mountDir, includingPropertiesForKeys: nil)) ?? []
-            let appURL = items.first { $0.lastPathComponent == "PopBar.app" }
-                ?? items.first { $0.pathExtension.lowercased() == "app" }
-            guard let appURL else {
-                throw UpdateError.appNotFoundInDMG
+                let items = (try? fm.contentsOfDirectory(at: mountDir, includingPropertiesForKeys: nil)) ?? []
+                guard let appURL = items.first(where: { $0.lastPathComponent == "PopBar.app" })
+                    ?? items.first(where: { $0.pathExtension.lowercased() == "app" }) else {
+                    throw UpdateError.appNotFoundInPackage
+                }
+                let dst = unpackedDir.appendingPathComponent("PopBar.app")
+                let copy = Shell.run("/usr/bin/ditto", [appURL.path, dst.path], timeout: 120)
+                guard copy.ok else { throw UpdateError.copyFailed(copy.error) }
+                stagedApp = dst
             }
 
             // 校验 Bundle 结构和标识符
-            let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
-            let execURL = appURL.appendingPathComponent("Contents/MacOS/PopBar")
+            let infoURL = stagedApp.appendingPathComponent("Contents/Info.plist")
+            let execURL = stagedApp.appendingPathComponent("Contents/MacOS/PopBar")
             guard fm.fileExists(atPath: infoURL.path), fm.isExecutableFile(atPath: execURL.path),
                   let dict = NSDictionary(contentsOf: infoURL) as? [String: Any],
                   let bundleID = dict["CFBundleIdentifier"] as? String else {
-                throw UpdateError.appNotFoundInDMG
+                throw UpdateError.appNotFoundInPackage
             }
             guard bundleID == expectedBundleID else {
                 throw UpdateError.bundleMismatch(bundleID)
             }
 
             // 校验代码签名（ad-hoc 签名与 Developer ID 签名均能通过 --verify --deep --strict）
-            let verify = Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", appURL.path], timeout: 30)
+            let verify = Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp.path], timeout: 30)
             guard verify.ok else {
                 throw UpdateError.codeSignInvalid(verify.error)
             }
 
-            // 拷贝到目标父目录同级暂存路径，确保后续 mv 在同卷内原子完成
-            let stagedURL = parentDir.appendingPathComponent(".PopBar-update-\(uuid).app")
-            try? fm.removeItem(at: stagedURL)
-            let copy = Shell.run("/usr/bin/ditto", [appURL.path, stagedURL.path], timeout: 120)
-            guard copy.ok else {
-                try? fm.removeItem(at: stagedURL)
-                throw UpdateError.copyFailed(copy.error)
-            }
-
             // 清除 quarantine 扩展属性，避免重启后触发「已损坏」弹窗
-            _ = Shell.run("/usr/bin/xattr", ["-cr", stagedURL.path], timeout: 30)
-            return stagedURL
+            _ = Shell.run("/usr/bin/xattr", ["-cr", stagedApp.path], timeout: 30)
+            return stagedApp
         }.value
+    }
+
+    private nonisolated static func readBundleShortVersion(at appURL: URL) -> String? {
+        let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
+        guard let dict = NSDictionary(contentsOf: infoURL) as? [String: Any] else { return nil }
+        return dict["CFBundleShortVersionString"] as? String
     }
 
     private nonisolated static func updatesCacheDirectory() -> URL {
@@ -464,18 +764,21 @@ final class UpdateManager: ObservableObject {
         return caches.appendingPathComponent("dev.popbar.app/updates", isDirectory: true)
     }
 
-    private nonisolated static func pruneOldDownloads(in dir: URL) {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
-        for f in files { try? fm.removeItem(at: f) }
+    private nonisolated static func versionDirectory(for version: String) -> URL {
+        let safe = version.filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_") }
+        let name = safe.isEmpty || safe.hasPrefix(".") ? "staged" : safe
+        return updatesCacheDirectory().appendingPathComponent(name, isDirectory: true)
     }
 
-    private static func compactNotes(_ text: String, maxLines: Int) -> String {
-        let lines = text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        if lines.count <= maxLines { return lines.joined(separator: "\n") }
-        return lines.prefix(maxLines).joined(separator: "\n") + "\n…"
+    private nonisolated static func pruneCache(keepingVersion keep: String?) {
+        let fm = FileManager.default
+        let dir = updatesCacheDirectory()
+        guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+        for e in entries {
+            let name = e.lastPathComponent
+            if name == "install.log" || name == "install-failed" || name == keep { continue }
+            try? fm.removeItem(at: e)
+        }
     }
 
     private static func describeError(_ error: Error) -> String {
@@ -560,7 +863,7 @@ private final class DownloadHandle: NSObject, URLSessionDownloadDelegate, @unche
                     didFinishDownloadingTo location: URL) {
         // 必须在回调返回前把系统临时文件移走，否则系统立即删除
         let moved = FileManager.default.temporaryDirectory
-            .appendingPathComponent("popbar-dl-\(UUID().uuidString).dmg")
+            .appendingPathComponent("popbar-dl-\(UUID().uuidString).pkg")
         do {
             if let http = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 throw NSError(domain: "PopBarUpdate", code: http.statusCode,

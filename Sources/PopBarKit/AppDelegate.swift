@@ -41,18 +41,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
             UsageStats.shared.maybeSuggest()
         }
-        // 自动检查更新：首次引导/权限缺失时不打断；其余场景启动 8s 后后台静默检查（每 24h 最多一次）
-        if !needsWelcome {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
-                MainActor.assumeIsolated { UpdateManager.shared.checkOnLaunch() }
-            }
+        // 自动更新生命周期：恢复已预下载的新版本、清理旧暂存、读取上次安装失败标记，并开启 6h 定时后台检查
+        MainActor.assumeIsolated {
+            UpdateManager.shared.startLifecycle(allowAutoCheck: !needsWelcome)
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         RecordSession.shared.stopSynchronously()   // 退出时仍在录制:同步收尾,保证文件可播放
         ClipboardHistory.shared.save()             // persist 开启时兜底写盘
-        MainActor.assumeIsolated { ModuleRegistry.shared.stopAll() }
+        MainActor.assumeIsolated {
+            ModuleRegistry.shared.stopAll()
+            UpdateManager.shared.installOnQuitIfAuthorized()
+        }
     }
 
     /// Dock / Finder 再次打开 App:直接打开 Deck
@@ -163,15 +164,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.keyEquivalentModifierMask = .command
         menu.addItem(settings)
         let updateTitle: String
-        if let rel = UpdateManager.shared.availableRelease {
+        if case .ready(let rel, _) = UpdateManager.shared.state {
+            updateTitle = L10n.t("安装新版本 v\(rel.version)…", "Install Update (v\(rel.version))…")
+        } else if let rel = UpdateManager.shared.availableRelease {
             updateTitle = L10n.t("发现新版本 v\(rel.version)…", "Update Available (v\(rel.version))…")
         } else {
             updateTitle = L10n.t("检查更新…", "Check for Updates…")
         }
         menu.addItem(AppRouter.menuItem(updateTitle) {
-            AppRouter.openSettings(.about)
-            if !UpdateManager.shared.isBusy && !UpdateManager.shared.hasUpdate {
-                UpdateManager.shared.checkManually()
+            if UpdateManager.shared.isReady {
+                UpdateManager.shared.presentReadyPrompt()
+            } else {
+                AppRouter.openSettings(.about)
+                if !UpdateManager.shared.isBusy && !UpdateManager.shared.hasUpdate {
+                    UpdateManager.shared.checkManually()
+                }
             }
         })
         menu.addItem(.separator())

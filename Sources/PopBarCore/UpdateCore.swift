@@ -1,7 +1,8 @@
+import CryptoKit
 import Foundation
 
 /// 语义化版本号（支持 `v3.1.0`、`3.1`、`3.1.0-beta.1`、`3.1.0+13`）
-public struct SemVer: Comparable, Hashable, Sendable, CustomStringConvertible {
+public struct SemVer: Comparable, Hashable, Codable, Sendable, CustomStringConvertible {
     public let major: Int
     public let minor: Int
     public let patch: Int
@@ -72,7 +73,7 @@ public struct SemVer: Comparable, Hashable, Sendable, CustomStringConvertible {
 }
 
 /// GitHub Release 附件
-public struct UpdateAsset: Equatable, Sendable {
+public struct UpdateAsset: Equatable, Codable, Sendable {
     public let name: String
     public let downloadURL: URL
     public let size: Int64
@@ -85,7 +86,7 @@ public struct UpdateAsset: Equatable, Sendable {
 }
 
 /// 解析后的 GitHub Release 信息
-public struct UpdateRelease: Equatable, Sendable {
+public struct UpdateRelease: Equatable, Codable, Sendable {
     public let tagName: String
     public let version: SemVer
     public let name: String
@@ -179,12 +180,37 @@ public struct UpdateRelease: Equatable, Sendable {
         return neutral.count == 1 ? neutral[0] : nil
     }
 
+    /// 匹配本机架构（`arm64` / `x86_64`）对应的 `.app.zip` 更新包（应用内更新优先使用，无需挂载 DMG）
+    public func preferredAppZip(for arch: String) -> UpdateAsset? {
+        let zips = assets.filter { $0.name.lowercased().hasSuffix(".app.zip") }
+        let target = arch.lowercased()
+        let other = target == "arm64" ? "x86_64" : "arm64"
+        if let exact = zips.first(where: { $0.name.lowercased().contains("-\(target).app.zip") || $0.name.lowercased().contains("_\(target).app.zip") }) {
+            return exact
+        }
+        if let uni = zips.first(where: { $0.name.lowercased().contains("universal") }) {
+            return uni
+        }
+        let neutral = zips.filter { !$0.name.lowercased().contains(other) }
+        return neutral.count == 1 ? neutral[0] : nil
+    }
+
+    /// 匹配本机架构的应用内更新包：优先 `.app.zip`，回退 `.dmg`（兼容旧版 Release）。
+    public func preferredPackage(for arch: String) -> UpdateAsset? {
+        preferredAppZip(for: arch) ?? preferredDMG(for: arch)
+    }
+
     /// 校验文件附件（如 `SHA256SUMS.txt`）
     public var checksumAsset: UpdateAsset? {
         assets.first {
             let n = $0.name.lowercased()
             return n == "sha256sums.txt" || n == "sha256sums" || n == "checksums.txt" || n.hasSuffix(".sha256")
         }
+    }
+
+    /// 离线 Ed25519 签名附件（`SHA256SUMS.txt.sig`）
+    public var signatureAsset: UpdateAsset? {
+        assets.first { $0.name.lowercased() == "sha256sums.txt.sig" }
     }
 
     /// 提取更新说明正文：Release 模板前半段是固定的下载与安装说明，用 `---` 与实际变更日志隔开
@@ -247,14 +273,72 @@ public struct UpdateInstallTarget: Equatable, Sendable {
     }
 }
 
-/// 更新替换与重启的后台脚本：所有路径通过位置参数（`$1`…`$5`）传入，避免命令注入。
+/// 发版离线验签（Ed25519）：使用硬编码公钥验证 CI 用 OpenSSL 签出的 `SHA256SUMS.txt.sig`。
+public enum UpdateSignature {
+    /// PopBar 发版签名公钥（原始 32 字节，对应 GitHub Actions Secret `RELEASE_SIGNING_KEY`）
+    public static let releasePublicKeyBytes: [UInt8] = [
+        0x02, 0x21, 0xb4, 0xae, 0xb0, 0xe4, 0xf7, 0x0b,
+        0xe4, 0x97, 0xf9, 0xad, 0x2c, 0x13, 0x14, 0x38,
+        0x93, 0x0a, 0xaa, 0x87, 0x6c, 0x4a, 0xfc, 0x4e,
+        0x87, 0xd9, 0xe5, 0x22, 0xa1, 0x8c, 0x68, 0xa2,
+    ]
+
+    public enum VerifyError: Error, Equatable {
+        case invalidPublicKey
+        case invalidSignatureLength(Int)
+        case invalidSignature
+    }
+
+    public static func verify(
+        _ message: Data,
+        signature: Data,
+        publicKeyBytes: [UInt8] = releasePublicKeyBytes
+    ) throws {
+        guard signature.count == 64 else {
+            throw VerifyError.invalidSignatureLength(signature.count)
+        }
+        guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: Data(publicKeyBytes)) else {
+            throw VerifyError.invalidPublicKey
+        }
+        guard key.isValidSignature(signature, for: message) else {
+            throw VerifyError.invalidSignature
+        }
+    }
+}
+
+/// 后台自动检查节流与失败退避策略（与石渠一致：6h 常规间隔，失败按 1/2/4/6h 指数退避）
+public enum UpdateSchedule {
+    public static let checkInterval: TimeInterval = 6 * 3600
+    public static let retryBase: TimeInterval = 3600
+    public static let retryMax: TimeInterval = 6 * 3600
+    public static let periodicPollInterval: TimeInterval = 15 * 60
+
+    /// 第 `failures` 次连续失败后的等待时间：1h、2h、4h，封顶 6h。
+    public static func retryDelay(failures: Int) -> TimeInterval {
+        let shift = min(max(failures - 1, 0), 3)
+        return min(retryBase * Double(1 << shift), retryMax)
+    }
+
+    /// 当前时刻是否到期需要自动检查：失败退避优先于常规 6 小时间隔。
+    public static func isDue(now: Date, lastChecked: Date?, retryAfter: Date?) -> Bool {
+        if let retryAfter, retryAfter.timeIntervalSince1970 > 0 {
+            return now >= retryAfter
+        }
+        guard let lastChecked else { return true }
+        return now.timeIntervalSince(lastChecked) >= checkInterval
+    }
+}
+
+/// 更新替换与重启的后台脚本：所有路径通过位置参数（`$1`…`$7`）传入，避免命令注入。
 public enum UpdateScript {
     /// 参数：
     /// - `$1`: 旧进程 PID
     /// - `$2`: 目标 `.app` 路径
     /// - `$3`: 已解压校验并清理 quarantine 的暂存 `.app` 路径（与 `$2` 同目录）
     /// - `$4`: 备份 `.app` 路径（替换成功后删除，失败时回滚）
-    /// - `$5`: 可选自定义启动命令（默认 `open`；设为 `skip` 仅供自动化测试验证替换逻辑）
+    /// - `$5`: 可选自定义启动命令（默认 `open`；设为 `skip` 表示仅替换不重启，用于退出安装与自动化测试）
+    /// - `$6`: 可选安装日志文件路径（`install.log`）
+    /// - `$7`: 可选失败标记文件路径（`install-failed`，下次启动时读取提示并清除）
     public static let swapAndRelaunch = """
     set -u
     pid="$1"
@@ -262,9 +346,26 @@ public enum UpdateScript {
     staged="$3"
     backup="$4"
     launcher="${5:-open}"
+    log="${6:-}"
+    mark="${7:-}"
+
+    log_line() {
+        if [ -n "$log" ]; then
+            printf '%s %s\\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$log" 2>/dev/null || true
+        fi
+    }
+
+    fail() {
+        code="$1"; shift
+        log_line "$*"
+        if [ -n "$mark" ]; then
+            printf '%s\\n' "$*" >"$mark" 2>/dev/null || true
+        fi
+        exit "$code"
+    }
 
     i=0
-    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 150 ]; do
         case "$(/bin/ps -o state= -p "$pid" 2>/dev/null)" in
             ""|Z*) break ;;
         esac
@@ -280,25 +381,27 @@ public enum UpdateScript {
     fi
 
     if [ ! -d "$staged" ]; then
-        exit 2
+        fail 2 "找不到待安装的新版本文件"
     fi
 
     rm -rf "$backup"
     if [ -e "$target" ]; then
         if ! mv "$target" "$backup"; then
             rm -rf "$staged"
-            exit 3
+            fail 3 "没有权限替换 $target"
         fi
     fi
 
     if mv "$staged" "$target"; then
         rm -rf "$backup"
+        [ -n "$mark" ] && rm -f "$mark"
+        log_line "已更新到新版本"
     else
         if [ -e "$backup" ]; then
             mv "$backup" "$target" 2>/dev/null || true
         fi
         rm -rf "$staged"
-        exit 4
+        fail 4 "新版本替换失败，已恢复旧版本"
     fi
 
     /usr/bin/xattr -cr "$target" 2>/dev/null || true

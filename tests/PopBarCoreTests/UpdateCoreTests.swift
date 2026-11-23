@@ -177,4 +177,93 @@ final class UpdateCoreTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: staged.path), "暂存目录未清理")
         XCTAssertFalse(fm.fileExists(atPath: backup.path), "备份目录未清理")
     }
+
+    func testEd25519VerifiesOpenSSLSignatureAndRejectsTampering() throws {
+        // 本机 OpenSSL 3 `pkeyutl -sign -rawin` 对测试消息生成的真实签名，验证与 CryptoKit 完全互通
+        let msg = Data("popbar-ed25519-self-test\n".utf8)
+        let sigBytes: [UInt8] = [
+            0x79, 0xb7, 0x9e, 0x00, 0x1b, 0xa8, 0xb8, 0xbe, 0x62, 0xde, 0x67, 0x70, 0x43, 0x97, 0x89, 0x9c,
+            0x91, 0x87, 0xae, 0xcc, 0xae, 0xb1, 0xb3, 0x8e, 0x2c, 0xb1, 0x6a, 0xaf, 0x29, 0x4b, 0x6c, 0xf8,
+            0x48, 0x2e, 0xe5, 0xea, 0xf2, 0x72, 0x1f, 0x9a, 0x2a, 0xfd, 0xd8, 0x5f, 0xb6, 0xa9, 0x76, 0x07,
+            0xf3, 0xf9, 0x37, 0xa1, 0xba, 0x98, 0x27, 0xbd, 0x9a, 0xc2, 0xe5, 0x93, 0x7f, 0x6c, 0x85, 0x04,
+        ]
+        let sig = Data(sigBytes)
+        XCTAssertNoThrow(try UpdateSignature.verify(msg, signature: sig))
+
+        // 篡改消息任意 1 字节必须拒签
+        var tamperedMsg = msg
+        tamperedMsg[0] ^= 0x01
+        XCTAssertThrowsError(try UpdateSignature.verify(tamperedMsg, signature: sig)) { err in
+            XCTAssertEqual(err as? UpdateSignature.VerifyError, .invalidSignature)
+        }
+
+        // 篡改签名任意 1 字节必须拒签
+        var tamperedSig = sig
+        tamperedSig[63] ^= 0x01
+        XCTAssertThrowsError(try UpdateSignature.verify(msg, signature: tamperedSig)) { err in
+            XCTAssertEqual(err as? UpdateSignature.VerifyError, .invalidSignature)
+        }
+
+        // 签名长度异常必须拒签
+        XCTAssertThrowsError(try UpdateSignature.verify(msg, signature: sig.dropLast())) { err in
+            XCTAssertEqual(err as? UpdateSignature.VerifyError, .invalidSignatureLength(63))
+        }
+    }
+
+    func testPreferredPackageAndSignatureAsset() {
+        let rel = UpdateRelease(
+            tagName: "v3.2.0", version: SemVer("3.2.0")!, name: "PopBar v3.2.0", body: "",
+            htmlURL: URL(string: "https://example.com/r")!, publishedAt: nil,
+            assets: [
+                UpdateAsset(name: "PopBar-3.2.0-arm64.dmg", downloadURL: URL(string: "https://example.com/a.dmg")!, size: 100),
+                UpdateAsset(name: "PopBar-3.2.0-arm64.app.zip", downloadURL: URL(string: "https://example.com/a.zip")!, size: 90),
+                UpdateAsset(name: "PopBar-3.2.0-x86_64.dmg", downloadURL: URL(string: "https://example.com/x.dmg")!, size: 110),
+                UpdateAsset(name: "SHA256SUMS.txt", downloadURL: URL(string: "https://example.com/s.txt")!, size: 200),
+                UpdateAsset(name: "SHA256SUMS.txt.sig", downloadURL: URL(string: "https://example.com/s.sig")!, size: 64),
+            ]
+        )
+        // arm64 有 .app.zip 时优先选 .app.zip；x86_64 只有 .dmg 时平滑回退 .dmg
+        XCTAssertEqual(rel.preferredPackage(for: "arm64")?.name, "PopBar-3.2.0-arm64.app.zip")
+        XCTAssertEqual(rel.preferredPackage(for: "x86_64")?.name, "PopBar-3.2.0-x86_64.dmg")
+        XCTAssertEqual(rel.signatureAsset?.name, "SHA256SUMS.txt.sig")
+    }
+
+    func testScheduleIntervalAndBackoff() {
+        XCTAssertEqual(UpdateSchedule.retryDelay(failures: 1), 3600)
+        XCTAssertEqual(UpdateSchedule.retryDelay(failures: 2), 7200)
+        XCTAssertEqual(UpdateSchedule.retryDelay(failures: 3), 14400)
+        XCTAssertEqual(UpdateSchedule.retryDelay(failures: 4), 21600)
+        XCTAssertEqual(UpdateSchedule.retryDelay(failures: 9), 21600)
+
+        let now = Date(timeIntervalSince1970: 100_000)
+        XCTAssertTrue(UpdateSchedule.isDue(now: now, lastChecked: nil, retryAfter: nil))
+        XCTAssertFalse(UpdateSchedule.isDue(now: now, lastChecked: now.addingTimeInterval(-3600), retryAfter: nil))
+        XCTAssertTrue(UpdateSchedule.isDue(now: now, lastChecked: now.addingTimeInterval(-6 * 3600), retryAfter: nil))
+        // 退避期优先于常规间隔
+        XCTAssertFalse(UpdateSchedule.isDue(now: now, lastChecked: now.addingTimeInterval(-24 * 3600), retryAfter: now.addingTimeInterval(600)))
+        XCTAssertTrue(UpdateSchedule.isDue(now: now, lastChecked: now.addingTimeInterval(-60), retryAfter: now.addingTimeInterval(-1)))
+    }
+
+    func testSwapScriptLogsAndWritesFailMarkerWhenStagedMissing() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("popbar-swap-fail-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let target = root.appendingPathComponent("PopBar.app")
+        let missingStaged = root.appendingPathComponent(".PopBar-missing.app")
+        let backup = root.appendingPathComponent(".PopBar-backup.app")
+        let logURL = root.appendingPathComponent("install.log")
+        let markURL = root.appendingPathComponent("install-failed")
+
+        let res = Shell.run("/bin/sh", [
+            "-c", UpdateScript.swapAndRelaunch, "popbar-updater",
+            "999999", target.path, missingStaged.path, backup.path, "skip", logURL.path, markURL.path
+        ], timeout: 10)
+        XCTAssertFalse(res.ok)
+        XCTAssertTrue(fm.fileExists(atPath: logURL.path))
+        XCTAssertTrue(fm.fileExists(atPath: markURL.path))
+        let markText = try String(contentsOf: markURL, encoding: .utf8)
+        XCTAssertTrue(markText.contains("找不到待安装的新版本文件"))
+    }
 }

@@ -418,9 +418,36 @@ struct AboutSettings: View {
             }
         }
         DSGroup(L10n.t("软件更新", "Software Update")) {
-            DSSettingRow(L10n.t("启动时自动检查更新", "Check Automatically on Launch"),
-                         subtitle: L10n.t("每天最多在后台检查一次，发现新版本时提醒", "Checks in the background at most once a day and notifies you when a new version is out")) {
-                DSToggle(isOn: e.bind(\.update.autoCheck))
+            DSSettingRow(L10n.t("自动检查并预下载更新", "Check & Download Automatically"),
+                         subtitle: L10n.t("每 6 小时在后台检查一次，发现新版本后静默下载并校验", "Checks every 6 hours and silently downloads & verifies updates in the background")) {
+                DSToggle(isOn: Binding(
+                    get: { e.c.update.autoCheck },
+                    set: { v in
+                        e.update {
+                            $0.update.autoCheck = v
+                            if !v { $0.update.autoInstall = false }
+                        }
+                    }
+                ))
+            }
+            DSDivider()
+            DSSettingRow(L10n.t("以后自动下载并安装更新", "Automatically Install Updates on Quit"),
+                         subtitle: L10n.t("开启后下载完成不弹窗打扰，退出应用时静默安装；关闭则就绪后弹窗询问", "Installs silently on quit without prompting; when off, prompts once ready")) {
+                DSToggle(isOn: Binding(
+                    get: { e.c.update.autoInstall },
+                    set: { v in
+                        e.update {
+                            $0.update.autoInstall = v
+                            if v { $0.update.autoCheck = true }
+                        }
+                    }
+                ))
+            }
+            if let failure = updater.lastInstallFailure {
+                DSDivider()
+                DSSettingRow(L10n.t("上次安装提示", "Previous Install Notice"), subtitle: failure, subtitleTone: .danger) {
+                    DSButton(L10n.t("知道了", "Dismiss"), kind: .ghost) { updater.dismissInstallFailure() }
+                }
             }
             DSDivider()
             updateStatusRow
@@ -444,7 +471,9 @@ struct AboutSettings: View {
 
     @ViewBuilder private var versionBadge: some View {
         switch updater.state {
-        case .available(let rel), .downloading(let rel, _, _, _), .installing(let rel, _), .manualInstall(let rel, _, _):
+        case .ready(let rel, _):
+            DSChip(L10n.t("v\(rel.version) 已就绪", "v\(rel.version) ready"), tone: .accent, icon: "sparkles")
+        case .available(let rel), .downloading(let rel, _, _, _), .preparing(let rel, _), .installing(let rel, _), .manualInstall(let rel, _, _):
             DSChip("v\(rel.version)", tone: .accent, icon: "sparkles")
         case .upToDate:
             DSChip(L10n.t("已是最新", "Up to date"), tone: .success, icon: "circle-check")
@@ -457,7 +486,7 @@ struct AboutSettings: View {
 
     private var activeReleaseForNotes: UpdateRelease? {
         switch updater.state {
-        case .available(let r), .downloading(let r, _, _, _), .installing(let r, _), .manualInstall(let r, _, _):
+        case .available(let r), .downloading(let r, _, _, _), .preparing(let r, _), .ready(let r, _), .installing(let r, _), .manualInstall(let r, _, _):
             return r
         case .failed(_, let r):
             return r
@@ -514,6 +543,37 @@ struct AboutSettings: View {
                     .tint(DS.accent)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
+        case .preparing(let rel, let stage):
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.t("正在校验并准备 PopBar v\(rel.version)", "Preparing PopBar v\(rel.version)"))
+                        .font(DS.font(13, .medium)).foregroundStyle(DS.text)
+                    Text(stage).font(DS.font(11.5)).foregroundStyle(DS.muted)
+                }
+                Spacer()
+                ProgressView().controlSize(.small)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        case .ready(let rel, _):
+            let sub = updater.installOnQuitArmed
+                ? L10n.t("已下载并通过签名校验，将在退出 PopBar 时自动安装", "Downloaded and verified — scheduled to install when you quit PopBar")
+                : L10n.t("已下载并通过签名校验，可立即安装重启或退出时安装", "Downloaded and verified — ready to install now or on quit")
+            DSSettingRow(L10n.t("新版本 v\(rel.version) 已就绪", "Version v\(rel.version) is ready"), subtitle: sub) {
+                HStack(spacing: 8) {
+                    DSButton(L10n.t("跳过", "Skip"), kind: .ghost) { updater.skipAvailableVersion() }
+                    DSButton(
+                        updater.installOnQuitArmed
+                            ? L10n.t("已安排退出安装", "On Quit")
+                            : L10n.t("退出时安装", "Install on Quit"),
+                        kind: .secondary
+                    ) {
+                        updater.armInstallOnQuit()
+                    }
+                    DSButton(L10n.t("安装并重启", "Install & Relaunch"), icon: "download", kind: .primary) {
+                        updater.installReadyUpdate(relaunch: true)
+                    }
+                }
+            }
         case .installing(let rel, let stage):
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -525,11 +585,11 @@ struct AboutSettings: View {
                 ProgressView().controlSize(.small)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-        case .manualInstall(let rel, let dmgURL, let reason):
+        case .manualInstall(let rel, let packageURL, let reason):
             DSSettingRow(L10n.t("需要手动拖入安装", "Manual Install Required"), subtitle: reason) {
                 HStack(spacing: 8) {
-                    DSButton(L10n.t("打开安装包", "Open DMG"), icon: "folder-open", kind: .primary) {
-                        NSWorkspace.shared.open(dmgURL)
+                    DSButton(L10n.t("在访达中显示", "Reveal in Finder"), icon: "folder-open", kind: .primary) {
+                        NSWorkspace.shared.activateFileViewerSelecting([packageURL])
                     }
                     DSButton(L10n.t("发布页", "Release Page"), icon: "external-link", kind: .ghost) {
                         updater.openReleasePage(rel)
