@@ -53,17 +53,26 @@ final class VPSMonitorModel: ObservableObject {
             total + result.vlessChecks.filter { $0.check.state == .ok }.count
         }
     }
+    var attentionCount: Int { enabledResults.filter(\.attention).count }
+    var vlessLinkCount: Int {
+        enabledResults.reduce(0) { $0 + $1.vlessChecks.count }
+    }
     var isBusy: Bool {
         refreshing || !refreshingHostIDs.isEmpty || !testingConnectivity.isEmpty || !testingSpeed.isEmpty
     }
 
-    func isRefreshing(_ host: VPSHost) -> Bool { refreshingHostIDs.contains(host.id) }
+    func isRefreshing(_ host: VPSHost) -> Bool { refreshing || refreshingHostIDs.contains(host.id) }
     func result(for host: VPSHost) -> VPSHostResult? { results[host.id] }
     func isTestingConnectivity(host: VPSHost, link: VPSLinkCheck) -> Bool {
         testingConnectivity.contains(linkKey(host, link))
     }
     func isTestingSpeed(host: VPSHost, link: VPSLinkCheck) -> Bool {
         testingSpeed.contains(linkKey(host, link))
+    }
+    func isTestingAnyLink(for host: VPSHost) -> Bool {
+        let prefix = "\(host.id)|"
+        return testingConnectivity.contains { $0.hasPrefix(prefix) }
+            || testingSpeed.contains { $0.hasPrefix(prefix) }
     }
 
     /// 进入页面调用。若无结果，或距上次完整检查超过 1 小时，才自动检查一次。
@@ -98,9 +107,9 @@ final class VPSMonitorModel: ObservableObject {
         }
     }
 
-    /// 手动刷新单台主机。
+    /// 手动刷新单台主机（不阻塞其它主机独立刷新或测速）。
     func refresh(_ host: VPSHost) {
-        guard started, !isBusy, host.enabled else { return }
+        guard started, !refreshing, !refreshingHostIDs.contains(host.id), !isTestingAnyLink(for: host), host.enabled else { return }
         refreshingHostIDs.insert(host.id)
         let gen = generation
         Task { @MainActor [weak self] in
@@ -135,7 +144,7 @@ final class VPSMonitorModel: ObservableObject {
     }
 
     func testConnectivity(host: VPSHost, link: VPSLinkCheck) {
-        guard started, !refreshing, refreshingHostIDs.isEmpty else { return }
+        guard started, !refreshing, !refreshingHostIDs.contains(host.id) else { return }
         let key = linkKey(host, link)
         guard !testingConnectivity.contains(key), !testingSpeed.contains(key) else { return }
         guard let endpoint = VLESSEndpoint.parse(link.url) else {
@@ -157,7 +166,7 @@ final class VPSMonitorModel: ObservableObject {
     }
 
     func testSpeed(host: VPSHost, link: VPSLinkCheck) {
-        guard started, !refreshing, refreshingHostIDs.isEmpty else { return }
+        guard started, !refreshing, !refreshingHostIDs.contains(host.id) else { return }
         let key = linkKey(host, link)
         guard !testingConnectivity.contains(key), !testingSpeed.contains(key) else { return }
         guard let endpoint = VLESSEndpoint.parse(link.url) else {
