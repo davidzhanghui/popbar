@@ -12,12 +12,40 @@ final class TodoStore: ObservableObject {
     static let changed = Notification.Name("PopBarTodoChanged")
 
     @Published private(set) var items: [TodoItem] = []
+    @Published private(set) var deleted: [TodoItem] = []
+    @Published private(set) var pastDoneGroups: [TodoDayGroup] = []
+    @Published private(set) var pastDeletedGroups: [TodoDayGroup] = []
     private var extras: [String] = []
     private(set) var day = TodoMarkdown.dayKey()
 
     var undone: [TodoItem] { items.filter { !$0.done } }
     var done: [TodoItem] { items.filter { $0.done } }
     var undoneCount: Int { items.lazy.filter { !$0.done }.count }
+
+    /// 今日 + 往日的全部已完成分组（按日期倒序，今天排第一）
+    var allDoneGroups: [TodoDayGroup] {
+        var groups: [TodoDayGroup] = []
+        let todayDone = done
+        if !todayDone.isEmpty { groups.append(TodoDayGroup(day: day, items: todayDone)) }
+        groups.append(contentsOf: pastDoneGroups)
+        return groups
+    }
+
+    /// 今日 + 往日的全部已删除分组（按日期倒序，今天排第一）
+    var allDeletedGroups: [TodoDayGroup] {
+        var groups: [TodoDayGroup] = []
+        if !deleted.isEmpty { groups.append(TodoDayGroup(day: day, items: deleted)) }
+        groups.append(contentsOf: pastDeletedGroups)
+        return groups
+    }
+
+    var allDoneCount: Int {
+        done.count + pastDoneGroups.reduce(0) { $0 + $1.items.count }
+    }
+
+    var allDeletedCount: Int {
+        deleted.count + pastDeletedGroups.reduce(0) { $0 + $1.items.count }
+    }
 
     // MARK: - 位置
 
@@ -45,6 +73,32 @@ final class TodoStore: ObservableObject {
         } else {
             apply(TodoDoc())
         }
+        reloadHistory()
+    }
+
+    /// 扫描往日 YYYY-MM-DD.md（最多 90 天，按日期倒序），汇总历史已完成与已删除
+    func reloadHistory(limitDays: Int = 90) {
+        let fm = FileManager.default
+        let names = ((try? fm.contentsOfDirectory(atPath: directory.path)) ?? [])
+            .filter { TodoMarkdown.isDayFile($0) && String($0.dropLast(3)) < day }
+            .sorted(by: >)
+            .prefix(limitDays)
+
+        var doneGroups: [TodoDayGroup] = []
+        var deletedGroups: [TodoDayGroup] = []
+        for name in names {
+            let dayStr = String(name.dropLast(3))
+            let doc = read(directory.appendingPathComponent(name))
+            let doneItems = doc.items.filter { $0.done }
+            if !doneItems.isEmpty {
+                doneGroups.append(TodoDayGroup(day: dayStr, items: doneItems))
+            }
+            if !doc.deleted.isEmpty {
+                deletedGroups.append(TodoDayGroup(day: dayStr, items: doc.deleted))
+            }
+        }
+        pastDoneGroups = doneGroups
+        pastDeletedGroups = deletedGroups
     }
 
     private func read(_ url: URL) -> TodoDoc {
@@ -61,6 +115,13 @@ final class TodoStore: ObservableObject {
                 kept.source = new.source
                 kept.rid = new.rid
                 return kept
+            }
+            return new
+        }
+        var delPool = deleted
+        deleted = doc.deleted.map { new in
+            if let i = delPool.firstIndex(where: { $0.text == new.text && $0.source == new.source }) {
+                return delPool.remove(at: i)
             }
             return new
         }
@@ -110,15 +171,142 @@ final class TodoStore: ObservableObject {
         save()
     }
 
-    func remove(_ id: UUID) {
-        if let rid = items.first(where: { $0.id == id })?.rid { RemindersSync.noteDeleted(rid) }
-        items.removeAll { $0.id == id }
+    /// 软删除：移入当日已删除列表（`- [-]`），同步通知提醒事项删除未完成提醒
+    @discardableResult
+    func remove(_ id: UUID) -> TodoItem? {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return nil }
+        var removed = items.remove(at: idx)
+        if let rid = removed.rid { RemindersSync.noteDeleted(rid) }
+        removed.done = false
+        removed.rid = nil
+        deleted.insert(removed, at: 0)
+        save()
+        return removed
+    }
+
+    /// 清空今日已完成：移入当日已删除列表，避免误清空找不回
+    func clearDone() {
+        let finished = items.filter { $0.done }
+        guard !finished.isEmpty else { return }
+        let trashed = finished.map { TodoItem(id: $0.id, text: $0.text, done: false, source: $0.source, rid: nil) }
+        deleted.insert(contentsOf: trashed, at: 0)
+        items.removeAll { $0.done }
         save()
     }
 
-    func clearDone() {
-        items.removeAll { $0.done }
+    // MARK: - 历史已完成 / 已删除管理
+
+    /// 把某条已完成项重新打开为待办（今天直接取消勾选；往日则从旧文件移出并恢复到今日待办）
+    func reopenDone(_ item: TodoItem, day targetDay: String) {
+        if targetDay == day {
+            toggle(item.id)
+            return
+        }
+        guard mutatePastDay(targetDay, { doc in
+            guard let i = doc.items.firstIndex(where: { $0.done && $0.text == item.text && $0.source == item.source }) else {
+                return false
+            }
+            doc.items.remove(at: i)
+            return true
+        }) else { return }
+        reload()
+        items.append(TodoItem(text: item.text, done: false, source: item.source))
         save()
+        reloadHistory()
+    }
+
+    /// 把某条已完成项移入已删除（今天直接软删除；往日则在旧文件里移至 `- [-]`）
+    func deleteDone(_ item: TodoItem, day targetDay: String) {
+        if targetDay == day {
+            remove(item.id)
+            return
+        }
+        guard mutatePastDay(targetDay, { doc in
+            guard let i = doc.items.firstIndex(where: { $0.done && $0.text == item.text && $0.source == item.source }) else {
+                return false
+            }
+            let removed = doc.items.remove(at: i)
+            doc.deleted.insert(TodoItem(text: removed.text, done: false, source: removed.source, rid: nil), at: 0)
+            return true
+        }) else { return }
+        reloadHistory()
+    }
+
+    /// 从「已删除」恢复到今日待办（支持指定恢复为已完成，用于撤销删除已完成项）
+    func restoreDeleted(_ item: TodoItem, day targetDay: String, asDone: Bool = false) {
+        if targetDay == day {
+            if let i = deleted.firstIndex(where: { $0.id == item.id })
+                ?? deleted.firstIndex(where: { $0.text == item.text && $0.source == item.source }) {
+                let kept = deleted.remove(at: i)
+                items.append(TodoItem(id: kept.id, text: kept.text, done: asDone, source: kept.source))
+                save()
+            }
+            return
+        }
+        guard mutatePastDay(targetDay, { doc in
+            guard let i = doc.deleted.firstIndex(where: { $0.text == item.text && $0.source == item.source }) else {
+                return false
+            }
+            doc.deleted.remove(at: i)
+            return true
+        }) else { return }
+        reload()
+        items.append(TodoItem(text: item.text, done: asDone, source: item.source))
+        save()
+        reloadHistory()
+    }
+
+    /// 彻底删除回收站里的某一条（不可恢复）
+    func purgeDeleted(_ item: TodoItem, day targetDay: String) {
+        if targetDay == day {
+            if let i = deleted.firstIndex(where: { $0.id == item.id })
+                ?? deleted.firstIndex(where: { $0.text == item.text && $0.source == item.source }) {
+                deleted.remove(at: i)
+                save()
+            }
+            return
+        }
+        guard mutatePastDay(targetDay, { doc in
+            guard let i = doc.deleted.firstIndex(where: { $0.text == item.text && $0.source == item.source }) else {
+                return false
+            }
+            doc.deleted.remove(at: i)
+            return true
+        }) else { return }
+        reloadHistory()
+    }
+
+    /// 清空全部已删除记录（包括今日与往日文件里的 `- [-]`）
+    func emptyTrash() {
+        if !deleted.isEmpty {
+            deleted.removeAll()
+            save()
+        }
+        let pastDays = pastDeletedGroups.map { $0.day }
+        for d in pastDays {
+            _ = mutatePastDay(d) { doc in
+                guard !doc.deleted.isEmpty else { return false }
+                doc.deleted.removeAll()
+                return true
+            }
+        }
+        reloadHistory()
+    }
+
+    /// 修改某个往日 Markdown 文件并原子写回
+    private func mutatePastDay(_ targetDay: String, _ edit: (inout TodoDoc) -> Bool) -> Bool {
+        let url = fileURL(targetDay)
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        var doc = read(url)
+        guard edit(&doc) else { return false }
+        let text = TodoMarkdown.render(day: targetDay, doc: doc)
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            NSLog("PopBar todo past-day save failed (\(targetDay)): \(error)")
+            return false
+        }
     }
 
     /// 拖拽排序只发生在「未完成」区;已完成保持在后
@@ -140,7 +328,7 @@ final class TodoStore: ObservableObject {
         let fm = FileManager.default
         do {
             try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-            let text = TodoMarkdown.render(day: day, doc: TodoDoc(items: items, extras: extras))
+            let text = TodoMarkdown.render(day: day, doc: TodoDoc(items: items, deleted: deleted, extras: extras))
             try text.write(to: fileURL(day), atomically: true, encoding: .utf8)
         } catch {
             NSLog("PopBar todo save failed: \(error)")

@@ -82,4 +82,26 @@ final class ShellTests: XCTestCase {
         let o = Shell.sh("printf %s " + Shell.quote("it's $HOME"))
         XCTAssertEqual(o.text, "it's $HOME")
     }
+
+    func testSpawnDetachedRunsIndependently() {
+        let marker = NSTemporaryDirectory() + "popbar-detached-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: marker) }
+        let start = Date()
+        let res = Shell.spawnDetached("/bin/sh", ["-c", "sleep 0.2; touch \"$1\"", "sh", marker])
+        guard case .success(let pid) = res else {
+            return XCTFail("spawnDetached 应成功：\(res)")
+        }
+        XCTAssertGreaterThan(pid, 0)
+        defer { var st: Int32 = 0; _ = waitpid(pid, &st, 0) }
+        // spawnDetached 不应阻塞等待 sleep 0.2
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.15)
+        let deadline = Date().addingTimeInterval(2.0)
+        while !FileManager.default.fileExists(atPath: marker) && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker), "后台进程未按预期执行")
+
+        let fail = Shell.spawnDetached("/nonexistent/popbar-detached-bin", [])
+        if case .failure = fail {} else { XCTFail("不存在的可执行文件应返回 failure") }
+    }
 }

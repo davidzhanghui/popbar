@@ -392,6 +392,9 @@ struct TodaySettings: View {
 // MARK: - 关于
 
 struct AboutSettings: View {
+    @EnvironmentObject var e: ConfigEditor
+    @ObservedObject private var updater = UpdateManager.shared
+
     private var version: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
@@ -403,11 +406,27 @@ struct AboutSettings: View {
             HStack(spacing: 14) {
                 Image(nsImage: NSApp.applicationIconImage ?? NSImage()).resizable().frame(width: 52, height: 52)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("PopBar").font(DS.font(18, .semibold)).foregroundStyle(DS.text)
+                    HStack(spacing: 8) {
+                        Text("PopBar").font(DS.font(18, .semibold)).foregroundStyle(DS.text)
+                        versionBadge
+                    }
                     Text(L10n.t("划词即用的 macOS 工具条", "A selection toolbar for macOS")).font(DS.caption).foregroundStyle(DS.muted)
-                    Text(L10n.t("版本 ", "Version ") + version).font(DS.small).foregroundStyle(DS.faint)
+                    Text(L10n.t("版本 ", "Version ") + version + " · \(UpdateManager.currentArch)")
+                        .font(DS.small).foregroundStyle(DS.faint)
                 }
                 Spacer()
+            }
+        }
+        DSGroup(L10n.t("软件更新", "Software Update")) {
+            DSSettingRow(L10n.t("启动时自动检查更新", "Check Automatically on Launch"),
+                         subtitle: L10n.t("每天最多在后台检查一次，发现新版本时提醒", "Checks in the background at most once a day and notifies you when a new version is out")) {
+                DSToggle(isOn: e.bind(\.update.autoCheck))
+            }
+            DSDivider()
+            updateStatusRow
+            if let rel = activeReleaseForNotes {
+                DSDivider()
+                releaseDetailBlock(rel)
             }
         }
         DSGroup {
@@ -421,5 +440,163 @@ struct AboutSettings: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private var versionBadge: some View {
+        switch updater.state {
+        case .available(let rel), .downloading(let rel, _, _, _), .installing(let rel, _), .manualInstall(let rel, _, _):
+            DSChip("v\(rel.version)", tone: .accent, icon: "sparkles")
+        case .upToDate:
+            DSChip(L10n.t("已是最新", "Up to date"), tone: .success, icon: "circle-check")
+        default:
+            if let rel = updater.availableRelease {
+                DSChip("v\(rel.version)", tone: .accent, icon: "sparkles")
+            }
+        }
+    }
+
+    private var activeReleaseForNotes: UpdateRelease? {
+        switch updater.state {
+        case .available(let r), .downloading(let r, _, _, _), .installing(let r, _), .manualInstall(let r, _, _):
+            return r
+        case .failed(_, let r):
+            return r
+        default:
+            return nil
+        }
+    }
+
+    @ViewBuilder private var updateStatusRow: some View {
+        switch updater.state {
+        case .idle:
+            let sub = updater.lastCheckedAt.map {
+                L10n.t("上次检查：", "Last checked: ") + Self.formatDate($0)
+            } ?? L10n.t("从 GitHub Releases 检查最新正式版", "Check GitHub Releases for the latest stable version")
+            DSSettingRow(L10n.t("检查更新", "Check for Updates"), subtitle: sub) {
+                DSButton(L10n.t("立即检查", "Check Now"), icon: "refresh-cw") { updater.checkManually() }
+            }
+        case .checking:
+            DSSettingRow(L10n.t("正在检查更新…", "Checking for updates…"),
+                         subtitle: L10n.t("正在连接 GitHub Releases", "Connecting to GitHub Releases")) {
+                ProgressView().controlSize(.small)
+            }
+        case .upToDate(let date):
+            DSSettingRow(L10n.t("当前已是最新版本", "You're up to date"),
+                         subtitle: L10n.t("检查时间：", "Checked at ") + Self.formatDate(date)) {
+                DSButton(L10n.t("重新检查", "Check Again"), icon: "refresh-cw") { updater.checkManually() }
+            }
+        case .available(let rel):
+            let sub = rel.publishedAt.map {
+                L10n.t("发布于 ", "Released ") + Self.formatDate($0) + L10n.t("，一键下载并自动覆盖重启", " — download, install and relaunch in one click")
+            } ?? L10n.t("一键下载安装包，自动覆盖安装并重启", "Download, install and relaunch automatically")
+            DSSettingRow(L10n.t("发现新版本 v\(rel.version)", "Version v\(rel.version) available"), subtitle: sub) {
+                HStack(spacing: 8) {
+                    DSButton(L10n.t("跳过", "Skip"), kind: .ghost) { updater.skipAvailableVersion() }
+                    DSButton(L10n.t("立即更新并重启", "Update & Relaunch"), icon: "download", kind: .primary) {
+                        updater.downloadAndInstall(rel)
+                    }
+                }
+            }
+        case .downloading(let rel, let progress, let received, let total):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(L10n.t("正在下载 PopBar v\(rel.version)…", "Downloading PopBar v\(rel.version)…"))
+                            .font(DS.font(13, .medium)).foregroundStyle(DS.text)
+                        Text(Self.formatTransfer(received: received, total: total, progress: progress))
+                            .font(DS.font(11.5).monospacedDigit()).foregroundStyle(DS.muted)
+                    }
+                    Spacer()
+                    DSButton(L10n.t("取消", "Cancel"), kind: .ghost) { updater.cancelDownload() }
+                }
+                ProgressView(value: progress, total: 1.0)
+                    .progressViewStyle(.linear)
+                    .tint(DS.accent)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        case .installing(let rel, let stage):
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.t("正在安装 PopBar v\(rel.version)", "Installing PopBar v\(rel.version)"))
+                        .font(DS.font(13, .medium)).foregroundStyle(DS.text)
+                    Text(stage).font(DS.font(11.5)).foregroundStyle(DS.muted)
+                }
+                Spacer()
+                ProgressView().controlSize(.small)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        case .manualInstall(let rel, let dmgURL, let reason):
+            DSSettingRow(L10n.t("需要手动拖入安装", "Manual Install Required"), subtitle: reason) {
+                HStack(spacing: 8) {
+                    DSButton(L10n.t("打开安装包", "Open DMG"), icon: "folder-open", kind: .primary) {
+                        NSWorkspace.shared.open(dmgURL)
+                    }
+                    DSButton(L10n.t("发布页", "Release Page"), icon: "external-link", kind: .ghost) {
+                        updater.openReleasePage(rel)
+                    }
+                }
+            }
+        case .failed(let message, let rel):
+            DSSettingRow(L10n.t("更新失败", "Update Failed"), subtitle: message, subtitleTone: .danger) {
+                HStack(spacing: 8) {
+                    DSButton(L10n.t("发布页", "Release Page"), icon: "external-link", kind: .ghost) {
+                        updater.openReleasePage(rel)
+                    }
+                    if let rel {
+                        DSButton(L10n.t("重试更新", "Retry"), icon: "refresh-cw", kind: .primary) {
+                            updater.downloadAndInstall(rel)
+                        }
+                    } else {
+                        DSButton(L10n.t("重试", "Retry"), icon: "refresh-cw") { updater.checkManually() }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func releaseDetailBlock(_ rel: UpdateRelease) -> some View {
+        let notes = rel.changelogText
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(L10n.t("更新内容", "Release Notes")).font(DS.font(12, .semibold)).foregroundStyle(DS.muted)
+                Spacer()
+                DSButton(L10n.t("查看完整发布页", "View on GitHub"), icon: "external-link", kind: .ghost) {
+                    updater.openReleasePage(rel)
+                }
+            }
+            if !notes.isEmpty {
+                ScrollView {
+                    Text(notes)
+                        .font(DS.font(12))
+                        .foregroundStyle(DS.text2)
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 140)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).fill(DS.surface2))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).strokeBorder(DS.border, lineWidth: 1))
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+    }
+
+    private static func formatDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f.string(from: date)
+    }
+
+    private static func formatTransfer(received: Int64, total: Int64, progress: Double) -> String {
+        let fmt = ByteCountFormatter()
+        fmt.countStyle = .file
+        let r = fmt.string(fromByteCount: received)
+        if total > 0 {
+            let t = fmt.string(fromByteCount: total)
+            return "\(r) / \(t) (\(Int((progress * 100).rounded()))%)"
+        }
+        return r
     }
 }

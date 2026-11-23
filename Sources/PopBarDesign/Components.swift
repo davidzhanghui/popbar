@@ -39,14 +39,17 @@ public struct DSButton: View {
     let title: String
     let icon: String?
     let kind: DSButtonKind
+    let iconSpacing: CGFloat
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.isEnabled) private var enabled
 
-    public init(_ title: String, icon: String? = nil, kind: DSButtonKind = .secondary, action: @escaping () -> Void) {
+    public init(_ title: String, icon: String? = nil, kind: DSButtonKind = .secondary,
+                iconSpacing: CGFloat = 6, action: @escaping () -> Void) {
         self.title = title
         self.icon = icon
         self.kind = kind
+        self.iconSpacing = iconSpacing
         self.action = action
     }
 
@@ -70,7 +73,7 @@ public struct DSButton: View {
     public var body: some View {
         let c = colors
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: iconSpacing) {
                 if let icon { Icon(icon, size: 14, color: c.fg) }
                 Text(title).font(DS.font(12.5, .medium)).lineLimit(1)
             }

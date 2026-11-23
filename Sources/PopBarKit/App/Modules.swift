@@ -4,8 +4,9 @@ import PopBarCore
 import PopBarPlatform
 import PopBarDesign
 
-// 十个功能模块。每个模块只通过 PopBarModule 协议向 App 暴露页面、浮动条动作、快捷键、菜单项，
-// 模块之间互不引用。默认开启：今日、剪贴板、截屏、录屏、监控、清理；默认关闭：启动项、维护、打印、电视。
+// 十一个功能模块。每个模块只通过 PopBarModule 协议向 App 暴露页面、浮动条动作、快捷键、菜单项，
+// 模块之间互不引用。默认开启：今日、剪贴板、截屏、录屏、监控、VPS 监控、清理；
+// 默认关闭：启动项、维护、打印、电视。
 
 // MARK: - 工作
 
@@ -168,6 +169,22 @@ final class MonitorModule: PopBarModule {
     func page() -> AnyView { AnyView(MonitorPage(model: model)) }
     func pageDidAppear() { model.start() }
     func pageDidDisappear() { model.closeDetail(); model.stop() }
+    func stop() { model.stop() }
+}
+
+@MainActor
+final class VPSModule: PopBarModule {
+    let id = "vps"
+    var title: String { L10n.t("VPS 监控", "VPS Monitor") }
+    var summary: String { L10n.t("从 ~/.ssh/config 自动读取 VPS，查看性能、安全与 VLESS 测试",
+                                 "Read VPS hosts from ~/.ssh/config; performance, security and VLESS tests") }
+    let icon = "server-cog"
+    let group = DeckGroup.system
+    let model = VPSMonitorModel()
+
+    func page() -> AnyView { AnyView(VPSPage(model: model)) }
+    func pageDidAppear() { model.start() }
+    func pageDidDisappear() { model.stop() }
     func stop() { model.stop() }
 }
 

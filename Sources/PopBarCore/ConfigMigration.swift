@@ -13,7 +13,7 @@ public enum ConfigMigration {
     /// 模块开关默认值（docs 3.9）
     public static let moduleDefaults: [String: Bool] = [
         "today": true, "clipboard": true, "snap": true, "record": true,
-        "monitor": true, "clean": true,
+        "monitor": true, "clean": true, "vps": true,
         "startup": false, "maintenance": false, "print": false, "tv": false,
     ]
 

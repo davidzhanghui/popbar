@@ -41,6 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
             UsageStats.shared.maybeSuggest()
         }
+        // 自动检查更新：首次引导/权限缺失时不打断；其余场景启动 8s 后后台静默检查（每 24h 最多一次）
+        if !needsWelcome {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                MainActor.assumeIsolated { UpdateManager.shared.checkOnLaunch() }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -156,6 +162,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.keyEquivalent = ","
         settings.keyEquivalentModifierMask = .command
         menu.addItem(settings)
+        let updateTitle: String
+        if let rel = UpdateManager.shared.availableRelease {
+            updateTitle = L10n.t("发现新版本 v\(rel.version)…", "Update Available (v\(rel.version))…")
+        } else {
+            updateTitle = L10n.t("检查更新…", "Check for Updates…")
+        }
+        menu.addItem(AppRouter.menuItem(updateTitle) {
+            AppRouter.openSettings(.about)
+            if !UpdateManager.shared.isBusy && !UpdateManager.shared.hasUpdate {
+                UpdateManager.shared.checkManually()
+            }
+        })
         menu.addItem(.separator())
         let quit = AppRouter.menuItem(L10n.t("退出 PopBar", "Quit PopBar")) { NSApp.terminate(nil) }
         quit.keyEquivalent = "q"

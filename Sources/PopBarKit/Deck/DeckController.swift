@@ -134,9 +134,9 @@ final class DeckController: NSObject, NSWindowDelegate {
         w.contentView = NSHostingView(rootView: DeckRootView(state: state, registry: ModuleRegistry.shared))
         w.center()
         w.setFrameAutosaveName("PopBarDeck")
-        // 侧栏角标（待办数、剪贴板条数）随数据变化刷新
+        // 侧栏角标（待办数、剪贴板条数、新版本提醒）随数据变化刷新
         let nc = NotificationCenter.default
-        for name in [TodoStore.changed, Notification.Name("PopBarClipboardHistoryChanged"), ConfigStore.didChange] {
+        for name in [TodoStore.changed, Notification.Name("PopBarClipboardHistoryChanged"), ConfigStore.didChange, UpdateManager.stateChanged] {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.state.tick &+= 1 }
             })
@@ -153,7 +153,7 @@ enum DeckTint {
     private static let modules: [String: NSColor] = [
         "today": IconPalette.green, "clipboard": IconPalette.blue,
         "snap": IconPalette.purple, "record": IconPalette.red,
-        "monitor": IconPalette.teal, "clean": IconPalette.sky,
+        "monitor": IconPalette.teal, "vps": IconPalette.blue, "clean": IconPalette.sky,
         "startup": IconPalette.orange, "maintenance": IconPalette.slate,
         "print": IconPalette.indigo, "tv": IconPalette.pink,
     ]
@@ -286,6 +286,8 @@ struct DeckSidebar: View {
                 if inSettings {
                     SidebarRow(icon: SettingsSection.about.icon, title: SettingsSection.about.title,
                                tint: DeckTint.settings(.about),
+                               badge: UpdateManager.shared.hasUpdate ? 1 : nil,
+                               badgeAlert: UpdateManager.shared.hasUpdate,
                                selected: state.settings == .about) { state.settings = .about }
                 } else {
                     // 欢迎与权限：侧栏常驻入口；缺辅助功能/输入监控时用角标提醒
@@ -296,7 +298,10 @@ struct DeckSidebar: View {
                                badgeAlert: true,
                                selected: state.page == .welcome) { state.page = .welcome }
                     SidebarRow(icon: "settings", title: L10n.t("设置", "Settings"),
-                               tint: DeckTint.fixed(IconPalette.slate), hint: "⌘,",
+                               tint: DeckTint.fixed(IconPalette.slate),
+                               badge: UpdateManager.shared.hasUpdate ? 1 : nil,
+                               badgeAlert: UpdateManager.shared.hasUpdate,
+                               hint: "⌘,",
                                selected: false) { state.page = .settings }
                 }
             }

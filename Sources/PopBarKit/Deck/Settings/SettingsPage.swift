@@ -65,7 +65,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
                                      "Disabled modules leave the sidebar, bar and menu; their shortcuts and background work stop")
         case .today: return L10n.t("待办的存放位置、系统同步与番茄钟", "Where to-dos live, system sync and Pomodoro")
         case .media: return L10n.t("截图保存、录屏画面与声音、导出参数", "Screenshot saving, recording video and audio, export options")
-        case .about: return L10n.t("版本信息与项目主页", "Version and project homepage")
+        case .about: return L10n.t("版本信息、软件更新与项目主页", "Version, software updates and project homepage")
         }
     }
 

@@ -275,4 +275,50 @@ public enum Shell {
     public static func quote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
+
+    public struct SpawnError: Error, LocalizedError, Equatable, Sendable {
+        public let message: String
+        public init(_ message: String) { self.message = message }
+        public var errorDescription: String? { message }
+    }
+
+    /// 启动独立于当前进程的后台子进程（不等待退出，stdin/stdout/stderr 均定向到 /dev/null）。
+    /// 供自动更新替换并重启自身等需要存活到父进程退出之后的场景使用。
+    public static func spawnDetached(_ executable: String, _ arguments: [String] = [],
+                                     environment: [String: String] = [:]) -> Result<pid_t, SpawnError> {
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr)
+        defer { posix_spawnattr_destroy(&attr) }
+        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_CLOEXEC_DEFAULT)
+        posix_spawnattr_setflags(&attr, flags)
+        posix_spawnattr_setpgroup(&attr, 0)
+        var defaults = sigset_t()
+        sigemptyset(&defaults)
+        sigaddset(&defaults, SIGPIPE)
+        posix_spawnattr_setsigdefault(&attr, &defaults)
+        var mask = sigset_t()
+        sigemptyset(&mask)
+        posix_spawnattr_setsigmask(&attr, &mask)
+
+        var env = ProcessInfo.processInfo.environment
+        for (k, v) in environment { env[k] = v }
+        let argv = [executable] + arguments
+        let cArgs = argv.map { strdup($0) } + [nil]
+        let cEnv = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer { cArgs.forEach { free($0) }; cEnv.forEach { free($0) } }
+
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, executable, &actions, &attr, cArgs, cEnv)
+        if rc != 0 {
+            return .failure(SpawnError(String(cString: strerror(rc))))
+        }
+        return .success(pid)
+    }
 }

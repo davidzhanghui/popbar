@@ -497,6 +497,20 @@ struct UsageConfig: Codable, Equatable {
     var enabled: Bool = true
 }
 
+/// 自动更新
+struct UpdateConfig: Codable, Equatable {
+    /// 启动时自动在后台检查新版本
+    var autoCheck: Bool = true
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = UpdateConfig()
+        autoCheck = (try? c.decode(Bool.self, forKey: .autoCheck)) ?? d.autoCheck
+    }
+}
+
 /// ~/Library/Application Support/PopBar/config.json
 /// 所有字段都允许缺省,方便手写配置
 struct PopBarConfig: Codable, Equatable {
@@ -545,8 +559,10 @@ struct PopBarConfig: Codable, Equatable {
     var ocr = OCRConfig()
     var speak = SpeakConfig()
     var usage = UsageConfig()
+    var update = UpdateConfig()
     var snap = SnapConfig()
     var todo = TodoConfig()
+    var vps = VPSConfig()
 
     func isModuleEnabled(_ id: String) -> Bool {
         modules[id] ?? ConfigMigration.moduleDefaults[id] ?? true
@@ -597,8 +613,10 @@ struct PopBarConfig: Codable, Equatable {
         ocr = (try? c.decode(OCRConfig.self, forKey: .ocr)) ?? d.ocr
         speak = (try? c.decode(SpeakConfig.self, forKey: .speak)) ?? d.speak
         usage = (try? c.decode(UsageConfig.self, forKey: .usage)) ?? d.usage
+        update = (try? c.decode(UpdateConfig.self, forKey: .update)) ?? d.update
         snap = (try? c.decode(SnapConfig.self, forKey: .snap)) ?? d.snap
         todo = (try? c.decode(TodoConfig.self, forKey: .todo)) ?? d.todo
+        vps = (try? c.decode(VPSConfig.self, forKey: .vps)) ?? d.vps
         seedDefaults()
     }
 

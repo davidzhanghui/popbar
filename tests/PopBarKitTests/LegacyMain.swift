@@ -1262,6 +1262,107 @@ func runLegacyMainChecks() async throws {
         expectEqual(store.items.count, 2, "再次 reload 不重复顺延")
         store.clearDone()
         expectEqual(store.items.map { $0.done }, [false], "clearDone")
+        expectEqual(store.deleted.map { $0.text }, ["旧事"], "clearDone: 移入当日已删除而非硬删")
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    section("TodoMarkdown 已删除与历史工具")
+    do {
+        let doc = TodoMarkdown.parse("""
+        # 2026-10-16
+
+        - [ ] 未做
+        - [x] 已做
+        - [-] 已删 <!--src:Chrome-->
+        - [>] 已顺延
+        """)
+        expectEqual(doc.items.map { $0.text }, ["未做", "已做"], "parse: items 不含已删除")
+        expectEqual(doc.deleted.map { $0.text }, ["已删"], "parse: [-] 解析进 deleted")
+        expectEqual(doc.deleted.first?.source, "Chrome", "parse: [-] 保留来源标记")
+        expectEqual(doc.extras, ["- [>] 已顺延"], "parse: [>] 留在 extras")
+        let rendered = TodoMarkdown.render(day: "2026-10-16", doc: doc)
+        expect(rendered.contains("- [-] 已删 <!--src:Chrome-->"), "render: 输出 [-] 行")
+        let again = TodoMarkdown.parse(rendered)
+        expectEqual(again.deleted.map { $0.text }, ["已删"], "render → parse: deleted 往返一致")
+        expectEqual(again.deleted.first?.source, "Chrome", "render → parse: deleted 来源往返一致")
+
+        let carried = TodoMarkdown.carry(from: rendered)
+        expectEqual(carried.carried.map { $0.text }, ["未做"], "carry: 不顺延 [-] 已删除")
+        expect(carried.rewritten.contains("- [-] 已删"), "carry: 保留旧文件 [-] 行")
+
+        let todayTitle = TodoMarkdown.dayDisplayTitle("2026-11-22", today: "2026-11-22", isEnglish: false)
+        let yestTitle = TodoMarkdown.dayDisplayTitle("2026-11-21", today: "2026-11-22", isEnglish: false)
+        let crossYear = TodoMarkdown.dayDisplayTitle("2025-12-31", today: "2026-11-22", isEnglish: false)
+        expect(todayTitle.hasPrefix("今天 · "), "dayDisplayTitle: 今天")
+        expect(yestTitle.hasPrefix("昨天 · "), "dayDisplayTitle: 昨天")
+        expect(crossYear.contains("2025"), "dayDisplayTitle: 跨年带年份")
+
+        let groups = [
+            TodoDayGroup(day: "2026-11-22", items: [TodoItem(text: "修复登录", done: true, source: "Safari")]),
+            TodoDayGroup(day: "2026-11-21", items: [TodoItem(text: "写周报", done: true, source: "Notes")]),
+        ]
+        expectEqual(TodoMarkdown.filterGroups(groups, query: "safari").map { $0.day }, ["2026-11-22"], "filterGroups: 按来源匹配")
+        expectEqual(TodoMarkdown.filterGroups(groups, query: "周报").map { $0.day }, ["2026-11-21"], "filterGroups: 按正文匹配")
+        expectEqual(TodoMarkdown.filterGroups(groups, query: "  ").count, 2, "filterGroups: 空白查询返回全部")
+    }
+
+    section("TodoStore 跨天历史与软删除回收站")
+    do {
+        let store = TodoStore.shared
+        let dir = TodoStore.directory(for: TodoConfig())
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let past1 = dir.appendingPathComponent("2020-02-01.md")
+        let past2 = dir.appendingPathComponent("2020-02-02.md")
+        try? "# 2020-02-01\n\n- [x] 前天完成\n- [-] 前天删除 <!--src:Mail-->\n".write(to: past1, atomically: true, encoding: .utf8)
+        try? "# 2020-02-02\n\n- [x] 昨天完成\n".write(to: past2, atomically: true, encoding: .utf8)
+
+        store.reload()
+        expectEqual(store.allDoneGroups.map { $0.day }, ["2020-02-02", "2020-02-01"], "历史已完成按日期倒序")
+        expectEqual(store.allDoneCount, 2, "历史已完成总数")
+        expectEqual(store.allDeletedGroups.map { $0.day }, ["2020-02-01"], "历史已删除加载")
+        expectEqual(store.allDeletedCount, 1, "历史已删除总数")
+
+        // 软删除今天条目并恢复
+        store.add("今天待删", source: "Slack")
+        let todayItem = store.items[0]
+        store.remove(todayItem.id)
+        expectEqual(store.items.count, 0, "remove: 从 items 移除")
+        expectEqual(store.deleted.map { $0.text }, ["今天待删"], "remove: 进入当日 deleted")
+        expectEqual(store.allDeletedCount, 2, "allDeletedCount 含今日与往日")
+
+        store.restoreDeleted(store.deleted[0], day: store.day)
+        expectEqual(store.items.map { $0.text }, ["今天待删"], "restoreDeleted: 今日恢复")
+        expectEqual(store.deleted.count, 0, "restoreDeleted: 从当日 deleted 移除")
+
+        // 往日已完成 → 重新打开到今日待办
+        let yestDone = store.pastDoneGroups[0].items[0]
+        store.reopenDone(yestDone, day: "2020-02-02")
+        expect(store.items.contains { $0.text == "昨天完成" && !$0.done }, "reopenDone: 往日已完成恢复到今日")
+        expectEqual(store.pastDoneGroups.map { $0.day }, ["2020-02-01"], "reopenDone: 原往日文件已移除该条")
+
+        // 往日已完成 → 软删除到往日已删除
+        let olderDone = store.pastDoneGroups[0].items[0]
+        store.deleteDone(olderDone, day: "2020-02-01")
+        expectEqual(store.pastDoneGroups.count, 0, "deleteDone: 往日已完成移出")
+        expectEqual(store.pastDeletedGroups[0].items.map { $0.text }, ["前天完成", "前天删除"], "deleteDone: 进入往日已删除")
+
+        // 往日已删除 → 恢复到今日待办（保留来源）
+        let olderDel = store.pastDeletedGroups[0].items.first { $0.text == "前天删除" }!
+        store.restoreDeleted(olderDel, day: "2020-02-01")
+        expect(store.items.contains { $0.text == "前天删除" && $0.source == "Mail" }, "restoreDeleted: 往日恢复到今日并保留来源")
+
+        // 彻底删除单条 & 清空回收站
+        store.remove(store.items[0].id)
+        expect(store.allDeletedCount >= 2, "删除后回收站有今日和往日")
+        let onePastDel = store.pastDeletedGroups[0].items[0]
+        store.purgeDeleted(onePastDel, day: "2020-02-01")
+        expectEqual(store.pastDeletedGroups.count, 0, "purgeDeleted: 往日单条永久删除")
+
+        store.emptyTrash()
+        expectEqual(store.allDeletedCount, 0, "emptyTrash: 清空全部回收站")
+
         try? FileManager.default.removeItem(at: dir)
     }
 

@@ -21,27 +21,44 @@ struct TodoItem: Equatable, Identifiable {
     var rid: String? = nil
 }
 
-/// 解析结果:任务 + 无法识别的行(用户手写的备注、已顺延的 `[>]` 行),
-/// 重写文件时原样放在任务之后,避免丢用户自己加的内容
+/// 解析结果:任务 + 已删除(`- [-]`) + 无法识别的行(用户手写的备注、已顺延的 `[>]` 行),
+/// 重写文件时原样放在最后,避免丢用户自己加的内容
 struct TodoDoc: Equatable {
     var items: [TodoItem] = []
+    var deleted: [TodoItem] = []
     var extras: [String] = []
+}
+
+/// 归属某一天的任务分组(用于按日期倒序展示已完成 / 已删除历史)
+struct TodoDayGroup: Equatable, Identifiable {
+    var id: String { day }
+    var day: String
+    var items: [TodoItem]
 }
 
 enum TodoMarkdown {
     private static let srcSuffix = "-->"
+
+    private enum MarkerKind { case undone, done, deleted }
 
     static func parse(_ text: String) -> TodoDoc {
         var doc = TodoDoc()
         for raw in text.components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .newlines)
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("# ") && doc.items.isEmpty && doc.extras.isEmpty { continue }
-            if let (done, body) = taskBody(trimmed) {
+            if trimmed.isEmpty || trimmed.hasPrefix("# ") && doc.items.isEmpty && doc.deleted.isEmpty && doc.extras.isEmpty { continue }
+            if let (kind, body) = taskBody(trimmed) {
                 let (rawText, tags) = splitTags(body)
                 let t = rawText.trimmingCharacters(in: .whitespaces)
                 if t.isEmpty { continue }
-                doc.items.append(TodoItem(text: t, done: done, source: tags["src"], rid: tags["rid"]))
+                switch kind {
+                case .undone:
+                    doc.items.append(TodoItem(text: t, done: false, source: tags["src"], rid: tags["rid"]))
+                case .done:
+                    doc.items.append(TodoItem(text: t, done: true, source: tags["src"], rid: tags["rid"]))
+                case .deleted:
+                    doc.deleted.append(TodoItem(text: t, done: false, source: tags["src"], rid: nil))
+                }
             } else {
                 doc.extras.append(line)
             }
@@ -57,6 +74,11 @@ enum TodoMarkdown {
             if let r = it.rid, !r.isEmpty { out += " \(tag("rid", r))" }
             out += "\n"
         }
+        for it in doc.deleted {
+            out += "- [-] \(oneLine(it.text))"
+            if let s = it.source, !s.isEmpty { out += " \(tag("src", s))" }
+            out += "\n"
+        }
         if !doc.extras.isEmpty { out += "\n" + doc.extras.joined(separator: "\n") + "\n" }
         return out
     }
@@ -67,9 +89,15 @@ enum TodoMarkdown {
             .filter { !$0.isEmpty }.joined(separator: " ")
     }
 
-    private static func taskBody(_ line: String) -> (Bool, String)? {
-        for (marker, done) in [("- [ ] ", false), ("- [x] ", true), ("- [X] ", true)] where line.hasPrefix(marker) {
-            return (done, String(line.dropFirst(marker.count)))
+    private static func taskBody(_ line: String) -> (MarkerKind, String)? {
+        let markers: [(String, MarkerKind)] = [
+            ("- [ ] ", .undone),
+            ("- [x] ", .done),
+            ("- [X] ", .done),
+            ("- [-] ", .deleted),
+        ]
+        for (marker, kind) in markers where line.hasPrefix(marker) {
+            return (kind, String(line.dropFirst(marker.count)))
         }
         return nil
     }
@@ -115,6 +143,47 @@ enum TodoMarkdown {
 
     static func isDayFile(_ name: String) -> Bool {
         name.count == 13 && name.hasSuffix(".md") && name.range(of: #"^\d{4}-\d{2}-\d{2}\.md$"#, options: .regularExpression) != nil
+    }
+
+    /// 把 YYYY-MM-DD 格式化为分组标题：今天 / 昨天 / 同年 M月d日 EEEE / 跨年 yyyy年M月d日
+    static func dayDisplayTitle(_ key: String, today: String = dayKey(), isEnglish: Bool = L10n.isEnglish) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: key), let todayDate = parser.date(from: today) else { return key }
+
+        let cal = Calendar.current
+        let locale = Locale(identifier: isEnglish ? "en_US" : "zh_CN")
+        let md = DateFormatter()
+        md.locale = locale
+        md.setLocalizedDateFormatFromTemplate("MMMd")
+        let mdText = md.string(from: date)
+
+        if key == today {
+            return isEnglish ? "Today · \(mdText)" : "今天 · \(mdText)"
+        }
+        if let yesterday = cal.date(byAdding: .day, value: -1, to: todayDate),
+           cal.isDate(date, inSameDayAs: yesterday) {
+            return isEnglish ? "Yesterday · \(mdText)" : "昨天 · \(mdText)"
+        }
+        let f = DateFormatter()
+        f.locale = locale
+        let sameYear = cal.component(.year, from: date) == cal.component(.year, from: todayDate)
+        f.setLocalizedDateFormatFromTemplate(sameYear ? "MMMdEEEE" : "yMMMd")
+        return f.string(from: date)
+    }
+
+    /// 按关键词过滤日期分组（匹配任务正文或来源 App，忽略大小写；空关键词原样返回）
+    static func filterGroups(_ groups: [TodoDayGroup], query: String) -> [TodoDayGroup] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return groups }
+        return groups.compactMap { g in
+            let matched = g.items.filter {
+                $0.text.localizedCaseInsensitiveContains(q)
+                    || ($0.source?.localizedCaseInsensitiveContains(q) ?? false)
+            }
+            return matched.isEmpty ? nil : TodoDayGroup(day: g.day, items: matched)
+        }
     }
 }
 

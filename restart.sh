@@ -1,5 +1,5 @@
 #!/bin/bash
-# 重启 PopBar:杀掉在跑的实例 → (默认)重新构建 → 启动开发副本 build.noindex/PopBar.app
+# 重启 PopBar:杀掉所有在跑的实例(含已安装版) → (默认)重新构建 → 启动开发副本 build.noindex/PopBar.app
 #
 #   ./restart.sh              # 构建 + 重启
 #   ./restart.sh --no-build   # 只重启(没改代码时用)
@@ -8,6 +8,7 @@ set -e
 cd "$(dirname "$0")"
 
 APP=build.noindex/PopBar.app
+KILL_PATTERN='PopBar\.app/Contents/MacOS/PopBar'
 BUILD=1
 FG=0
 
@@ -22,16 +23,16 @@ for arg in "$@"; do
     esac
 done
 
-# 1) 杀掉旧实例:按 App 完整路径匹配,不会误伤其它程序
-if pgrep -f "$APP" >/dev/null; then
+# 1) 杀掉旧实例(含开发副本与已安装的 PopBar.app):按可执行路径匹配,不会误伤其它程序
+if pgrep -f "$KILL_PATTERN" >/dev/null; then
     echo "Stopping running PopBar…"
-    pkill -f "$APP" || true
+    pkill -f "$KILL_PATTERN" || true
     for _ in $(seq 1 20); do          # 最多等 2s 让它自己退出
-        pgrep -f "$APP" >/dev/null || break
+        pgrep -f "$KILL_PATTERN" >/dev/null || break
         sleep 0.1
     done
-    if pgrep -f "$APP" >/dev/null; then
-        pkill -9 -f "$APP" || true    # 还赖着就强杀
+    if pgrep -f "$KILL_PATTERN" >/dev/null; then
+        pkill -9 -f "$KILL_PATTERN" || true    # 还赖着就强杀
         sleep 0.3
     fi
 fi
@@ -54,7 +55,7 @@ fi
 
 open "$APP"
 for _ in $(seq 1 30); do              # 等它起来再报 PID
-    pid=$(pgrep -f "$APP" || true)
+    pid=$(pgrep -f "$APP/Contents/MacOS/PopBar" || true)
     [ -n "$pid" ] && { echo "PopBar running (pid $pid)"; exit 0; }
     sleep 0.1
 done
