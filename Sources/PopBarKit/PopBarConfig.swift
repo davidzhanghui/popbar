@@ -566,6 +566,7 @@ struct PopBarConfig: Codable, Equatable {
     var snap = SnapConfig()
     var todo = TodoConfig()
     var vps = VPSConfig()
+    var agent = AgentConfig()
 
     func isModuleEnabled(_ id: String) -> Bool {
         modules[id] ?? ConfigMigration.moduleDefaults[id] ?? true
@@ -620,6 +621,7 @@ struct PopBarConfig: Codable, Equatable {
         snap = (try? c.decode(SnapConfig.self, forKey: .snap)) ?? d.snap
         todo = (try? c.decode(TodoConfig.self, forKey: .todo)) ?? d.todo
         vps = (try? c.decode(VPSConfig.self, forKey: .vps)) ?? d.vps
+        agent = (try? c.decode(AgentConfig.self, forKey: .agent)) ?? d.agent
         seedDefaults()
     }
 

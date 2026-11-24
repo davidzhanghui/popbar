@@ -87,6 +87,24 @@ final class ClipboardModule: PopBarModule {
     func stop() { ClipboardHistory.shared.suspend() }
 }
 
+@MainActor
+final class AgentModule: PopBarModule {
+    let id = "agent"
+    var title: String { L10n.t("Agent 管理", "Agent Manager") }
+    var summary: String { L10n.t("管理 Claude Code、Claude Desktop、Command Code、OpenCode 版本、自动更新与运行进程",
+                                 "Manage Claude Code, Claude Desktop, Command Code, and OpenCode versions, auto-updates, and processes") }
+    let icon = "bot"
+    let group = DeckGroup.work
+    let model = AgentManagerModel()
+    var badge: Int? { model.sidebarBadge }
+
+    func page() -> AnyView { AnyView(AgentPage(model: model)) }
+    func start() { model.startModule() }
+    func stop() { model.stopModule() }
+    func pageDidAppear() { model.pageDidAppear() }
+    func pageDidDisappear() { model.pageDidDisappear() }
+}
+
 // MARK: - 媒体
 
 @MainActor

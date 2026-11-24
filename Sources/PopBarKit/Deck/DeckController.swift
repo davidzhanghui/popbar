@@ -136,7 +136,7 @@ final class DeckController: NSObject, NSWindowDelegate {
         w.setFrameAutosaveName("PopBarDeck")
         // 侧栏角标（待办数、剪贴板条数、新版本提醒）随数据变化刷新
         let nc = NotificationCenter.default
-        for name in [TodoStore.changed, Notification.Name("PopBarClipboardHistoryChanged"), ConfigStore.didChange, UpdateManager.stateChanged] {
+        for name in [TodoStore.changed, Notification.Name("PopBarClipboardHistoryChanged"), ConfigStore.didChange, UpdateManager.stateChanged, AgentManagerModel.stateChanged] {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.state.tick &+= 1 }
             })
@@ -151,7 +151,7 @@ final class DeckController: NSObject, NSWindowDelegate {
 @MainActor
 enum DeckTint {
     private static let modules: [String: NSColor] = [
-        "today": IconPalette.green, "clipboard": IconPalette.blue,
+        "today": IconPalette.green, "clipboard": IconPalette.blue, "agent": IconPalette.indigo,
         "snap": IconPalette.purple, "record": IconPalette.red,
         "monitor": IconPalette.teal, "vps": IconPalette.blue, "clean": IconPalette.sky,
         "startup": IconPalette.orange, "maintenance": IconPalette.slate,

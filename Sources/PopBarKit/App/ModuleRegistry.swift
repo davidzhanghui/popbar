@@ -82,7 +82,7 @@ final class ModuleRegistry: ObservableObject {
 
     /// 侧栏顺序即此顺序
     let all: [PopBarModule] = [
-        TodayModule(), ClipboardModule(),
+        TodayModule(), ClipboardModule(), AgentModule(),
         SnapModule(), RecordModule(),
         MonitorModule(), VPSModule(), CleanModule(), StartupModule(), MaintenanceModule(),
         PrintModule(), TVModule(),
