@@ -3,7 +3,7 @@ import CryptoKit
 @testable import PopBarKit
 import PopBarCore
 
-/// 磁盘清理的沙箱测试:全部在临时 home 里造目录,真实走 扫描 → 勾选 → 移入废纸篓 / npm GC,
+/// 磁盘清理的沙箱测试：全部在临时 home 里造目录，真实走 扫描 → 勾选 → 移入废纸篓 / npm GC，
 /// 不碰用户真实目录。进了废纸篓的测试数据在末尾回收。
 
 private func write(_ url: URL, _ bytes: Int = 4096) {
@@ -32,6 +32,7 @@ func runCleanTests() async {
     write(home.appendingPathComponent("Library/Caches/com.apple.thing/a.bin"))
     write(home.appendingPathComponent("Library/Caches/dev.popbar.app/a.bin"))
     write(home.appendingPathComponent("Library/Caches/com.apple.Safari/a.bin"))
+    write(home.appendingPathComponent("Library/Caches/CloudKit/a.bin"))
     write(home.appendingPathComponent("Library/Caches/Homebrew/a.bin"))
     write(home.appendingPathComponent("Library/Logs/SomeApp/x.log"))
     write(home.appendingPathComponent("Library/Logs/PopBar/clean.log"))
@@ -45,7 +46,7 @@ func runCleanTests() async {
     write(home.appendingPathComponent("Library/Containers/com.foo.cache/a.bin"))
     write(home.appendingPathComponent("Library/Containers/com.apple.x/a.bin"))
     write(home.appendingPathComponent("Library/Application Support/Claude/vm_bundles/a.bin"))
-    // 已安装 App:com.foo.cache
+    // 已安装 App：com.foo.cache
     let apps = home.appendingPathComponent("Applications")
     let plist = apps.appendingPathComponent("Foo.app/Contents/Info.plist")
     try? fm.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -53,7 +54,7 @@ func runCleanTests() async {
     // 指向用户目录之外的符号链接
     write(outside.appendingPathComponent("precious.txt"))
     try? fm.createSymbolicLink(at: home.appendingPathComponent("Library/Caches/linkx"), withDestinationURL: outside)
-    // npm cacache:一个被索引引用的 blob + 一个孤儿 blob + tmp 残留
+    // npm cacache：一个被索引引用的 blob + 一个孤儿 blob + tmp 残留
     let npm = home.appendingPathComponent(".npm/_cacache")
     let kept = integrity(of: Data("kept".utf8)), orphan = integrity(of: Data("orphan".utf8))
     write(npm.appendingPathComponent("content-v2/\(kept.rel)"), 2000)
@@ -74,6 +75,8 @@ func runCleanTests() async {
     expectEqual(target("Library/Caches/com.apple.thing")?.safety, .review, "com.apple.* 缓存需确认")
     expect(target("Library/Caches/dev.popbar.app") == nil, "PopBar 自己的缓存不进清单")
     expect(target("Library/Caches/com.apple.Safari") == nil, "Safari 不进清单")
+    expect(target("Library/Caches/CloudKit") == nil, "CloudKit 不进清单")
+    expect(target("Library/Caches/linkx") == nil, "符号链接在扫描阶段直接跳过")
     expect(target("Library/Caches/Homebrew")?.category == .developerTools, "Homebrew 归开发工具")
     expect(target("Library/Logs/PopBar") == nil, "PopBar 日志不进清单")
     expectEqual(target("Library/Logs/SomeApp")?.category, .appCache, "旧日志归 appCache")
@@ -81,10 +84,12 @@ func runCleanTests() async {
     expectEqual(target(".cache/claude")?.category, .aiTools, "claude 缓存归 AI 工具")
     expectEqual(target(".cache/torch")?.safety, .review, "模型缓存需确认")
     expectEqual(target(".cache/mystery")?.safety, .review, "未知 ~/.cache 目录需确认")
-    expect(target(".cache/huggingface") == nil, "huggingface 归手动管理,不进清单")
+    expect(target(".cache/huggingface") == nil, "huggingface 归手动管理，不进清单")
     expectEqual(target("Xcode/DerivedData")?.safety, .safe, "DerivedData 为 safe")
     expectEqual(target(".npm/_cacache")?.kind, .npmCache, "npm 走引用图清理")
     expectEqual(target("com.ghost.app.x")?.category, .remnants, "无宿主 App 的容器 = 卸载残留")
+    expect(target("com.ghost.app.x")?.allowFinderFallback == true, "容器残留允许 Finder 兜底")
+    expect(target("Library/Caches/com.foo.cache")?.allowFinderFallback == false, "普通缓存禁止 Finder 提权兜底")
     expect(target("Containers/com.foo.cache") == nil, "已安装 App 的容器不是残留")
     expect(target("Containers/com.apple.x") == nil, "com.apple.* 容器不当残留")
     let manual = CleanScanner.buildManualItems(home: home).map(\.name)
@@ -103,22 +108,27 @@ func runCleanTests() async {
     expect(rej("/System/Library/Caches/x") != nil, "系统路径拒绝")
     expect(rej("/Library/Caches/x") != nil, "/Library 拒绝")
     expect(rej(home.path + "/Library/Caches/linkx") != nil, "符号链接拒绝")
+    expect(rej(home.path + "/Library/Caches/CloudKit") != nil, "CloudKit 在执行期 Guard 也被强制拒绝")
+    expect(rej(home.path + "/Library/Caches/com.apple.Safari") != nil, "Safari 在执行期 Guard 也被强制拒绝")
 
     // MARK: npm 引用图
     section("CleanNpmGC")
     let ana = await CleanNpmGC.analyze(cacheRoot: npm)
     expectEqual(ana?.orphanCount, 1, "只识别出 1 个孤儿 blob")
     expectEqual(ana?.orphanBytes, 3000, "孤儿大小 3000")
+    expectEqual(ana?.tmpBytes, 500, "tmp 大小 500")
+    expectEqual(ana?.reclaimableBytes, 3500, "总可释放 3500")
     expectEqual(ana?.keptBytes, 2000, "被引用的 2000 字节保留")
     let gc = await CleanNpmGC.cleanup(cacheRoot: npm)
     expectEqual(gc?.removedBlobs, 1, "清理删除 1 个孤儿")
+    expectEqual(gc?.freedBytes, 3500, "释放字节含孤儿与 tmp")
     expect(!fm.fileExists(atPath: npm.appendingPathComponent("content-v2/\(orphan.rel)").path), "孤儿已删除")
     expect(fm.fileExists(atPath: npm.appendingPathComponent("content-v2/\(kept.rel)").path), "被引用的 blob 保留")
     expect(!fm.fileExists(atPath: npm.appendingPathComponent("tmp/leftover").path), "tmp 残留已清")
 
-    // MARK: 端到端:扫描 → 勾选 → 移入废纸篓
+    // MARK: 端到端：扫描 → 勾选 → 移入废纸篓
     section("CleanViewModel(沙箱 home 端到端)")
-    let vm = CleanViewModel(home: home)
+    let vm = CleanViewModel(home: home, appIndexRoots: [apps])
     vm.scan()
     var waited = 0
     while vm.isScanning && waited < 300 { try? await Task.sleep(nanoseconds: 100_000_000); waited += 1 }
@@ -141,7 +151,7 @@ func runCleanTests() async {
     vm.toggleSection(.remnants)
     expect(item("com.ghost.app.x")?.isSelected == false, "再点取消")
 
-    // 底栏按当前 tab 的分类统计与操作,其他分类里的勾选不受影响
+    // 底栏按当前 tab 的分类统计与操作，其他分类里的勾选不受影响
     vm.selectNone()
     vm.selectAll(in: .aiTools)
     let aiSelectable = vm.items.filter { $0.category == .aiTools && $0.isSelectable }.count
@@ -150,19 +160,19 @@ func runCleanTests() async {
     expectEqual(vm.selectedItems(in: .appCache).count, 0, "其他分类不受影响")
     expectEqual(vm.selectedItems.count, aiSelectable, "全局只有该分类被选中")
     expectEqual(vm.selectedBytes(in: .appCache), 0, "其他分类的已选大小为 0")
-    expectEqual(vm.selectedBytes(in: .aiTools), vm.selectedBytes, "分类已选大小 = 全局(此时只选了它)")
+    expectEqual(vm.selectedBytes(in: .aiTools), vm.selectedBytes, "分类已选大小 = 全局（此时只选了它）")
     vm.selectRecommended()
     vm.selectNone(in: .appCache)
     expectEqual(vm.selectedItems(in: .appCache).count, 0, "分类内全不选")
     expect(vm.selectedItems(in: .developerTools).count > 0, "全不选一个分类不影响另一个")
     vm.selectRecommended(in: .remnants)
-    expectEqual(vm.selectedItems(in: .remnants).count, 0, "残留的推荐 = 不选(都是 review)")
+    expectEqual(vm.selectedItems(in: .remnants).count, 0, "残留的推荐 = 不选（都是 review）")
     vm.selectNone()
 
-    // 锁定:所属 App 正在运行的条目不可勾选(Finder 一定在跑)
+    // 锁定：所属 App 正在运行的条目不可勾选（Finder 一定在跑）
     if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == "com.apple.finder" }) {
         write(home.appendingPathComponent("Library/Caches/com.apple.finder/a.bin"))
-        let vm2 = CleanViewModel(home: home)
+        let vm2 = CleanViewModel(home: home, appIndexRoots: [apps])
         vm2.scan()
         var w2 = 0
         while vm2.isScanning && w2 < 300 { try? await Task.sleep(nanoseconds: 100_000_000); w2 += 1 }
@@ -173,25 +183,41 @@ func runCleanTests() async {
         try? fm.removeItem(at: home.appendingPathComponent("Library/Caches/com.apple.finder"))
     }
 
-    // 执行:勾 foo 缓存 + 残留 + 符号链接(应被拒),不勾 npm(避免依赖本机 node 是否在跑)
+    // 执行：勾 foo 缓存 + 残留 + 人造符号链接（验证执行期 Guard 仍独立拦截并记入 failures）
     vm.selectNone()
-    for suffix in ["Library/Caches/com.foo.cache", "com.ghost.app.x", "Library/Caches/linkx"] {
-        if let it = item(suffix), let i = vm.items.firstIndex(where: { $0.id == it.id }) { vm.items[i].isSelected = true }
+    var batch: [CleanItem] = []
+    for suffix in ["Library/Caches/com.foo.cache", "com.ghost.app.x"] {
+        if let it = item(suffix) { batch.append(it) }
     }
-    expectEqual(vm.selectedItems.count, 3, "选中 3 项")
-    await vm.execute(vm.selectedItems)
+    let symlinkItem = CleanItem(
+        id: UUID(),
+        url: home.appendingPathComponent("Library/Caches/linkx"),
+        name: "linkx",
+        displayPath: "~/Library/Caches/linkx",
+        category: .appCache,
+        kind: .path,
+        safety: .safe,
+        hint: nil,
+        sizeBytes: 4096,
+        isSelected: true,
+        isLocked: false,
+        statusNote: nil
+    )
+    batch.append(symlinkItem)
+    await vm.execute(batch)
     expect(!fm.fileExists(atPath: home.appendingPathComponent("Library/Caches/com.foo.cache").path), "App 缓存已离开原位")
     expect(!fm.fileExists(atPath: home.appendingPathComponent("Library/Containers/com.ghost.app.x").path), "残留已离开原位")
     expectEqual(vm.trashedURLs.count, 2, "两项进了废纸篓")
-    expect(vm.trashedURLs.allSatisfy { fm.fileExists(atPath: $0.path) }, "废纸篓里能找到(可恢复)")
+    expect(vm.trashedURLs.allSatisfy { fm.fileExists(atPath: $0.path) }, "废纸篓里能找到（可恢复）")
     expect(fm.fileExists(atPath: outside.appendingPathComponent("precious.txt").path), "符号链接指向的外部数据没被动")
     expect(fm.fileExists(atPath: home.appendingPathComponent("Library/Caches/linkx").path), "符号链接本身也没被动")
-    expectEqual(vm.summary?.trashedCount, 2, "汇总:2 项进废纸篓")
-    expectEqual(vm.summary?.failedCount, 1, "汇总:符号链接被拒算 1 项失败")
+    expectEqual(vm.summary?.trashedCount, 2, "汇总：2 项进废纸篓")
+    expectEqual(vm.summary?.failedCount, 1, "汇总：符号链接被拒算 1 项失败")
+    expectEqual(vm.summary?.failures.count, 1, "失败原因写入 summary.failures")
     expect(item("Library/Caches/com.foo.cache") == nil, "已处理项从列表移除")
     expect(item(".cache/uv") != nil, "未选中的项保留")
     expect(fm.fileExists(atPath: home.appendingPathComponent(".cache/uv/a.bin").path), "未选中的数据未动")
 
-    // 回收测试数据,别在用户废纸篓里留垃圾
+    // 回收测试数据，别在用户废纸篓里留垃圾
     for u in vm.trashedURLs { try? fm.removeItem(at: u) }
 }

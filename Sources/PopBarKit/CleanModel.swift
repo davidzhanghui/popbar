@@ -3,18 +3,18 @@ import PopBarCore
 import PopBarPlatform
 import PopBarDesign
 
-/// 磁盘清理 —— 数据模型(移植自 mole-demo 的清理模块,A 档:只清理用户目录,删除一律进废纸篓)。
+/// 磁盘清理 —— 数据模型（A 档：只清理用户目录，常规路径一律进废纸篓）。
 
 enum CleanSafety: String, Sendable {
-    case safe       // 可再生,默认勾选
-    case review     // 需确认,默认不勾选
+    case safe       // 可快速自动再生，默认勾选
+    case review     // 高重下成本 / 系统组件 / 需人工确认，默认不勾选
     case blocked    // 永不清理
 }
 
 enum CleanKind: Equatable, Sendable {
     /// 整个目录/文件移入废纸篓
     case path
-    /// npm cacache:引用图分析后只删孤儿 blob(可再生缓存,直接删除而不进废纸篓)
+    /// npm cacache：引用图分析后只删孤儿 blob 与 tmp（可再生缓存，直接删除而不进废纸篓）
     case npmCache
 }
 
@@ -45,17 +45,17 @@ enum CleanCategory: String, CaseIterable, Identifiable, Sendable {
     var summary: String {
         switch self {
         case .appCache:
-            return L10n.t("App、浏览器和云盘缓存及旧日志，保留登录状态和浏览记录",
-                          "App, browser and cloud-drive caches and old logs; sign-ins and history are kept")
+            return L10n.t("App、浏览器、沙盒容器缓存及旧日志，保留登录状态和浏览记录",
+                          "App, browser and sandbox container caches and old logs; sign-ins and history are kept")
         case .developerTools:
-            return L10n.t("Xcode、编译与包管理器产生的可再生构建缓存",
-                          "Rebuildable caches from Xcode, compilers and package managers")
+            return L10n.t("Xcode、编译与包管理器产生的可再生缓存；大依赖仓默认不勾选",
+                          "Rebuildable caches from Xcode, compilers and package managers; large package stores are unchecked by default")
         case .aiTools:
-            return L10n.t("AI 编程工具与模型运行时产生的缓存",
-                          "Caches from AI coding tools and model runtimes")
+            return L10n.t("AI 编程工具与模型运行时产生的缓存；模型权重默认不勾选",
+                          "Caches from AI coding tools and model runtimes; model weights are unchecked by default")
         case .remnants:
-            return L10n.t("已卸载应用留下的容器与支持文件，默认不勾选",
-                          "Containers and support files left by removed apps; unchecked by default")
+            return L10n.t("已卸载应用留下的容器、状态与支持文件，默认不勾选",
+                          "Containers, state and support files left by removed apps; unchecked by default")
         }
     }
 
@@ -89,18 +89,23 @@ struct CleanItem: Identifiable, Sendable, Equatable {
     let hint: String?
     var ownerBundleID: String?
     var ownerAppName: String?
+    /// 用于活跃进程/运行中锁定的附加标识（Bundle ID 前缀或进程名）
+    var lockBundlePrefixes: [String] = []
+    var lockProcessNames: [String] = []
+    /// 是否允许在 FileManager 权限拒绝时回退给 Finder 移入废纸篓（仅限已卸载容器残留）
+    var allowFinderFallback: Bool = false
     var sizeBytes: Int64?
     var isSelected: Bool
-    /// 所属 App 正在运行:加锁,不可勾选
+    /// 所属 App 或工具正在运行：加锁，不可勾选
     var isLocked: Bool
-    /// 动态状态(使用中 / 分析结果),优先于 hint 展示
+    /// 动态状态（使用中 / 分析结果），优先于 hint 展示
     var statusNote: String?
 
     var isSelectable: Bool { !isLocked && safety != .blocked }
     var displayNote: String? { statusNote ?? hint }
 }
 
-/// 手动管理项:只展示占用,不参与清理
+/// 手动管理项：只展示占用，不参与清理
 struct CleanManualItem: Identifiable, Sendable, Equatable {
     let id: UUID
     let url: URL
@@ -114,10 +119,10 @@ struct CleanSummary: Sendable {
     var trashedCount: Int
     var npmCount: Int
     var failedCount: Int
-    /// 失败项的「名称:原因」,最多展示几条
+    /// 失败项的「名称：原因」，最多展示几条
     var failures: [String] = []
     var freedBytes: Int64
-    /// 进了废纸篓的字节数:清倒废纸篓后才真正释放
+    /// 进了废纸篓的字节数：清倒废纸篓后才真正释放
     var trashedBytes: Int64
 
     var title: String {
@@ -131,13 +136,14 @@ struct CleanSummary: Sendable {
                                 "Moved \(trashedCount) items (\(ByteFormat.string(trashedBytes))) to the Trash; empty it to free the space"))
         }
         if npmCount > 0 {
-            parts.append(L10n.t("npm 孤儿缓存已直接清除，释放 \(ByteFormat.string(freedBytes - trashedBytes))",
-                                "npm orphan cache removed, freed \(ByteFormat.string(freedBytes - trashedBytes))"))
+            let directBytes = max(0, freedBytes - trashedBytes)
+            parts.append(L10n.t("npm 孤儿缓存已直接清除，释放 \(ByteFormat.string(directBytes))",
+                                "npm orphan cache removed, freed \(ByteFormat.string(directBytes))"))
         }
         if parts.isEmpty { parts.append(L10n.t("没有可处理的项目", "Nothing to process")) }
         if failedCount > 0 {
-            parts.append(L10n.t("失败 \(failedCount) 项，详见日志", "\(failedCount) failed, see the log"))
-            parts.append(contentsOf: failures.prefix(3))
+            parts.append(L10n.t("跳过或失败 \(failedCount) 项，详见日志", "\(failedCount) skipped or failed, see the log"))
+            parts.append(contentsOf: failures.prefix(4))
         }
         return parts.joined(separator: "\n")
     }

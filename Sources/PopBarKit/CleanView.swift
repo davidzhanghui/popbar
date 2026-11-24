@@ -4,9 +4,9 @@ import PopBarCore
 import PopBarPlatform
 import PopBarDesign
 
-/// 磁盘清理面板的 SwiftUI 内容(移植自 mole-demo 的评审页,配色沿用系统监控的 SysTheme)。
+/// 磁盘清理面板的 SwiftUI 内容（配色沿用系统监控的 SysTheme）。
 
-/// 分类 tab:四个清理分类 + 只展示的手动管理
+/// 分类 tab：四个清理分类 + 只展示的手动管理
 enum CleanTab: Hashable {
     case category(CleanCategory)
     case manual
@@ -46,8 +46,12 @@ struct CleanView: View {
                     HStack(spacing: 8) {
                         Text(L10n.t("可清理 · \(vm.items.count) 项 · \(vm.groupedItems.count) 类",
                                     "Cleanable · \(vm.items.count) items · \(vm.groupedItems.count) groups"))
+                        if vm.lockedCount > 0 {
+                            Text(L10n.t("已锁定 \(vm.lockedCount) 项使用中", "\(vm.lockedCount) in use"))
+                                .foregroundStyle(SysTheme.secondary)
+                        }
                         if vm.hasUnmeasured {
-                            Text(L10n.t("部分条目未能测量", "Some items couldn’t be measured"))
+                            Text(L10n.t("部分受保护条目未能测量", "Some protected items couldn’t be measured"))
                                 .foregroundStyle(Color.orange)
                         }
                     }
@@ -129,35 +133,50 @@ struct CleanView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            if s.trashedCount > 0 {
-                Button(L10n.t("打开废纸篓", "Open Trash")) {
-                    NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser
-                        .appendingPathComponent(".Trash"))
+            HStack(spacing: 8) {
+                if s.failedCount > 0 {
+                    Button(L10n.t("查看日志", "View Log")) { vm.openLog() }
+                        .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(SysTheme.brand)
                 }
-                .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(SysTheme.brand)
+                if s.trashedCount > 0 {
+                    Button(L10n.t("打开废纸篓", "Open Trash")) {
+                        NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser
+                            .appendingPathComponent(".Trash"))
+                    }
+                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(SysTheme.brand)
+                }
+                Button { vm.dismissSummary() } label: {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(SysTheme.tertiary)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.t("关闭提示", "Dismiss"))
             }
         }
         .padding(10)
         .background(CardBackground())
     }
 
-    /// 底栏只作用于当前 tab 的分类:其他 tab 里的勾选不会被统计、也不会被清理
+    /// 底栏只作用于当前 tab 的分类：其他 tab 里的勾选不会被统计、也不会被清理
     private func footer(_ c: CleanCategory) -> some View {
         let picked = vm.selectedItems(in: c)
         let bytes = vm.selectedBytes(in: c)
-        let blocked = picked.isEmpty || vm.isWorking || vm.isScanning
+        let busy = vm.isWorking || vm.isScanning
+        let blocked = picked.isEmpty || busy
+        let actionTitle = actionButtonTitle(for: picked, bytes: bytes, working: vm.isWorking)
+
         return HStack(spacing: 14) {
             Text(L10n.t("已选 \(picked.count) 项", "\(picked.count) selected"))
                 .font(.system(size: 12)).foregroundStyle(SysTheme.secondary)
-            link(L10n.t("全选", "All")) { vm.selectAll(in: c) }
-            link(L10n.t("全不选", "None")) { vm.selectNone(in: c) }
-            link(L10n.t("推荐", "Recommended")) { vm.selectRecommended(in: c) }
+            link(L10n.t("全选", "All"), disabled: busy) { vm.selectAll(in: c) }
+            link(L10n.t("全不选", "None"), disabled: busy) { vm.selectNone(in: c) }
+            link(L10n.t("推荐", "Recommended"), disabled: busy) { vm.selectRecommended(in: c) }
             Spacer()
             Button {
-                if CleanConfirm.confirm(count: picked.count, bytes: bytes) { vm.cleanSelected(in: c) }
+                if CleanConfirm.confirm(items: picked) { vm.cleanSelected(in: c) }
             } label: {
-                Text(vm.isWorking ? L10n.t("正在清理…", "Cleaning…")
-                     : L10n.t("移入废纸篓 · \(ByteFormat.string(bytes))", "Move to Trash · \(ByteFormat.string(bytes))"))
+                Text(actionTitle)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16).padding(.vertical, 7)
@@ -170,10 +189,26 @@ struct CleanView: View {
         .padding(.horizontal, 4)
     }
 
-    private func link(_ title: String, _ action: @escaping () -> Void) -> some View {
+    private func actionButtonTitle(for picked: [CleanItem], bytes: Int64, working: Bool) -> String {
+        if working { return L10n.t("正在清理…", "Cleaning…") }
+        let hasPath = picked.contains { $0.kind == .path }
+        let hasNpm = picked.contains { $0.kind == .npmCache }
+        if hasNpm && !hasPath {
+            return L10n.t("直接清理 · \(ByteFormat.string(bytes))", "Clean Directly · \(ByteFormat.string(bytes))")
+        }
+        if hasNpm && hasPath {
+            return L10n.t("清理所选 · \(ByteFormat.string(bytes))", "Clean Selected · \(ByteFormat.string(bytes))")
+        }
+        return L10n.t("移入废纸篓 · \(ByteFormat.string(bytes))", "Move to Trash · \(ByteFormat.string(bytes))")
+    }
+
+    private func link(_ title: String, disabled: Bool, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title).font(.system(size: 12)).foregroundStyle(SysTheme.brand)
-        }.buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
     }
 }
 
@@ -181,17 +216,51 @@ extension PanelTheme {
     static var brandColor: Color { Color(nsColor: PanelTheme.brand) }
 }
 
-/// 执行前确认:说明进废纸篓、可恢复
+/// 执行前确认：区分废纸篓移入与 npm 直接永久删除，避免误导用户
 @MainActor
 enum CleanConfirm {
-    static func confirm(count: Int, bytes: Int64) -> Bool {
+    static func confirm(items: [CleanItem]) -> Bool {
+        guard !items.isEmpty else { return false }
+        let pathItems = items.filter { $0.kind == .path }
+        let npmItems = items.filter { $0.kind == .npmCache }
+        let totalBytes = items.compactMap(\.sizeBytes).reduce(0, +)
+        let hasRemnant = items.contains { $0.category == .remnants }
+
         let a = NSAlert()
         a.alertStyle = .warning
-        a.messageText = L10n.t("将 \(count) 项移入废纸篓？", "Move \(count) items to the Trash?")
-        a.informativeText = L10n.t(
-            "共 \(ByteFormat.string(bytes))。项目会进入废纸篓，可随时放回原处；清倒废纸篓后才会真正释放空间。npm 孤儿缓存是可再生数据，会直接清除。",
-            "\(ByteFormat.string(bytes)) in total. Items go to the Trash and can be put back; space is freed once you empty it. Orphan npm cache is regenerable and removed directly.")
-        a.addButton(withTitle: L10n.t("移入废纸篓", "Move to Trash"))
+
+        if npmItems.isEmpty {
+            if pathItems.count == 1, let only = pathItems.first {
+                let label = only.ownerAppName ?? only.name
+                a.messageText = L10n.t("将「\(label)」移入废纸篓？", "Move “\(label)” to the Trash?")
+            } else {
+                a.messageText = L10n.t("将 \(pathItems.count) 项移入废纸篓？", "Move \(pathItems.count) items to the Trash?")
+            }
+            var info = L10n.t(
+                "共 \(ByteFormat.string(totalBytes))。项目会进入废纸篓，可随时放回原处；清倒废纸篓后才会真正释放空间。",
+                "\(ByteFormat.string(totalBytes)) in total. Items go to the Trash and can be put back; space is freed once you empty it.")
+            if hasRemnant {
+                info += "\n" + L10n.t("包含疑似卸载残留，请确认对应应用已不再使用。",
+                                      "Includes suspected leftovers; please make sure those apps are no longer needed.")
+            }
+            a.informativeText = info
+            a.addButton(withTitle: L10n.t("移入废纸篓", "Move to Trash"))
+        } else if pathItems.isEmpty {
+            a.messageText = L10n.t("直接清理 npm 孤儿缓存？", "Clean orphan npm cache directly?")
+            a.informativeText = L10n.t(
+                "预计释放 \(ByteFormat.string(totalBytes))。仅删除无索引引用的孤儿数据与临时文件，会直接清除且不进入废纸篓，有效缓存保持不变。",
+                "About \(ByteFormat.string(totalBytes)) to reclaim. Only unreferenced orphan blobs and temp files are removed directly (not sent to Trash); live cache is untouched.")
+            a.addButton(withTitle: L10n.t("直接清理", "Clean Directly"))
+        } else {
+            let pathBytes = pathItems.compactMap(\.sizeBytes).reduce(0, +)
+            let npmBytes = npmItems.compactMap(\.sizeBytes).reduce(0, +)
+            a.messageText = L10n.t("清理所选 \(items.count) 项？", "Clean \(items.count) selected items?")
+            a.informativeText = L10n.t(
+                "其中 \(pathItems.count) 项（\(ByteFormat.string(pathBytes))）会移入废纸篓并可随时恢复；npm 孤儿缓存（\(ByteFormat.string(npmBytes))）会直接永久清除。",
+                "\(pathItems.count) items (\(ByteFormat.string(pathBytes))) will move to the Trash and can be restored; orphan npm cache (\(ByteFormat.string(npmBytes))) will be deleted directly.")
+            a.addButton(withTitle: L10n.t("开始清理", "Clean"))
+        }
+
         a.addButton(withTitle: L10n.t("取消", "Cancel"))
         NSApp.activateForUI()
         return a.runModal() == .alertFirstButtonReturn
@@ -239,28 +308,33 @@ private struct RowIcon: View {
                 .foregroundStyle(SysTheme.secondary)
                 .frame(width: 24, height: 24).contentShape(Rectangle())
         }
-        .buttonStyle(.plain).help(help).disabled(!enabled)
+        .buttonStyle(.plain).help(help).disabled(!enabled).opacity(enabled ? 1 : 0.35)
     }
 }
 
-// MARK: - 分类页(一个 tab 的内容)
+// MARK: - 分类页（一个 tab 的内容）
 
 private struct CleanCategoryPage: View {
     @ObservedObject var vm: CleanViewModel
     let category: CleanCategory
     let items: [CleanItem]
 
-    private var selectedBytes: Int64 { items.filter(\.isSelected).compactMap(\.sizeBytes).reduce(0, +) }
-    private var totalBytes: Int64 { items.compactMap(\.sizeBytes).reduce(0, +) }
+    private var selectedCount: Int { vm.selectedItems(in: category).count }
+    private var selectedBytes: Int64 { vm.selectedBytes(in: category) }
+    private var totalBytes: Int64 { items.filter(\.isSelectable).compactMap(\.sizeBytes).reduce(0, +) }
+    private var busy: Bool { vm.isWorking || vm.isScanning }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                CleanCheckbox(state: vm.selectionState(category), enabled: items.contains(where: \.isSelectable)) {
+                CleanCheckbox(
+                    state: vm.selectionState(category),
+                    enabled: !busy && items.contains(where: \.isSelectable)
+                ) {
                     vm.toggleSection(category)
                 }
                 Text(category.title).font(.system(size: 13, weight: .semibold))
-                Text("\(items.filter(\.isSelected).count)/\(items.count)")
+                Text("\(selectedCount)/\(items.count)")
                     .font(.system(size: 11)).foregroundStyle(SysTheme.secondary)
                 Spacer()
                 Text("\(ByteFormat.string(selectedBytes)) / \(ByteFormat.string(totalBytes))")
@@ -288,7 +362,7 @@ private struct CleanCategoryPage: View {
                 }
             }
         }
-        // 条目少时卡片也撑满剩余高度,底栏才会固定在窗口底部
+        // 条目少时卡片也撑满剩余高度，底栏才会固定在窗口底部
         .frame(maxHeight: .infinity, alignment: .top)
         .background(CardBackground())
     }
@@ -298,9 +372,13 @@ private struct CleanItemRow: View {
     @ObservedObject var vm: CleanViewModel
     let item: CleanItem
 
+    private var busy: Bool { vm.isWorking || vm.isScanning }
+
     var body: some View {
         HStack(spacing: 10) {
-            CleanCheckbox(state: item.isSelected ? .all : .none, enabled: item.isSelectable) { vm.toggle(item.id) }
+            CleanCheckbox(state: item.isSelected ? .all : .none, enabled: item.isSelectable && !busy) {
+                vm.toggle(item.id)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if item.isLocked {
@@ -320,8 +398,10 @@ private struct CleanItemRow: View {
                 .font(.system(size: 11)).monospacedDigit()
             if item.kind == .path {
                 RowIcon(symbol: "trash", help: L10n.t("移到废纸篓", "Move to Trash"),
-                        action: { vm.trashItem(item.id) },
-                        enabled: item.isSelectable && !vm.isWorking)
+                        action: {
+                            if CleanConfirm.confirm(items: [item]) { vm.trashItem(item.id) }
+                        },
+                        enabled: item.isSelectable && !busy)
             }
             RowIcon(symbol: "folder", help: L10n.t("在访达中显示", "Show in Finder")) { vm.reveal(item.url) }
         }
