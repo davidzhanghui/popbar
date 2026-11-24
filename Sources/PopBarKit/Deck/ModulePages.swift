@@ -615,8 +615,16 @@ struct CleanPage: View {
 struct StartupPage: View {
     @ObservedObject var model: StartupViewModel
     var body: some View {
-        DSPageShell(L10n.t("启动项", "Startup"), subtitle: L10n.t("停用只是让它不再自动运行，可以随时恢复。", "Disabling only stops it from launching automatically; you can restore it anytime."),
+        DSPageShell(L10n.t("启动项", "Startup"), subtitle: L10n.t("登录项与后台服务；用户级 LaunchAgent 可开关（重新登录生效），系统设置项可直接跳转管理。", "Login items and background services; user LaunchAgents can be toggled (after re-login), and system-managed items open System Settings."),
                     scrolls: false) {
+            DSButton(L10n.t("系统设置", "System Settings"), icon: "external-link", kind: .ghost) {
+                model.openSystemLoginItemsSettings()
+            }
+            DSButton(L10n.t("刷新", "Refresh"), icon: "refresh-cw", kind: .ghost) {
+                model.load(forceBTM: true)
+            }
+            .disabled(model.isLoading)
+        } content: {
             StartupView(vm: model)
         }
     }
@@ -627,6 +635,11 @@ struct MaintenancePage: View {
     var body: some View {
         DSPageShell(L10n.t("维护", "Maintenance"), subtitle: L10n.t("只做有实际效果的维护；需要管理员权限的会弹出密码框", "Only tasks that actually help; admin tasks ask for your password"),
                     scrolls: false) {
+            DSButton(L10n.t("刷新", "Refresh"), icon: "refresh-cw", kind: .ghost) {
+                model.load()
+            }
+            .disabled(model.isRefreshing)
+        } content: {
             MaintenanceView(vm: model)
         }
     }

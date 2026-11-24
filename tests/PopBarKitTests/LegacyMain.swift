@@ -1067,9 +1067,9 @@ func runLegacyMainChecks() async throws {
     // MARK: - Maintenance / StartupItems
 
     section("Maintenance")
-    expectEqual(Maintenance.tasks.count, 5, "5 个维护任务")
+    expectEqual(Maintenance.tasks.count, 8, "8 个维护任务")
     expectEqual(Set(Maintenance.tasks.map(\.id)), Set(MaintenanceTask.ID.allCases), "任务覆盖全部 ID")
-    expect(Maintenance.tasks.filter(\.needsAdmin).map(\.id) == [.flushDNS, .thinSnapshots, .reindexSpotlight], "只有 DNS/快照/Spotlight 需要管理员")
+    expect(Maintenance.tasks.filter(\.needsAdmin).map(\.id) == [.flushDNS, .thinSnapshots, .reindexSpotlight, .restartAudio], "只有 DNS/快照/Spotlight/音频 需要管理员")
     expectEqual(ShellRun.run("/bin/echo", ["hi"]).out.trimmingCharacters(in: .whitespacesAndNewlines), "hi", "ShellRun 取 stdout")
     expectEqual(ShellRun.run("/bin/sleep", ["5"], timeout: 0.3).status, -2, "ShellRun 超时")
 

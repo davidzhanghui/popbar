@@ -228,18 +228,18 @@ public enum Shell {
             }
         }
 
-        // 等待退出：轮询 waitpid，超时 SIGTERM 整组，2 秒后 SIGKILL
-        let deadline = Date().addingTimeInterval(r.timeout)
+        // 等待退出：轮询 waitpid，超时 SIGTERM 整组，2 秒后 SIGKILL（使用单调时钟避免系统休眠误超时）
+        let deadline = ProcessInfo.processInfo.systemUptime + r.timeout
         var status: Int32 = 0
         var timedOut = false
-        var termSentAt: Date?
+        var termSentAt: TimeInterval?
         while true {
             let w = waitpid(pid, &status, WNOHANG)
             if w == pid { break }
             if w < 0 && errno != EINTR { break }
-            let now = Date()
+            let now = ProcessInfo.processInfo.systemUptime
             if let t = termSentAt {
-                if now.timeIntervalSince(t) > 2 { killpg(pid, SIGKILL); kill(pid, SIGKILL) }
+                if now - t > 2 { killpg(pid, SIGKILL); kill(pid, SIGKILL) }
             } else if now > deadline {
                 timedOut = true
                 killpg(pid, SIGTERM)
