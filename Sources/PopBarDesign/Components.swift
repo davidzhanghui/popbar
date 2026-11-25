@@ -823,20 +823,26 @@ public struct DSStat: View {
 
 // MARK: - 页面外壳
 
-/// Deck 每一页的统一页头：标题 + 副标题 + 右侧操作；内容区可滚动，左右边距 40
-public struct DSPageShell<Actions: View, Content: View>: View {
+/// Deck 每一页的统一页头：标题 + 副标题 + 右侧操作；可选 `pinned` 吸顶区固定在滚动列表上方；内容区可滚动，左右边距 36
+public struct DSPageShell<Actions: View, Pinned: View, Content: View>: View {
     let title: String
     let subtitle: String?
     let scrolls: Bool
+    let hasPinned: Bool
     let actions: Actions
+    let pinned: Pinned
     let content: Content
 
     public init(_ title: String, subtitle: String? = nil, scrolls: Bool = true,
-                @ViewBuilder actions: () -> Actions, @ViewBuilder content: () -> Content) {
+                @ViewBuilder actions: () -> Actions,
+                @ViewBuilder pinned: () -> Pinned,
+                @ViewBuilder content: () -> Content) {
         self.title = title
         self.subtitle = subtitle
         self.scrolls = scrolls
+        self.hasPinned = Pinned.self != EmptyView.self
         self.actions = actions()
+        self.pinned = pinned()
         self.content = content()
     }
 
@@ -857,16 +863,24 @@ public struct DSPageShell<Actions: View, Content: View>: View {
             }
             .padding(.horizontal, 36)
             .padding(.top, 30)
-            .padding(.bottom, 16)
+            .padding(.bottom, hasPinned ? 14 : 16)
+
+            if hasPinned {
+                VStack(alignment: .leading, spacing: 12) { pinned }
+                    .padding(.horizontal, 36)
+                    .padding(.bottom, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if scrolls {
-                // 内容滚到页头下面时，页头底部浮出一条发丝线，交代层次
+                // 内容滚到页头/吸顶区下面时，底部浮出一条发丝线，交代层次
                 Rectangle().fill(DS.border).frame(height: 1)
                     .opacity(scrolled ? 1 : 0)
                     .animation(.easeOut(duration: 0.15), value: scrolled)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) { content }
                         .padding(.horizontal, 36)
-                        .padding(.top, 4)
+                        .padding(.top, hasPinned ? 10 : 4)
                         .padding(.bottom, 28)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -886,9 +900,16 @@ public struct DSPageShell<Actions: View, Content: View>: View {
     }
 }
 
-public extension DSPageShell where Actions == EmptyView {
+public extension DSPageShell where Pinned == EmptyView {
+    init(_ title: String, subtitle: String? = nil, scrolls: Bool = true,
+         @ViewBuilder actions: () -> Actions, @ViewBuilder content: () -> Content) {
+        self.init(title, subtitle: subtitle, scrolls: scrolls, actions: actions, pinned: { EmptyView() }, content: content)
+    }
+}
+
+public extension DSPageShell where Actions == EmptyView, Pinned == EmptyView {
     init(_ title: String, subtitle: String? = nil, scrolls: Bool = true, @ViewBuilder content: () -> Content) {
-        self.init(title, subtitle: subtitle, scrolls: scrolls, actions: { EmptyView() }, content: content)
+        self.init(title, subtitle: subtitle, scrolls: scrolls, actions: { EmptyView() }, pinned: { EmptyView() }, content: content)
     }
 }
 

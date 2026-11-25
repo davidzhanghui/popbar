@@ -83,13 +83,13 @@ struct AgentPage: View {
                 }
                 .disabled(model.isAnyUpdating)
             }
-        } content: {
+        } pinned: {
             overviewStrip
 
             if let banner = model.banner {
                 bannerView(text: banner.text, tone: banner.tone)
             }
-
+        } content: {
             // 区块一：受管 Agent 列表（命令行与桌面端分开展示）
             VStack(alignment: .leading, spacing: 10) {
                 DSSectionHeader(L10n.t("Agent 列表", "Managed Agents")) {
