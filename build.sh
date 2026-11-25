@@ -37,14 +37,33 @@ cp "$BIN" "$APP/Contents/MacOS/PopBar"
 cp Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
-# 优先用自签名证书 "PopBar Dev"(TCC 按证书识别身份,重编译不必重新授权);
-# 证书不存在则回退 adhoc 签名
-if security find-identity -v -p codesigning | grep -q "PopBar Dev"; then
-    codesign --force --sign "PopBar Dev" "$APP"
+# 签名优先级：
+# 1) 显式指定 CODESIGN_IDENTITY（CI 发版通过临时钥匙串传入 SHA-1 指纹，或本地手动指定）
+# 2) 本地钥匙串中已信任的 "PopBar Release" / "PopBar Dev" 证书（TCC 按证书识别身份，更新不必重新授权）
+# 3) 回退 ad-hoc 签名（当 REQUIRE_CODESIGN=1 时禁止回退，防止 CI 静默产出每次掉权限的包）
+CODESIGN_ARGS=(--force)
+[ -n "${CODESIGN_KEYCHAIN:-}" ] && CODESIGN_ARGS+=(--keychain "$CODESIGN_KEYCHAIN")
+
+if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+    codesign "${CODESIGN_ARGS[@]}" --sign "$CODESIGN_IDENTITY" "$APP"
+elif [ "${REQUIRE_CODESIGN:-0}" = "1" ]; then
+    echo "错误: REQUIRE_CODESIGN=1 但未设置 CODESIGN_IDENTITY" >&2
+    exit 1
+elif security find-identity -v -p codesigning | grep -q '"PopBar Release"'; then
+    codesign "${CODESIGN_ARGS[@]}" --sign "PopBar Release" "$APP"
+elif security find-identity -v -p codesigning | grep -q '"PopBar Dev"'; then
+    codesign "${CODESIGN_ARGS[@]}" --sign "PopBar Dev" "$APP"
 else
     codesign --force --sign - "$APP" 2>/dev/null || true
 fi
 codesign --verify --deep --strict "$APP"
+if [ "${REQUIRE_CODESIGN:-0}" = "1" ]; then
+    req=$(codesign -d -r - "$APP" 2>&1)
+    if echo "$req" | grep -q "cdhash" || ! echo "$req" | grep -q 'identifier "dev.popbar.app"'; then
+        echo "错误: 签名结果未绑定固定证书，拒绝发版: $req" >&2
+        exit 1
+    fi
+fi
 echo "Built $APP ($CONFIG)"
 
 [ "$DMG" = 1 ] || exit 0
