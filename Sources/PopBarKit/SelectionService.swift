@@ -17,26 +17,84 @@ enum SelectionService {
         var viaPasteboard = false
     }
 
-    static func fetch(completion: @escaping (Result?) -> Void) {
-        if let r = axSelection(), !r.text.isEmpty {
-            completion(r)
-            return
+    private static let axQueue = DispatchQueue(label: "popbar.ax.selection", qos: .userInteractive)
+    private static let genLock = NSLock()
+    nonisolated(unsafe) private static var generation: UInt64 = 0
+    /// 防止连续划词并发进入 copyViaPasteboard 互相覆盖剪贴板（仅主线程读写）
+    nonisolated(unsafe) private static var isCopyingViaPasteboard = false
+    /// AX 取词总预算：前台 App 卡住时最多等这么久，过期即放弃本次取词（不再模拟 ⌘C）
+    static let axBudget: TimeInterval = 0.4
+    private enum AXOutcome { case found(String, CGRect?, AXUIElement, CFRange?), secure, none, cancelled }
+
+    private static func nextGeneration() -> UInt64 {
+        genLock.withLock {
+            generation &+= 1
+            return generation
         }
-        // 密码框:AX 读不到选区时也不允许 ⌘C 兜底
-        if let el = focusedElement(), isSecureField(el) {
+    }
+
+    private static func isCurrent(_ gen: UInt64) -> Bool {
+        genLock.withLock { generation == gen }
+    }
+
+    /// 作废在途取词请求（用户点击别处、滚动或发起新划词时调用）
+    static func cancelPending() {
+        _ = nextGeneration()
+    }
+
+    static func fetch(expectedPID: pid_t? = nil, completion: @escaping (Result?) -> Void) {
+        let gen = nextGeneration()
+        let allowFallback = ConfigStore.shared.config.clipboardFallback   // 主线程读配置
+        var finished = false                                               // 只在主线程读写
+        let budget = DispatchWorkItem {
+            guard !finished else { return }
+            finished = true
+            if isCurrent(gen) { cancelPending() }
             completion(nil)
-            return
         }
-        // 「剪贴板取词」关闭时不模拟 Cmd+C(避免打扰剪贴板)
-        guard ConfigStore.shared.config.clipboardFallback else {
-            completion(nil)
-            return
-        }
-        copyViaPasteboard { text in
-            if let t = text, !t.isEmpty {
-                completion(Result(text: t, bounds: nil, viaPasteboard: true))
-            } else {
-                completion(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + axBudget, execute: budget)
+        axQueue.async {
+            guard isCurrent(gen) else {
+                DispatchQueue.main.async {
+                    guard !finished else { return }
+                    finished = true
+                    budget.cancel()
+                    completion(nil)
+                }
+                return
+            }
+            let outcome = axOutcome(gen: gen)
+            DispatchQueue.main.async {
+                guard !finished else { return }
+                finished = true
+                budget.cancel()
+                guard isCurrent(gen) else { completion(nil); return }
+                if let pid = expectedPID,
+                   NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+                    completion(nil)
+                    return
+                }
+                switch outcome {
+                case .found(let t, let raw, let el, let range):
+                    let b = raw.map { Screen.cocoaRect(from: $0) }.flatMap { ScreenPlacement.isUsable($0) ? $0 : nil }
+                    completion(Result(text: t, bounds: b, element: el, range: range))
+                case .secure, .cancelled:
+                    completion(nil)
+                case .none:
+                    guard allowFallback, !isCopyingViaPasteboard else { completion(nil); return }
+                    isCopyingViaPasteboard = true
+                    copyViaPasteboard { text in
+                        isCopyingViaPasteboard = false
+                        guard isCurrent(gen) else { completion(nil); return }
+                        if let pid = expectedPID,
+                           NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+                            completion(nil)
+                            return
+                        }
+                        if let t = text, !t.isEmpty { completion(Result(text: t, bounds: nil, viaPasteboard: true)) }
+                        else { completion(nil) }
+                    }
+                }
             }
         }
     }
@@ -74,9 +132,12 @@ enum SelectionService {
 
     // MARK: - Accessibility
 
-    private static func axSelection() -> Result? {
-        guard let el = focusedElement() else { return nil }
-        if isSecureField(el) { return nil }
+    private static func axOutcome(gen: UInt64) -> AXOutcome {
+        guard isCurrent(gen) else { return .cancelled }
+        guard let el = focusedElement() else { return .none }
+        guard isCurrent(gen) else { return .cancelled }
+        if isSecureField(el) { return .secure }
+        guard isCurrent(gen) else { return .cancelled }
 
         // Chrome / Electron 类应用需要 AXManualAccessibility 才暴露选区;每个进程只设一次。
         // 不再设 AXEnhancedUserInterface:它会让部分 App 的窗口动画、布局异常。
@@ -85,9 +146,11 @@ enum SelectionService {
             _ = AXSupport.enableManualAccessibility(pid: pid)
         }
 
-        guard let t = axSelectedText(el) else { return nil }
+        guard isCurrent(gen) else { return .cancelled }
+        guard let t = axSelectedText(el), !t.isEmpty else { return .none }
+        guard isCurrent(gen) else { return .cancelled }
 
-        var bounds: CGRect? = nil
+        var rawBounds: CGRect? = nil
         var range: CFRange? = nil
         var rangeRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(el,
@@ -97,20 +160,20 @@ enum SelectionService {
             if AXValueGetValue(rangeRef as! AXValue, .cfRange, &cfRange) {
                 range = cfRange
             }
-            var bRef: CFTypeRef?
-            if AXUIElementCopyParameterizedAttributeValue(el,
-                    "AXBoundsForRange" as CFString, rangeRef, &bRef) == .success,
-               let bRef {
-                var r = CGRect.zero
-                if AXValueGetValue(bRef as! AXValue, .cgRect, &r) {
-                    let converted = Screen.cocoaRect(from: r)
-                    // 网页等常返回零矩形或越界坐标，丢掉后由定位逻辑退回鼠标
-                    if ScreenPlacement.isUsable(converted) { bounds = converted }
+            if isCurrent(gen) {
+                var bRef: CFTypeRef?
+                if AXUIElementCopyParameterizedAttributeValue(el,
+                        "AXBoundsForRange" as CFString, rangeRef, &bRef) == .success,
+                   let bRef {
+                    var r = CGRect.zero
+                    if AXValueGetValue(bRef as! AXValue, .cgRect, &r) {
+                        rawBounds = r
+                    }
                 }
             }
         }
 
-        return Result(text: t, bounds: bounds, element: el, range: range)
+        return .found(t, rawBounds, el, range)
     }
 
 

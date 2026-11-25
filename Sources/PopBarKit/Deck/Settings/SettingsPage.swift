@@ -165,6 +165,7 @@ struct SettingsPage: View {
     static let contentWidth: CGFloat = 680
 
     var body: some View {
+        let _ = state.uiRevision
         // 两栏布局：设置的分组导航在 Deck 侧栏里（DeckSidebar 切到设置模式），这里只放内容
         DSPageShell(state.settings.title, subtitle: state.settings.summary) {
             VStack(alignment: .leading, spacing: 24) {

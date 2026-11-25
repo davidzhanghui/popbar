@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         RecordSession.shared.stopSynchronously()   // 退出时仍在录制:同步收尾,保证文件可播放
         ClipboardHistory.shared.save()             // persist 开启时兜底写盘
+        UsageStats.shared.flush()                  // 兜底写入最近 30 秒使用统计
         MainActor.assumeIsolated {
             ModuleRegistry.shared.stopAll()
             UpdateManager.shared.installOnQuitIfAuthorized()

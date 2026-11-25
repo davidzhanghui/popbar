@@ -11,6 +11,26 @@ enum DeckPage: Hashable {
     case settings
 }
 
+/// 侧栏角标：只在数值真正变化时发布；revision 用于语言等配置变化时刷新侧栏文案
+@MainActor
+final class DeckBadges: ObservableObject {
+    @Published private(set) var modules: [String: Int] = [:]
+    @Published private(set) var hasUpdate = false
+    @Published private(set) var revision = 0
+
+    func refresh() {
+        var m: [String: Int] = [:]
+        for mod in ModuleRegistry.shared.enabled {
+            if let b = mod.badge { m[mod.id] = b }
+        }
+        if m != modules { modules = m }
+        let u = UpdateManager.shared.hasUpdate
+        if u != hasUpdate { hasUpdate = u }
+    }
+
+    func bumpRevision() { revision &+= 1 }
+}
+
 /// Deck 的导航状态
 @MainActor
 final class DeckState: ObservableObject {
@@ -25,8 +45,10 @@ final class DeckState: ObservableObject {
     /// 从设置返回时去的页面
     var backPage: DeckPage { returnPage == .settings ? .module("today") : returnPage }
     @Published var settings: SettingsSection = .general
-    /// 侧栏角标等需要定期刷新的东西
-    @Published var tick = 0
+    /// 仅在语言、彩色图标或配置错误变化时递增，驱动右侧页面即时重绘（不随高频角标波动）
+    @Published private(set) var uiRevision = 0
+
+    func bumpUIRevision() { uiRevision &+= 1 }
 }
 
 /// Deck 主窗口：取代所有 ToolPanel 浮窗和两个设置窗口。
@@ -36,8 +58,14 @@ final class DeckController: NSObject, NSWindowDelegate {
     static let shared = DeckController()
 
     let state = DeckState()
+    let badges = DeckBadges()
     private var window: NSWindow?
     private var observers: [NSObjectProtocol] = []
+    private var lastUISignature: (String, Bool, String?) = (
+        ConfigStore.shared.config.language,
+        ConfigStore.shared.config.colorIcons,
+        ConfigStore.shared.loadError
+    )
 
     var isVisible: Bool { window?.isVisible ?? false }
     var windowNumber: Int { window?.windowNumber ?? 0 }
@@ -100,7 +128,7 @@ final class DeckController: NSObject, NSWindowDelegate {
     func modulesChanged() {
         let fixed = resolve(state.page)
         if fixed != state.page { state.page = fixed }
-        state.tick &+= 1
+        badges.refresh()
     }
 
     private func moduleFor(_ page: DeckPage) -> PopBarModule? {
@@ -131,16 +159,31 @@ final class DeckController: NSObject, NSWindowDelegate {
         w.backgroundColor = Theme.bg
         w.title = "PopBar"
         w.delegate = self
-        w.contentView = NSHostingView(rootView: DeckRootView(state: state, registry: ModuleRegistry.shared))
+        badges.refresh()
+        w.contentView = NSHostingView(rootView: DeckRootView(state: state, registry: ModuleRegistry.shared, badges: badges))
         w.center()
         w.setFrameAutosaveName("PopBarDeck")
         // 侧栏角标（待办数、剪贴板条数、新版本提醒）随数据变化刷新
         let nc = NotificationCenter.default
-        for name in [TodoStore.changed, Notification.Name("PopBarClipboardHistoryChanged"), ConfigStore.didChange, UpdateManager.stateChanged, AgentManagerModel.stateChanged] {
+        for name in [TodoStore.changed, Notification.Name("PopBarClipboardHistoryChanged"), UpdateManager.stateChanged, AgentManagerModel.stateChanged] {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.state.tick &+= 1 }
+                MainActor.assumeIsolated { self?.badges.refresh() }
             })
         }
+        observers.append(nc.addObserver(forName: ConfigStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.badges.refresh()
+                let sig = (ConfigStore.shared.config.language,
+                           ConfigStore.shared.config.colorIcons,
+                           ConfigStore.shared.loadError)
+                if sig != self.lastUISignature {
+                    self.lastUISignature = sig
+                    self.badges.bumpRevision()
+                    self.state.bumpUIRevision()
+                }
+            }
+        })
         return w
     }
 }
@@ -191,6 +234,7 @@ enum DeckTint {
 struct DeckRootView: View {
     @ObservedObject var state: DeckState
     @ObservedObject var registry: ModuleRegistry
+    let badges: DeckBadges
     @AppStorage("deck.sidebarWidth") private var sidebarWidthStorage = 220.0
 
     private var sidebarWidth: Binding<CGFloat> {
@@ -199,8 +243,9 @@ struct DeckRootView: View {
     }
 
     var body: some View {
+        let _ = state.uiRevision
         HStack(spacing: 0) {
-            DeckSidebar(state: state, registry: registry)
+            DeckSidebar(state: state, registry: registry, badges: badges)
                 .frame(width: sidebarWidth.wrappedValue)
                 // 分隔条骑在侧栏和内容的交界上（命中区 7pt，不占布局宽度）
                 .overlay(alignment: .trailing) {
@@ -257,11 +302,13 @@ struct DeckRootView: View {
 struct DeckSidebar: View {
     @ObservedObject var state: DeckState
     @ObservedObject var registry: ModuleRegistry
+    @ObservedObject var badges: DeckBadges
 
     /// 两栏布局：进入设置后，侧栏整体切换成设置的分组导航，「返回」回到之前的页面
     private var inSettings: Bool { state.page == .settings }
 
     var body: some View {
+        let _ = badges.revision
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 44)   // 红绿灯
             Group {
@@ -275,7 +322,6 @@ struct DeckSidebar: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
-                .id(state.tick)
             }
             .scrollIndicators(.never)
             .id(inSettings)
@@ -286,8 +332,8 @@ struct DeckSidebar: View {
                 if inSettings {
                     SidebarRow(icon: SettingsSection.about.icon, title: SettingsSection.about.title,
                                tint: DeckTint.settings(.about),
-                               badge: UpdateManager.shared.hasUpdate ? 1 : nil,
-                               badgeAlert: UpdateManager.shared.hasUpdate,
+                               badge: badges.hasUpdate ? 1 : nil,
+                               badgeAlert: badges.hasUpdate,
                                selected: state.settings == .about) { state.settings = .about }
                 } else {
                     // 欢迎与权限：侧栏常驻入口；缺辅助功能/输入监控时用角标提醒
@@ -299,14 +345,13 @@ struct DeckSidebar: View {
                                selected: state.page == .welcome) { state.page = .welcome }
                     SidebarRow(icon: "settings", title: L10n.t("设置", "Settings"),
                                tint: DeckTint.fixed(IconPalette.slate),
-                               badge: UpdateManager.shared.hasUpdate ? 1 : nil,
-                               badgeAlert: UpdateManager.shared.hasUpdate,
+                               badge: badges.hasUpdate ? 1 : nil,
+                               badgeAlert: badges.hasUpdate,
                                hint: "⌘,",
                                selected: false) { state.page = .settings }
                 }
             }
             .padding(10)
-            .id(state.tick)
         }
         .background(DS.sidebar)
         .animation(.easeOut(duration: 0.16), value: inSettings)
@@ -321,7 +366,7 @@ struct DeckSidebar: View {
                 if !mods.isEmpty {
                     SidebarSection(title: g.title) {
                         ForEach(mods, id: \.id) { m in
-                            SidebarRow(icon: m.icon, title: m.title, tint: DeckTint.module(m.id), badge: m.badge,
+                            SidebarRow(icon: m.icon, title: m.title, tint: DeckTint.module(m.id), badge: badges.modules[m.id],
                                        hint: order[m.id].map { "⌘\($0)" },
                                        selected: state.page == .module(m.id)) {
                                 state.page = .module(m.id)

@@ -117,6 +117,139 @@ struct StatusSnapshot: Equatable {
     var primed: Bool = false
 }
 
+/// 采样在专用串行队列上：C 采集、进程 CPU 差分、可执行路径查询与分组都不占主线程。
+/// CMSnapshot 含 1024 条进程（>100KB），在堆上复用缓冲并通过 pointer(to:) 读取，
+/// 避免 GCD 后台线程（默认 512KB 栈）栈溢出。
+private final class MonitorSampler: @unchecked Sendable {
+    struct Result {
+        var cpu: CMCPUSample
+        var memory: CMMemorySample
+        var chip: CMChipSample
+        var temp: CMTempSample
+        var sensors: CMSensorSample
+        var battery: CMBatterySample
+        var disk: CMDiskSample
+        var net: CMNetCounters
+        var procsDiskioTotal: UInt64
+        var driveFailing: Int32
+        var uptimeSec: Double
+        var elapsedSec: Double
+        var info: CMSystemInfo?          // 仅第一次非 nil
+        var groups: [ProcessGroup]?      // nil = 本轮没采进程
+        var slow: Bool
+    }
+
+    private let queue = DispatchQueue(label: "popbar.monitor.sampler", qos: .utility)
+    private let rawBuf: UnsafeMutablePointer<CMSnapshot>
+    private var ptr: OpaquePointer?
+    private var invalidated = false
+    private var infoSent = false
+    private var prevCPU: [Int: UInt64] = [:]
+    private var prevProcAt: Date?
+    private var pathCache: [Int: String?] = [:]
+
+    init() {
+        rawBuf = .allocate(capacity: 1)
+        UnsafeMutableRawPointer(rawBuf).initializeMemory(
+            as: UInt8.self, repeating: 0, count: MemoryLayout<CMSnapshot>.size
+        )
+    }
+
+    deinit {
+        if let p = ptr { cm_sampler_destroy(p) }
+        rawBuf.deallocate()
+    }
+
+    func poll(procs: Bool, slow: Bool) async -> Result? {
+        await withCheckedContinuation { cont in
+            queue.async { cont.resume(returning: self.pollOnQueue(procs: procs, slow: slow)) }
+        }
+    }
+
+    func invalidate() {
+        queue.async {
+            self.invalidated = true
+            if let p = self.ptr { cm_sampler_destroy(p) }
+            self.ptr = nil
+        }
+    }
+
+    private func pollOnQueue(procs: Bool, slow: Bool) -> Result? {
+        guard !invalidated else { return nil }
+        if ptr == nil { ptr = cm_sampler_create() }
+        guard let ptr else { return nil }
+
+        var info: CMSystemInfo?
+        if !infoSent {
+            infoSent = true
+            var sysInfo = CMSystemInfo()
+            cm_system_info(ptr, &sysInfo)
+            info = sysInfo
+        }
+
+        var flags: Int32 = 0
+        if procs { flags |= CM_POLL_PROCS }
+        if slow { flags |= CM_POLL_SLOW }
+
+        guard cm_sampler_poll_ex(ptr, rawBuf, flags) == 0 else { return nil }
+
+        var groups: [ProcessGroup]?
+        if procs {
+            let now = Date()
+            var rows: [ProcessRow] = []
+            var newCPU: [Int: UInt64] = [:]
+            let procElapsed = prevProcAt.map { now.timeIntervalSince($0) } ?? 1.0
+            let procsPtr = UnsafePointer(rawBuf.pointer(to: \.procs)!)
+            for p in copyProcs(procsPtr) {
+                newCPU[p.pid] = p.cpu_ns
+                let dns: Double
+                if let prev = prevCPU[p.pid], procElapsed > 0.05, p.cpu_ns >= prev {
+                    dns = Double(p.cpu_ns - prev)
+                } else {
+                    dns = 0
+                }
+                let cpuPct = min(100, 100.0 * dns / (procElapsed * 1e9))
+                rows.append(ProcessRow(
+                    pid: p.pid,
+                    name: p.name,
+                    memoryBytes: p.phys_footprint,
+                    cpuPercent: cpuPct,
+                    powerScore: cpuPct
+                ))
+            }
+            prevCPU = newCPU
+            prevProcAt = now
+            var paths: [Int: String] = [:]
+            var newCache: [Int: String?] = [:]
+            for r in rows {
+                let p = pathCache[r.pid] ?? LibProc.path(r.pid)
+                newCache[r.pid] = p
+                if let p { paths[r.pid] = p }
+            }
+            pathCache = newCache
+            groups = ProcessGrouping.group(rows, paths: paths)
+        }
+
+        return Result(
+            cpu: rawBuf.pointer(to: \.cpu)!.pointee,
+            memory: rawBuf.pointer(to: \.memory)!.pointee,
+            chip: rawBuf.pointer(to: \.chip)!.pointee,
+            temp: rawBuf.pointer(to: \.temp)!.pointee,
+            sensors: rawBuf.pointer(to: \.sensors)!.pointee,
+            battery: rawBuf.pointer(to: \.battery)!.pointee,
+            disk: rawBuf.pointer(to: \.disk)!.pointee,
+            net: rawBuf.pointer(to: \.net)!.pointee,
+            procsDiskioTotal: rawBuf.pointer(to: \.procs.diskio_total)!.pointee,
+            driveFailing: rawBuf.pointer(to: \.drive_failing)!.pointee,
+            uptimeSec: rawBuf.pointer(to: \.uptime_sec)!.pointee,
+            elapsedSec: rawBuf.pointer(to: \.elapsed_sec)!.pointee,
+            info: info,
+            groups: groups,
+            slow: slow
+        )
+    }
+}
+
 @MainActor
 final class SystemMonitorModel: ObservableObject {
     @Published var snap = StatusSnapshot()
@@ -189,15 +322,12 @@ final class SystemMonitorModel: ObservableObject {
         }
     }
 
-    /// pid → 路径缓存(proc_pidpath 对每个进程调一次即可)
-    private var pathCache: [Int: String?] = [:]
-
-    private var sampler: OpaquePointer?
+    private var sampler: MonitorSampler?
     private var task: Task<Void, Never>?
     private var lastPoll: Date?
     private var lastProc: Date?
-    private var prevCPU: [Int: UInt64] = [:]
-    private var prevProcAt: Date?
+    private var lastSlow: Date?
+    private var fallbackDiskDelta: UInt64 = 0
     private var prevDiskIO: UInt64 = 0
     private var haveDiskIO = false
     private var prevDiskRead: UInt64 = 0
@@ -213,14 +343,7 @@ final class SystemMonitorModel: ObservableObject {
     func start() {
         guard !running else { return }
         running = true
-        sampler = cm_sampler_create()
-        if let sampler {
-            var info = CMSystemInfo()
-            cm_system_info(sampler, &info)
-            display.cpuBrand = cChars(info.cpu_brand).trimmingCharacters(in: .whitespaces)
-            display.pCores = Int(info.pcores)
-            display.eCores = Int(info.ecores)
-        }
+        sampler = MonitorSampler()
         task = Task { [weak self] in
             await self?.tick()
             while let self, !Task.isCancelled {
@@ -234,10 +357,11 @@ final class SystemMonitorModel: ObservableObject {
         running = false
         task?.cancel()
         task = nil
-        if let sampler {
-            cm_sampler_destroy(sampler)
-        }
+        sampler?.invalidate()
         sampler = nil
+        lastPoll = nil
+        lastProc = nil
+        lastSlow = nil
     }
 
     private func tick() async {
@@ -248,41 +372,52 @@ final class SystemMonitorModel: ObservableObject {
         }
         lastPoll = now
 
-        var raw = CMSnapshot()
-        guard cm_sampler_poll(sampler, &raw) == 0 else { return }
-
         let wantProcs = lastProc == nil || now.timeIntervalSince(lastProc!) >= 1.0
+        let wantSlow = lastSlow == nil || now.timeIntervalSince(lastSlow!) >= 2.0
+
+        guard let r = await sampler.poll(procs: wantProcs, slow: wantSlow),
+              running, self.sampler === sampler else { return }
+
         if wantProcs { lastProc = now }
+        if wantSlow { lastSlow = now }
 
         var next = display
-        let cpu = blend(display.cpuPercent, raw.cpu.package_percent)
-        next.cpuPercent = cpu
-        next.cpuUser = blend(display.cpuUser, raw.cpu.user_percent)
-        next.cpuSystem = blend(display.cpuSystem, raw.cpu.system_percent)
-        next.loadAvg = [raw.cpu.load_avg.0, raw.cpu.load_avg.1, raw.cpu.load_avg.2]
-        next.perCore = copyCores(raw.cpu)
-        next.hasCPUPower = raw.chip.has_cpu_power != 0
-        next.hasGPUPower = raw.chip.has_gpu_power != 0
-        next.hasGPUUtil = raw.chip.has_gpu_util != 0
-        next.gpuName = cChars(raw.chip.gpu_name)
-        next.gpuMem = raw.chip.gpu_mem_bytes
-        next.cpuWatts = blend(display.cpuWatts, raw.chip.cpu_watts)
-        next.gpuPercent = blend(display.gpuPercent, raw.chip.gpu_percent)
-        next.gpuWatts = blend(display.gpuWatts, raw.chip.gpu_watts)
-        next.aneWatts = raw.chip.ane_watts
-        next.dramWatts = raw.chip.dram_watts
-        next.chipWatts = next.cpuWatts + next.gpuWatts + next.aneWatts + next.dramWatts
-        next.fans = copyFans(raw.sensors)
-        next.systemWatts = raw.sensors.system_watts > 0 ? blend(display.systemWatts, raw.sensors.system_watts) : 0
-        next.dcInWatts = raw.sensors.dcin_watts
-
-        if raw.temp.have_cpu != 0 {
-            next.cpuTemp = blend(display.cpuTemp == 0 ? raw.temp.cpu_temp : display.cpuTemp, raw.temp.cpu_temp)
-            cpuTempHist.append((now, next.cpuTemp))
+        if let info = r.info {
+            next.cpuBrand = cChars(info.cpu_brand).trimmingCharacters(in: .whitespaces)
+            next.pCores = Int(info.pcores)
+            next.eCores = Int(info.ecores)
         }
-        if raw.temp.have_gpu != 0 {
-            next.gpuTemp = blend(display.gpuTemp == 0 ? raw.temp.gpu_temp : display.gpuTemp, raw.temp.gpu_temp)
-            gpuTempHist.append((now, next.gpuTemp))
+        let cpu = blend(display.cpuPercent, r.cpu.package_percent)
+        next.cpuPercent = cpu
+        next.cpuUser = blend(display.cpuUser, r.cpu.user_percent)
+        next.cpuSystem = blend(display.cpuSystem, r.cpu.system_percent)
+        next.loadAvg = [r.cpu.load_avg.0, r.cpu.load_avg.1, r.cpu.load_avg.2]
+        next.perCore = copyCores(r.cpu)
+        next.hasCPUPower = r.chip.has_cpu_power != 0
+        next.hasGPUPower = r.chip.has_gpu_power != 0
+        next.hasGPUUtil = r.chip.has_gpu_util != 0
+        next.gpuName = cChars(r.chip.gpu_name)
+        next.gpuMem = r.chip.gpu_mem_bytes
+        next.cpuWatts = blend(display.cpuWatts, r.chip.cpu_watts)
+        next.gpuPercent = blend(display.gpuPercent, r.chip.gpu_percent)
+        next.gpuWatts = blend(display.gpuWatts, r.chip.gpu_watts)
+        next.aneWatts = r.chip.ane_watts
+        next.dramWatts = r.chip.dram_watts
+        next.chipWatts = next.cpuWatts + next.gpuWatts + next.aneWatts + next.dramWatts
+
+        if r.slow {
+            next.fans = copyFans(r.sensors)
+            next.systemWatts = r.sensors.system_watts > 0 ? blend(display.systemWatts, r.sensors.system_watts) : 0
+            next.dcInWatts = r.sensors.dcin_watts
+
+            if r.temp.have_cpu != 0 {
+                next.cpuTemp = blend(display.cpuTemp == 0 ? r.temp.cpu_temp : display.cpuTemp, r.temp.cpu_temp)
+                cpuTempHist.append((now, next.cpuTemp))
+            }
+            if r.temp.have_gpu != 0 {
+                next.gpuTemp = blend(display.gpuTemp == 0 ? r.temp.gpu_temp : display.gpuTemp, r.temp.gpu_temp)
+                gpuTempHist.append((now, next.gpuTemp))
+            }
         }
         let cutoff = now.addingTimeInterval(-300)
         cpuTempHist.removeAll { $0.0 < cutoff }
@@ -290,104 +425,79 @@ final class SystemMonitorModel: ObservableObject {
         next.cpuTempPeak = cpuTempHist.map(\.1).max() ?? next.cpuTemp
         next.gpuTempPeak = gpuTempHist.map(\.1).max() ?? next.gpuTemp
 
-        next.memPercent = blend(display.memPercent, raw.memory.used_percent)
-        next.memUsed = raw.memory.used_bytes
-        next.memPhys = raw.memory.phys_bytes
-        next.swapUsed = raw.memory.swap_used
-        next.memApp = raw.memory.app_bytes
-        next.memWired = raw.memory.wired_bytes
-        next.memCompressed = raw.memory.compressed_bytes
-        next.memCached = raw.memory.cached_bytes
-        next.memFree = raw.memory.free_bytes
-        next.pressure = Int(raw.memory.pressure_level)
+        next.memPercent = blend(display.memPercent, r.memory.used_percent)
+        next.memUsed = r.memory.used_bytes
+        next.memPhys = r.memory.phys_bytes
+        next.swapUsed = r.memory.swap_used
+        next.memApp = r.memory.app_bytes
+        next.memWired = r.memory.wired_bytes
+        next.memCompressed = r.memory.compressed_bytes
+        next.memCached = r.memory.cached_bytes
+        next.memFree = r.memory.free_bytes
+        next.pressure = Int(r.memory.pressure_level)
 
-        next.hasBattery = raw.battery.has_battery != 0
-        next.batteryLevel = raw.battery.level_percent
-        next.batteryHealth = raw.battery.health_percent
-        next.batteryCycles = Int(raw.battery.cycle_count)
-        next.isCharging = raw.battery.is_charging != 0
-        next.isAC = raw.battery.is_ac != 0
-        next.batteryTemp = raw.battery.temperature
-        next.batteryVoltage = raw.battery.voltage
-        next.batteryWatts = blend(display.batteryWatts, raw.battery.watts)
-        next.timeToEmpty = Int(raw.battery.time_to_empty)
-        next.timeToFull = Int(raw.battery.time_to_full)
-        next.adapterWatts = Int(raw.battery.adapter_watts)
-        next.capacityNow = Int(raw.battery.cur_capacity_mah)
-        next.capacityFull = Int(raw.battery.max_capacity_mah)
-        next.capacityDesign = Int(raw.battery.design_capacity_mah)
+        if r.slow {
+            next.hasBattery = r.battery.has_battery != 0
+            next.batteryLevel = r.battery.level_percent
+            next.batteryHealth = r.battery.health_percent
+            next.batteryCycles = Int(r.battery.cycle_count)
+            next.isCharging = r.battery.is_charging != 0
+            next.isAC = r.battery.is_ac != 0
+            next.batteryTemp = r.battery.temperature
+            next.batteryVoltage = r.battery.voltage
+            next.batteryWatts = blend(display.batteryWatts, r.battery.watts)
+            next.timeToEmpty = Int(r.battery.time_to_empty)
+            next.timeToFull = Int(r.battery.time_to_full)
+            next.adapterWatts = Int(r.battery.adapter_watts)
+            next.capacityNow = Int(r.battery.cur_capacity_mah)
+            next.capacityFull = Int(r.battery.max_capacity_mah)
+            next.capacityDesign = Int(r.battery.design_capacity_mah)
+        }
 
-        next.diskTotal = raw.disk.total_bytes
-        next.diskAvail = raw.disk.available_important
-        next.netIface = cChars(raw.net.iface)
-        next.isWifi = raw.net.is_wifi != 0
+        next.diskTotal = r.disk.total_bytes
+        next.diskAvail = r.disk.available_important
+        next.netIface = cChars(r.net.iface)
+        next.isWifi = r.net.is_wifi != 0
 
-        let elapsed = raw.elapsed_sec > 0.05 ? raw.elapsed_sec : 0.5
+        let elapsed = r.elapsedSec > 0.05 ? r.elapsedSec : 0.5
         if haveNet, elapsed >= 0.5 {
-            let dr = Double(raw.net.rx_bytes &- prevRx) / elapsed
-            let dt = Double(raw.net.tx_bytes &- prevTx) / elapsed
+            let dr = Double(r.net.rx_bytes &- prevRx) / elapsed
+            let dt = Double(r.net.tx_bytes &- prevTx) / elapsed
             next.netDown = max(0, dr)
             next.netUp = max(0, dt)
         }
-        prevRx = raw.net.rx_bytes
-        prevTx = raw.net.tx_bytes
+        prevRx = r.net.rx_bytes
+        prevTx = r.net.tx_bytes
         haveNet = true
-        next.netRxTotal = raw.net.rx_bytes
-        next.netTxTotal = raw.net.tx_bytes
+        next.netRxTotal = r.net.rx_bytes
+        next.netTxTotal = r.net.tx_bytes
 
         // 磁盘读写:优先用 IOBlockStorageDriver 的累计字节(不受进程退出影响),没有再退回进程 rusage 之和
         var diskDelta: UInt64 = 0
-        let dRead = raw.disk.read_bytes, dWrite = raw.disk.write_bytes
+        let dRead = r.disk.read_bytes, dWrite = r.disk.write_bytes
         if dRead > 0 || dWrite > 0 {
             if haveDiskBytes, dRead >= prevDiskRead, dWrite >= prevDiskWrite, elapsed >= 0.2 {
-                let r = dRead - prevDiskRead, w = dWrite - prevDiskWrite
-                diskDelta = r + w
-                next.diskRead = blend(display.diskRead, Double(r) / elapsed)
-                next.diskWrite = blend(display.diskWrite, Double(w) / elapsed)
+                let dr = dRead - prevDiskRead, dw = dWrite - prevDiskWrite
+                diskDelta = dr + dw
+                next.diskRead = blend(display.diskRead, Double(dr) / elapsed)
+                next.diskWrite = blend(display.diskWrite, Double(dw) / elapsed)
             }
             prevDiskRead = dRead
             prevDiskWrite = dWrite
             haveDiskBytes = true
-        } else {
-            if haveDiskIO, raw.procs.diskio_total >= prevDiskIO {
-                diskDelta = raw.procs.diskio_total - prevDiskIO
+        } else if wantProcs {
+            if haveDiskIO, r.procsDiskioTotal >= prevDiskIO {
+                diskDelta = r.procsDiskioTotal - prevDiskIO
             }
-            prevDiskIO = raw.procs.diskio_total
+            prevDiskIO = r.procsDiskioTotal
             haveDiskIO = true
+            fallbackDiskDelta = diskDelta
+        } else {
+            diskDelta = fallbackDiskDelta
         }
 
-        if wantProcs {
-            var rows: [ProcessRow] = []
-            var newCPU: [Int: UInt64] = [:]
-            let procElapsed = prevProcAt.map { now.timeIntervalSince($0) } ?? 1.0
-            for p in copyProcs(raw.procs) {
-                newCPU[p.pid] = p.cpu_ns
-                let dns: Double
-                if let prev = prevCPU[p.pid], procElapsed > 0.05, p.cpu_ns >= prev {
-                    dns = Double(p.cpu_ns - prev)
-                } else {
-                    dns = 0
-                }
-                let cpuPct = min(100, 100.0 * dns / (procElapsed * 1e9))
-                rows.append(ProcessRow(
-                    pid: p.pid,
-                    name: p.name,
-                    memoryBytes: p.phys_footprint,
-                    cpuPercent: cpuPct,
-                    powerScore: cpuPct
-                ))
-            }
-            prevCPU = newCPU
-            prevProcAt = now
-            var paths: [Int: String] = [:]
-            var newCache: [Int: String?] = [:]
-            for r in rows {
-                let p = pathCache[r.pid] ?? LibProc.path(r.pid)
-                newCache[r.pid] = p
-                if let p { paths[r.pid] = p }
-            }
-            pathCache = newCache
-            next.groups = ProcessGrouping.group(rows, paths: paths).filter { groupFilter?($0) ?? true }
+        if let groups = r.groups {
+            next.groups = groups.filter { groupFilter?($0) ?? true }
             next.topPowerName = next.groups.first.map(\.name) ?? "—"
         }
 
@@ -414,8 +524,8 @@ final class SystemMonitorModel: ObservableObject {
             cycleCount: next.batteryCycles,
             thermalState: thermal,
             diskIODelta: diskDelta,
-            uptimeSec: raw.uptime_sec,
-            driveFailing: raw.drive_failing != 0
+            uptimeSec: r.uptimeSec,
+            driveFailing: r.driveFailing != 0
         )
         next.primed = true
 
@@ -465,27 +575,25 @@ private func cChars<T>(_ value: T) -> String {
     }
 }
 
-private func copyProcs(_ sample: CMProcSample) -> [CProc] {
-    let count = Int(sample.count)
-    return withUnsafeBytes(of: sample.rows) { raw in
-        let ptr = raw.bindMemory(to: CMProcRow.self)
-        var out: [CProc] = []
-        out.reserveCapacity(count)
-        for i in 0..<count {
-            let row = ptr[i]
-            let name = withUnsafePointer(to: row.name) {
-                $0.withMemoryRebound(to: CChar.self, capacity: 72) { String(cString: $0) }
-            }
-            out.append(CProc(
-                pid: Int(row.pid),
-                name: name,
-                phys_footprint: row.phys_footprint,
-                cpu_ns: row.cpu_ns,
-                diskio: row.diskio
-            ))
-        }
-        return out
+private func copyProcs(_ samplePtr: UnsafePointer<CMProcSample>) -> [CProc] {
+    let count = max(0, min(Int(samplePtr.pointer(to: \.count)!.pointee), Int(CM_MAX_PROCS)))
+    let rowsPtr = UnsafeRawPointer(samplePtr.pointer(to: \.rows)!)
+        .assumingMemoryBound(to: CMProcRow.self)
+    var out: [CProc] = []
+    out.reserveCapacity(count)
+    for i in 0..<count {
+        let rowPtr = rowsPtr.advanced(by: i)
+        let namePtr = UnsafeRawPointer(rowPtr.pointer(to: \.name)!)
+            .assumingMemoryBound(to: CChar.self)
+        out.append(CProc(
+            pid: Int(rowPtr.pointer(to: \.pid)!.pointee),
+            name: String(cString: namePtr),
+            phys_footprint: rowPtr.pointer(to: \.phys_footprint)!.pointee,
+            cpu_ns: rowPtr.pointer(to: \.cpu_ns)!.pointee,
+            diskio: rowPtr.pointer(to: \.diskio)!.pointee
+        ))
     }
+    return out
 }
 
 // MARK: - Health score

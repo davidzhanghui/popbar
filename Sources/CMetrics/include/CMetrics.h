@@ -142,8 +142,15 @@ typedef struct CMSampler CMSampler;
 CMSampler *cm_sampler_create(void);
 void cm_sampler_destroy(CMSampler *s);
 
+#define CM_POLL_PROCS 1   /* 枚举全部进程（proc_listpids + rusage） */
+#define CM_POLL_SLOW  2   /* 慢变化项：温度(HID+SMC)、SMC 传感器(风扇/系统功耗)、电池 */
+#define CM_POLL_ALL   3
+
 /// Fill snapshot. Returns 0 on success. First call may have elapsed_sec == 0.
 int cm_sampler_poll(CMSampler *s, CMSnapshot *out);
+
+/// 按 flags 只采需要的部分；未采的子结构保持全 0
+int cm_sampler_poll_ex(CMSampler *s, CMSnapshot *out, int flags);
 
 /// 静态硬件信息
 void cm_system_info(CMSampler *s, CMSystemInfo *out);

@@ -19,6 +19,8 @@ final class SelectionMonitor {
     private var downInsidePanel = false
     /// #11 shift+方向键选区的去抖计数
     private var keyboardSelToken = 0
+    /// 鼠标划词延迟触发代际：新点击/滚动会递增，防止旧延迟回调误触
+    private var mouseSelToken = 0
 
     func start() {
         guard eventTap == nil else {
@@ -106,8 +108,12 @@ final class SelectionMonitor {
             downPoint = event.location
             didDrag = false
             clickState = event.getIntegerValueField(.mouseEventClickState)
-            if !downInsideBar && !downInsidePanel && FloatingBarController.shared.isVisible {
-                FloatingBarController.shared.hideUnlessSpeaking()
+            if !downInsideBar && !downInsidePanel {
+                mouseSelToken &+= 1
+                SelectionService.cancelPending()
+                if FloatingBarController.shared.isVisible {
+                    FloatingBarController.shared.hideUnlessSpeaking()
+                }
             }
 
         case .leftMouseDragged:
@@ -138,13 +144,18 @@ final class SelectionMonitor {
             case .both:        triggered = didDrag || clickState >= 2
             }
             if triggered {
+                mouseSelToken &+= 1
+                let token = mouseSelToken
                 let delay = Double(config.selectionDelayMs) / 1000
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    self?.fetch(app: frontmost, keyboard: false)
+                    guard let self, self.mouseSelToken == token else { return }
+                    self.fetch(app: frontmost, keyboard: false)
                 }
             }
 
         case .rightMouseDown, .otherMouseDown:
+            mouseSelToken &+= 1
+            SelectionService.cancelPending()
             if SnapPinWindow.contains(Screen.cocoaPoint(from: event.location)) { return }
             let translation = TranslationPanelController.shared
             if translation.isVisible {
@@ -156,14 +167,14 @@ final class SelectionMonitor {
             }
 
         case .scrollWheel:
+            // 滚轮唯一作用是收起浮动条：条没显示就直接返回，避免每个滚动事件都做 WindowServer 命中测试
+            guard FloatingBarController.shared.isVisible else { return }
             // 面板内的滚动交给面板自己处理
             let translation = TranslationPanelController.shared
             let point = Screen.cocoaPoint(from: event.location)
             if translation.isVisible, translation.frame.contains(point) { return }
             if SnapPinWindow.contains(point) || Self.insideOwnWindow(point) { return }
-            if FloatingBarController.shared.isVisible {
-                FloatingBarController.shared.hideUnlessSpeaking()
-            }
+            FloatingBarController.shared.hideUnlessSpeaking()
 
         case .keyDown:
             // 面板是 key window,按键(含 Esc 关闭、Cmd+C 复制)由它处理,不要隐藏
@@ -212,8 +223,13 @@ final class SelectionMonitor {
     }
 
     private func fetch(app: NSRunningApplication?, keyboard: Bool) {
+        let expectedPID = keyboard ? nil : app?.processIdentifier
+        if let pid = expectedPID,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+            return
+        }
         let minChars = ConfigStore.shared.config.minChars
-        SelectionService.fetch { result in
+        SelectionService.fetch(expectedPID: expectedPID) { result in
             guard let result else { return }
             let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, keyboard || trimmed.count >= minChars else { return }

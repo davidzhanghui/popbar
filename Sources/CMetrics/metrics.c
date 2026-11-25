@@ -868,6 +868,10 @@ void cm_sampler_destroy(CMSampler *s) {
 }
 
 int cm_sampler_poll(CMSampler *s, CMSnapshot *out) {
+    return cm_sampler_poll_ex(s, out, CM_POLL_ALL);
+}
+
+int cm_sampler_poll_ex(CMSampler *s, CMSnapshot *out, int flags) {
     if (!s || !out) return -1;
     memset(out, 0, sizeof(*out));
     uint64_t now = mach_absolute_time();
@@ -902,24 +906,28 @@ int cm_sampler_poll(CMSampler *s, CMSnapshot *out) {
         }
         out->chip.valid = 1;
     }
-    poll_temp(&s->hid, &out->temp);
-    {
-        // HID 没找到 GPU 专用传感器时 poll_temp 会用 CPU 温度顶替;先撤掉,让 SMC 有机会给出真实值
-        int gpu_from_cpu = out->temp.have_gpu && out->temp.have_cpu && out->temp.gpu_temp == out->temp.cpu_temp;
-        CMTempSample t = out->temp;
-        if (gpu_from_cpu) t.have_gpu = 0;
-        cm_smc_temps(s->smc, &t);
-        if (!t.have_gpu && t.have_cpu) {   // 仍然没有 GPU 温度:沿用 SoC / CPU 温度(Apple Silicon 同一块芯片)
-            t.gpu_temp = t.cpu_temp;
-            t.have_gpu = 1;
+    if (flags & CM_POLL_SLOW) {
+        poll_temp(&s->hid, &out->temp);
+        {
+            // HID 没找到 GPU 专用传感器时 poll_temp 会用 CPU 温度顶替;先撤掉,让 SMC 有机会给出真实值
+            int gpu_from_cpu = out->temp.have_gpu && out->temp.have_cpu && out->temp.gpu_temp == out->temp.cpu_temp;
+            CMTempSample t = out->temp;
+            if (gpu_from_cpu) t.have_gpu = 0;
+            cm_smc_temps(s->smc, &t);
+            if (!t.have_gpu && t.have_cpu) {   // 仍然没有 GPU 温度:沿用 SoC / CPU 温度(Apple Silicon 同一块芯片)
+                t.gpu_temp = t.cpu_temp;
+                t.have_gpu = 1;
+            }
+            out->temp = t;
         }
-        out->temp = t;
+        cm_smc_sensors(s->smc, &out->sensors);
+        poll_battery(&out->battery);
     }
-    cm_smc_sensors(s->smc, &out->sensors);
-    poll_battery(&out->battery);
     poll_disk(&out->disk);
     poll_net(s, &out->net);
-    poll_procs(&out->procs, s->proc_tick_ns);
+    if (flags & CM_POLL_PROCS) {
+        poll_procs(&out->procs, s->proc_tick_ns);
+    }
 
     if (!s->drive_checked_mach || mach_to_sec(now - s->drive_checked_mach) > 30) {
         s->cached_drive_failing = walk_drive_failing();

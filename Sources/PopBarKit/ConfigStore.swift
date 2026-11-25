@@ -19,9 +19,17 @@ final class ConfigStore {
     /// 最近一次读取失败的原因(JSON 写坏了等);nil 表示正常
     private(set) var loadError: String?
 
+    private struct FileStamp: Equatable {
+        let ino: UInt64
+        let size: Int64
+        let sec: Int
+        let nsec: Int
+    }
+
     private var dirSource: DispatchSourceFileSystemObject?
     private var fileSource: DispatchSourceFileSystemObject?
     private var pendingReload: DispatchWorkItem?
+    private var ownWriteStamp: FileStamp?
 
     func start() {
         PopBarConfig.ensureExists()
@@ -53,6 +61,7 @@ final class ConfigStore {
 
     func save(_ newConfig: PopBarConfig) throws {
         try PopBarConfig.write(newConfig)
+        ownWriteStamp = fileStamp()
         let changed = newConfig != config || loadError != nil
         config = newConfig
         loadError = nil
@@ -60,6 +69,13 @@ final class ConfigStore {
         if changed {
             NotificationCenter.default.post(name: ConfigStore.didChange, object: self)
         }
+    }
+
+    private func fileStamp() -> FileStamp? {
+        var st = stat()
+        guard stat(PopBarConfig.fileURL.path, &st) == 0 else { return nil }
+        return FileStamp(ino: st.st_ino, size: st.st_size,
+                         sec: st.st_mtimespec.tv_sec, nsec: st.st_mtimespec.tv_nsec)
     }
 
     // MARK: - 文件监听
@@ -97,8 +113,13 @@ final class ConfigStore {
     private func scheduleReload() {
         pendingReload?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.reload()
-            self?.watchFile()
+            guard let self else { return }
+            if let own = self.ownWriteStamp, let cur = self.fileStamp(), own == cur {
+                self.watchFile()
+                return
+            }
+            self.reload()
+            self.watchFile()
         }
         pendingReload = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)

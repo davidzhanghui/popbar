@@ -126,14 +126,20 @@ final class UsageStats {
     }
 
     private func scheduleFlush() {
-        guard flushTimer == nil else { return }
-        flushTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.flush()
+        let arm = { [weak self] in
+            guard let self, self.flushTimer == nil else { return }
+            self.flushTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+                self?.flushTimer = nil
+                self?.flush()
+            }
+            self.flushTimer?.tolerance = 10
         }
-        flushTimer?.tolerance = 10
+        if Thread.isMainThread { arm() } else { DispatchQueue.main.async(execute: arm) }
     }
 
     func flush() {
+        flushTimer?.invalidate()
+        flushTimer = nil
         guard dirty else { return }
         dirty = false
         let enc = JSONEncoder()

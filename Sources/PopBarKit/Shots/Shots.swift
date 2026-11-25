@@ -157,11 +157,13 @@ public enum PopBarShots {
         }
 
         let state = DeckController.shared.state
+        let badges = DeckBadges()
+        badges.refresh()
         func deck(_ page: DeckPage, _ settings: SettingsSection = .general) -> () -> NSView {
             {
                 state.settings = settings
                 state.page = page
-                let host = NSHostingView(rootView: DeckRootView(state: state, registry: ModuleRegistry.shared))
+                let host = NSHostingView(rootView: DeckRootView(state: state, registry: ModuleRegistry.shared, badges: badges))
                 host.frame = NSRect(x: 0, y: 0, width: 980, height: 660)
                 return host
             }

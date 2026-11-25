@@ -11,13 +11,15 @@ import Cocoa
 /// 参考：Decklet `decklet-sys/src/ax.rs` 的 `enable_manual_accessibility`。
 public enum AXSupport {
     public static let messagingTimeout: Float = 0.25
+    private static let lock = NSLock()
     nonisolated(unsafe) private static var enabledPIDs = Set<pid_t>()
 
     /// 对该进程只设一次 AXManualAccessibility；返回本次是否新设置
     @discardableResult
     public static func enableManualAccessibility(pid: pid_t) -> Bool {
-        guard pid > 0, pid != getpid(), !enabledPIDs.contains(pid) else { return false }
-        enabledPIDs.insert(pid)
+        guard pid > 0, pid != getpid() else { return false }
+        let inserted = lock.withLock { enabledPIDs.insert(pid).inserted }
+        guard inserted else { return false }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, messagingTimeout)
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
@@ -25,10 +27,14 @@ public enum AXSupport {
     }
 
     /// 测试用：是否已经对该 pid 设置过
-    public static func hasEnabled(pid: pid_t) -> Bool { enabledPIDs.contains(pid) }
+    public static func hasEnabled(pid: pid_t) -> Bool {
+        lock.withLock { enabledPIDs.contains(pid) }
+    }
 
     /// 进程退出后清理记录（pid 会被复用）
-    public static func forget(pid: pid_t) { enabledPIDs.remove(pid) }
+    public static func forget(pid: pid_t) {
+        _ = lock.withLock { enabledPIDs.remove(pid) }
+    }
 
     /// 系统级元素（已设超时）
     public static func systemWide() -> AXUIElement {
