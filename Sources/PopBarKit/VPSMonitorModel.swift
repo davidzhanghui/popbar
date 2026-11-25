@@ -2,8 +2,8 @@ import Combine
 import Foundation
 import PopBarCore
 
-/// VPS 列表完全由 ~/.ssh/config 派生；这里只持久化停用状态和上次完整检查时间。
-/// 进入页面时无结果或距上次完整检查超过 1 小时才自动检查；链接测试全部按需触发。
+/// VPS 列表完全由 ~/.ssh/config 派生；这里只持久化停用状态。
+/// 仅支持手动刷新：进入页面时只加载主机列表，不自动发起 SSH 检查；链接测试全部按需触发。
 @MainActor
 final class VPSMonitorModel: ObservableObject {
     @Published private(set) var hosts: [VPSHost] = []
@@ -23,9 +23,7 @@ final class VPSMonitorModel: ObservableObject {
             MainActor.assumeIsolated { self?.reloadHostsFromSSHConfig() }
         }
         reloadHostsFromSSHConfig()
-        if let t = ConfigStore.shared.config.vps.lastRefreshAt {
-            lastRefresh = Date(timeIntervalSince1970: t)
-        }
+        restorePersistedSnapshots()
     }
 
     deinit {
@@ -38,6 +36,7 @@ final class VPSMonitorModel: ObservableObject {
         let ids = Set(enabledHosts.map(\.id))
         return results.values.filter { ids.contains($0.id) }
     }
+    var hasAnyResult: Bool { !enabledResults.isEmpty }
     var onlineCount: Int { enabledResults.filter(\.online).count }
     var offlineCount: Int { enabledResults.filter { !$0.online }.count }
     var securityWarningCount: Int {
@@ -75,16 +74,11 @@ final class VPSMonitorModel: ObservableObject {
             || testingSpeed.contains { $0.hasPrefix(prefix) }
     }
 
-    /// 进入页面调用。若无结果，或距上次完整检查超过 1 小时，才自动检查一次。
+    /// 进入页面调用：仅重新读取 ~/.ssh/config 中的主机列表，不自动发起 SSH 刷新。
     func start() {
         guard !started else { return }
         started = true
         reloadHostsFromSSHConfig()
-        guard !enabledHosts.isEmpty else { return }
-        let needsData = enabledHosts.contains { results[$0.id] == nil }
-        if VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: lastRefresh, needsData: needsData) {
-            refresh()
-        }
     }
 
     func stop() {
@@ -117,11 +111,13 @@ final class VPSMonitorModel: ObservableObject {
             let result = await VPSProbe.probe(host)
             guard gen == self.generation else { return }
             self.results[host.id] = result
+            self.lastRefresh = Date()
             self.refreshingHostIDs.remove(host.id)
+            self.persistSnapshots()
         }
     }
 
-    /// 监控卡片上的开关：只持久化停用别名，不改 SSH 配置。
+    /// 监控卡片上的开关：只持久化停用别名，不改 SSH 配置（重新启用后保持未检查状态，待手动刷新）。
     func setEnabled(_ host: VPSHost, _ on: Bool) {
         guard host.enabled != on else { return }
         var c = ConfigStore.shared.config
@@ -135,11 +131,6 @@ final class VPSMonitorModel: ObservableObject {
         try? ConfigStore.shared.save(c)
         if let index = hosts.firstIndex(where: { $0.id == host.id }) {
             hosts[index].enabled = on
-        }
-        if on {
-            var enabled = host
-            enabled.enabled = true
-            refresh(enabled)
         }
     }
 
@@ -202,7 +193,21 @@ final class VPSMonitorModel: ObservableObject {
         let ids = Set(hosts.map(\.id))
         if results.keys.contains(where: { !ids.contains($0) }) {
             results = results.filter { ids.contains($0.key) }
+            persistSnapshots()
         }
+    }
+
+    private func restorePersistedSnapshots() {
+        guard let cache = VPSSnapshotStore.load() else { return }
+        let ids = Set(hosts.map(\.id))
+        let valid = cache.results.filter { ids.contains($0.key) }
+        guard !valid.isEmpty else { return }
+        results = valid
+        lastRefresh = cache.lastRefresh ?? valid.values.map(\.checkedAt).max()
+    }
+
+    private func persistSnapshots() {
+        VPSSnapshotStore.save(VPSSnapshotCache(lastRefresh: lastRefresh, results: results))
     }
 
     private func refreshAllNow(gen: Int) async {
@@ -224,6 +229,7 @@ final class VPSMonitorModel: ObservableObject {
         let now = Date()
         lastRefresh = now
         persistLastRefresh(now)
+        persistSnapshots()
         refreshing = false
     }
 
@@ -242,5 +248,6 @@ final class VPSMonitorModel: ObservableObject {
               let index = result.vlessChecks.firstIndex(where: { $0.id == linkID }) else { return }
         body(&result.vlessChecks[index])
         results[hostID] = result
+        persistSnapshots()
     }
 }

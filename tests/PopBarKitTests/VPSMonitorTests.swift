@@ -209,13 +209,13 @@ final class VPSMonitorTests: XCTestCase {
 
     func testAutoRefreshPolicy() {
         let now = Date(timeIntervalSince1970: 1_000_000)
-        XCTAssertTrue(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: nil, needsData: false, now: now))
-        XCTAssertTrue(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: now.addingTimeInterval(-3600),
-                                                         needsData: false, now: now))
-        XCTAssertFalse(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: now.addingTimeInterval(-3599),
+        // 仅支持手动刷新，任何条件下均不自动刷新
+        XCTAssertFalse(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: nil, needsData: false, now: now))
+        XCTAssertFalse(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: nil, needsData: true, now: now))
+        XCTAssertFalse(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: now.addingTimeInterval(-3600),
                                                           needsData: false, now: now))
-        XCTAssertTrue(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: now.addingTimeInterval(-60),
-                                                         needsData: true, now: now))
+        XCTAssertFalse(VPSRefreshPolicy.shouldAutoRefresh(lastRefresh: now.addingTimeInterval(-60),
+                                                          needsData: true, now: now))
     }
 
     func testVPSConfigPersistsDisabledAliasesAndTime() throws {
@@ -241,5 +241,48 @@ final class VPSMonitorTests: XCTestCase {
         XCTAssertFalse(VPSHost.validAlias("-oProxyCommand=bad"))
         XCTAssertFalse(VPSHost.validAlias("host name"))
         XCTAssertFalse(VPSHost.validAlias("host;rm"))
+    }
+
+    func testSnapshotStoreRoundTripAndPermissions() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("popbar-vps-snap-\(UUID().uuidString)")
+        let fileURL = dir.appendingPathComponent("vps-snapshots.json")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let remote = try XCTUnwrap(VPSRemoteParser.parse(sample45))
+        let host = VPSHost(name: "test-vps", sshAlias: "test-vps")
+        let checkedAt = Date(timeIntervalSince1970: 1_764_000_000)
+        let result = VPSHostResult(
+            host: host,
+            online: true,
+            error: nil,
+            latencyMs: 38,
+            remote: remote,
+            tcp: VPSTCPCheck(host: "203.0.113.10", port: 40028, ok: true, latencyMs: 165, error: nil),
+            vlessChecks: [
+                VPSLinkCheck(
+                    id: "link-1",
+                    name: "主节点",
+                    endpoint: "203.0.113.10:40028",
+                    check: VLESSCheck(state: .ok, latencyMs: 520, message: "", endpoint: "203.0.113.10:40028"),
+                    url: "vless://11111111-2222-4333-8444-555555555555@203.0.113.10:40028?security=reality",
+                    speed: VLESpeedCheck(state: .ok, megabytesPerSecond: 4.2, latencyMs: 510, message: "")
+                )
+            ],
+            checkedAt: checkedAt
+        )
+        let cache = VPSSnapshotCache(lastRefresh: checkedAt, results: [host.id: result])
+        VPSSnapshotStore.save(cache, to: fileURL)
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let perms = attrs[.posixPermissions] as? NSNumber
+        XCTAssertEqual(perms?.intValue, 0o600)
+
+        let restored = try XCTUnwrap(VPSSnapshotStore.load(from: fileURL))
+        XCTAssertEqual(restored, cache)
+
+        // 损坏文件应安全回退 nil
+        try Data("not-json".utf8).write(to: fileURL)
+        XCTAssertNil(VPSSnapshotStore.load(from: fileURL))
     }
 }

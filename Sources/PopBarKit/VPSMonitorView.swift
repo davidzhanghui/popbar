@@ -73,8 +73,8 @@ struct VPSPage: View {
 
     var body: some View {
         DSPageShell(L10n.t("VPS 监控", "VPS Monitor"),
-                    subtitle: L10n.t("自动读取 ~/.ssh/config，按需测试 VLESS 链路与安全状态",
-                                     "Auto-loaded from ~/.ssh/config with on-demand VLESS and security checks")) {
+                    subtitle: L10n.t("自动读取 ~/.ssh/config，手动刷新主机、VLESS 链路与安全状态",
+                                     "Auto-loaded from ~/.ssh/config; manually refresh hosts, VLESS links, and security status")) {
             if visibleEnabledHosts.count >= 2 {
                 DSIconButton(allVisibleCollapsed ? "chevron-down" : "chevron-up",
                              help: allVisibleCollapsed
@@ -104,11 +104,14 @@ struct VPSPage: View {
                 }
                 .disabled(model.isBusy)
             }
+        } pinned: {
+            if !model.hosts.isEmpty {
+                overviewStrip
+            }
         } content: {
             if model.hosts.isEmpty {
                 emptyState
             } else {
-                overviewStrip
                 toolbar
                 if visibleEnabledHosts.isEmpty && (filter != .all || visibleDisabledHosts.isEmpty) {
                     filteredEmptyState
@@ -191,11 +194,27 @@ struct VPSPage: View {
 
     private var overviewStrip: some View {
         let enabled = model.enabledHosts.count
+        let checked = model.hasAnyResult
         let online = model.onlineCount
-        let onlineColor: Color = enabled == 0 ? DS.faint
+        let onlineValue = checked ? "\(online) / \(enabled)" : "—"
+        let onlineColor: Color = (!checked || enabled == 0) ? DS.faint
             : (online == enabled ? DS.success : (online == 0 ? DS.danger : DS.warning))
+        let onlineSub: String = {
+            if !model.disabledHosts.isEmpty {
+                return L10n.t("\(model.disabledHosts.count) 台停用", "\(model.disabledHosts.count) disabled")
+            }
+            return checked ? L10n.t("全部启用", "All active") : L10n.t("共 \(enabled) 台启用", "\(enabled) active")
+        }()
+
         let warnings = model.securityWarningCount
+        let securityValue = !checked ? "—" : (warnings == 0 ? L10n.t("正常", "Clean") : "\(warnings)")
+        let securitySub = !checked
+            ? L10n.t("待手动刷新", "Pending refresh")
+            : (warnings == 0 ? L10n.t("无待处理项", "No issues") : L10n.t("\(model.attentionCount) 台需关注", "\(model.attentionCount) hosts"))
+        let securityDot: Color = !checked ? DS.faint : (warnings == 0 ? DS.success : DS.warning)
+
         let vlessValue: String = {
+            guard checked else { return "—" }
             if model.vlessTestedCount > 0 {
                 return "\(model.vlessOKCount) / \(model.vlessTestedCount)"
             }
@@ -205,32 +224,29 @@ struct VPSPage: View {
             return "—"
         }()
         let vlessDot: Color = {
+            guard checked else { return DS.faint }
             if model.vlessTestedCount > 0 {
                 return model.vlessOKCount == model.vlessTestedCount ? DS.success : DS.warning
             }
             return model.vlessLinkCount > 0 ? DS.muted : DS.faint
         }()
-        let vlessSub: String = model.vlessTestedCount > 0
-            ? L10n.t("端到端已测", "E2E tested")
-            : L10n.t("按需检测", "On demand")
+        let vlessSub: String = !checked
+            ? L10n.t("待手动刷新", "Pending refresh")
+            : (model.vlessTestedCount > 0 ? L10n.t("端到端已测", "E2E tested") : L10n.t("按需检测", "On demand"))
 
         return HStack(spacing: 0) {
             VPSOverviewCell(
                 label: L10n.t("在线主机", "Online"),
-                value: "\(online) / \(enabled)",
-                sub: model.disabledHosts.isEmpty
-                    ? L10n.t("全部启用", "All active")
-                    : L10n.t("\(model.disabledHosts.count) 台停用", "\(model.disabledHosts.count) disabled"),
+                value: onlineValue,
+                sub: onlineSub,
                 dot: onlineColor
             )
             overviewDivider
             VPSOverviewCell(
                 label: L10n.t("安全提醒", "Security"),
-                value: warnings == 0 ? L10n.t("正常", "Clean") : "\(warnings)",
-                sub: warnings == 0
-                    ? L10n.t("无待处理项", "No issues")
-                    : L10n.t("\(model.attentionCount) 台需关注", "\(model.attentionCount) hosts"),
-                dot: warnings == 0 ? DS.success : DS.warning
+                value: securityValue,
+                sub: securitySub,
+                dot: securityDot
             )
             overviewDivider
             VPSOverviewCell(
@@ -243,11 +259,11 @@ struct VPSPage: View {
             VPSOverviewCell(
                 label: L10n.t("上次检查", "Last Check"),
                 value: model.lastRefresh.map { Self.clock.string(from: $0) } ?? "—",
-                sub: L10n.t("超 1 小时自动查", "Auto > 1h"),
+                sub: L10n.t("手动刷新", "Manual only"),
                 dot: model.refreshing ? DS.accent : DS.faint
             )
-            .help(L10n.t("进入页面时若无结果或距上次完整检查超过 1 小时，才会自动检查一次。",
-                         "Auto-checks on open only when results are missing or older than 1 hour."))
+            .dsFastHelp(L10n.t("仅支持手动刷新，点击右上角「全部刷新」或单台主机卡片上的刷新按钮检查状态。",
+                               "Manual refresh only. Click Refresh All or a host card refresh button to check."))
         }
         .padding(.vertical, 10)
         .dsCardBackground()
@@ -433,8 +449,12 @@ private struct VPSHostCard: View {
                                 .foregroundStyle(DS.muted)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
-                                .help(fullSystemTooltip)
+                                .dsFastHelp(fullSystemTooltip)
                         }
+                        Text(lastCheckedText)
+                            .font(DS.font(10.5).monospacedDigit())
+                            .foregroundStyle(DS.faint)
+                            .lineLimit(1)
                     }
                     Spacer(minLength: 4)
                 }
@@ -800,6 +820,20 @@ private struct VPSHostCard: View {
     }
 
     // MARK: 格式化辅助
+
+    private var lastCheckedText: String {
+        guard let checkedAt = result?.checkedAt else {
+            return L10n.t("最后检测：—", "Last checked: —")
+        }
+        return L10n.t("最后检测：\(Self.fullDateTime.string(from: checkedAt))",
+                      "Last checked: \(Self.fullDateTime.string(from: checkedAt))")
+    }
+
+    private static let fullDateTime: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
 
     private static let clock: DateFormatter = {
         let f = DateFormatter()

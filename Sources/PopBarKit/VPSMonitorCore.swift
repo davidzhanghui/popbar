@@ -29,7 +29,7 @@ struct VPSLink: Codable, Equatable, Identifiable, Sendable {
 }
 
 /// 一台被监控的 VPS。完全由 ~/.ssh/config 的 Host 派生，id 用别名保持稳定。
-struct VPSHost: Equatable, Identifiable, Sendable {
+struct VPSHost: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var name: String
     var sshAlias: String
@@ -96,14 +96,12 @@ struct VPSConfig: Codable, Equatable, Sendable {
     }
 }
 
-/// 进入页面时是否自动检查：距上次完整检查超过 1 小时，或本次启动还没有结果。
+/// VPS 刷新策略：仅支持手动刷新，进入页面时不自动发起 SSH 检查。
 enum VPSRefreshPolicy {
     static let minimumInterval: TimeInterval = 3600
 
     static func shouldAutoRefresh(lastRefresh: Date?, needsData: Bool, now: Date = Date()) -> Bool {
-        if needsData { return true }
-        guard let lastRefresh else { return true }
-        return now.timeIntervalSince(lastRefresh) >= minimumInterval
+        false
     }
 }
 
@@ -136,7 +134,7 @@ enum VPSHostDiscovery {
 }
 
 /// 一次远程采集的结果。所有字段都有默认值，解析失败时不影响其它字段。
-struct VPSRemoteSnapshot: Equatable, Sendable {
+struct VPSRemoteSnapshot: Codable, Equatable, Sendable {
     var hostname = ""
     var osName = ""
     var osID = ""
@@ -374,7 +372,7 @@ struct VLESSEndpoint: Equatable, Sendable {
     }
 }
 
-struct VPSTCPCheck: Equatable, Sendable {
+struct VPSTCPCheck: Codable, Equatable, Sendable {
     var host: String
     var port: Int
     var ok: Bool
@@ -382,8 +380,8 @@ struct VPSTCPCheck: Equatable, Sendable {
     var error: String?
 }
 
-struct VLESSCheck: Equatable, Sendable {
-    enum State: String, Sendable { case ok, failed, skipped }
+struct VLESSCheck: Codable, Equatable, Sendable {
+    enum State: String, Codable, Sendable { case ok, failed, skipped }
     var state: State
     var latencyMs: Int?
     var message: String
@@ -394,15 +392,15 @@ struct VLESSCheck: Equatable, Sendable {
     }
 }
 
-struct VLESpeedCheck: Equatable, Sendable {
-    enum State: String, Sendable { case ok, failed }
+struct VLESpeedCheck: Codable, Equatable, Sendable {
+    enum State: String, Codable, Sendable { case ok, failed }
     var state: State
     var megabytesPerSecond: Double?
     var latencyMs: Int?
     var message: String
 }
 
-struct VPSLinkCheck: Identifiable, Equatable, Sendable {
+struct VPSLinkCheck: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var name: String
     var endpoint: String
@@ -412,7 +410,7 @@ struct VPSLinkCheck: Identifiable, Equatable, Sendable {
     var speed: VLESpeedCheck? = nil
 }
 
-struct VPSHostResult: Equatable, Identifiable, Sendable {
+struct VPSHostResult: Codable, Equatable, Identifiable, Sendable {
     var id: String { host.id }
     var host: VPSHost
     var online: Bool
@@ -436,6 +434,41 @@ struct VPSHostResult: Equatable, Identifiable, Sendable {
     static func offline(_ host: VPSHost, error: String) -> VPSHostResult {
         VPSHostResult(host: host, online: false, error: error, latencyMs: nil,
                       remote: nil, tcp: nil, vlessChecks: [], checkedAt: Date())
+    }
+}
+
+/// 本地持久化的 VPS 最近检查快照（按 `0600` 权限单独落盘，不污染 `config.json`）。
+struct VPSSnapshotCache: Codable, Equatable, Sendable {
+    var lastRefresh: Date?
+    var results: [String: VPSHostResult]
+}
+
+enum VPSSnapshotStore {
+    static var defaultFileURL: URL {
+        PopBarConfig.directoryURL.appendingPathComponent("vps-snapshots.json")
+    }
+
+    static func load(from url: URL = defaultFileURL) -> VPSSnapshotCache? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(VPSSnapshotCache.self, from: data)
+    }
+
+    static func save(_ cache: VPSSnapshotCache, to url: URL = defaultFileURL) {
+        let fm = FileManager.default
+        let dir = url.deletingLastPathComponent()
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(cache) else { return }
+        do {
+            try data.write(to: url, options: .atomic)
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            // 快照缓存写入失败不影响主流程
+        }
     }
 }
 
