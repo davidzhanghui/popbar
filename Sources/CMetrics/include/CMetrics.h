@@ -155,6 +155,28 @@ int cm_sampler_poll_ex(CMSampler *s, CMSnapshot *out, int flags);
 /// 静态硬件信息
 void cm_system_info(CMSampler *s, CMSystemInfo *out);
 
+/// NVMe SSD SMART / Health 读数（Log Page 02h，用户态 IOKit 直读，无需 root）
+typedef struct {
+    int valid;
+    uint8_t critical_warning;
+    int temperature_celsius;
+    int available_spare;
+    int available_spare_threshold;
+    int percentage_used;
+    double bytes_read;
+    double bytes_written;
+    uint64_t power_cycles;
+    uint64_t power_on_hours;
+    uint64_t unsafe_shutdowns;
+    uint64_t media_errors;
+    uint64_t error_log_entries;
+    char model[48];
+    char firmware[16];
+} CMNVMeSmart;
+
+/// 读取首块支持 SMART 的内建 NVMe SSD 健康数据；成功返回 1，不可用返回 0
+int cm_read_nvme_smart(CMNVMeSmart *out);
+
 #ifdef __cplusplus
 }
 #endif

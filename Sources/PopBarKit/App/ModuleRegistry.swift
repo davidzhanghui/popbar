@@ -84,7 +84,7 @@ final class ModuleRegistry: ObservableObject {
     let all: [PopBarModule] = [
         TodayModule(), ClipboardModule(), AgentModule(),
         SnapModule(), RecordModule(),
-        MonitorModule(), VPSModule(), CleanModule(), StartupModule(), MaintenanceModule(),
+        MonitorModule(), VPSModule(), CleanModule(), StartupModule(), MaintenanceModule(), MacCheckModule(),
         PrintModule(), TVModule(),
     ]
 

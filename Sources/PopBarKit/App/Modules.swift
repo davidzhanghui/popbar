@@ -247,6 +247,22 @@ final class MaintenanceModule: PopBarModule {
     func pageDidAppear() { model.load() }
 }
 
+@MainActor
+final class MacCheckModule: PopBarModule {
+    let id = "maccheck"
+    var title: String { L10n.t("硬件验机", "Mac Check") }
+    var summary: String { L10n.t("离线硬件体检、NVMe SSD 寿命、MDM 风险排查、交互测试与报告导出",
+                                 "Offline hardware check, NVMe SMART wear, MDM audit, interactive tests and report export") }
+    let icon = "cpu"
+    let group = DeckGroup.system
+    let model = MacCheckModel()
+
+    func page() -> AnyView { AnyView(MacCheckPage(model: model)) }
+    func pageDidAppear() { model.pageDidAppear() }
+    func pageDidDisappear() { model.pageDidDisappear() }
+    func stop() { model.stopModule() }
+}
+
 // MARK: - 设备
 
 @MainActor

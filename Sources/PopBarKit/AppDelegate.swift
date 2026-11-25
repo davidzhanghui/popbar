@@ -196,7 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(withTitle: L10n.t("隐藏 PopBar", "Hide PopBar"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: L10n.t("最小化窗口", "Minimize Window"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         appMenu.addItem(withTitle: L10n.t("关闭窗口", "Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: L10n.t("退出 PopBar", "Quit PopBar"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)

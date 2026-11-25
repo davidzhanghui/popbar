@@ -76,14 +76,17 @@ final class DeckController: NSObject, NSWindowDelegate {
     func isShowing(module id: String) -> Bool { isShowing(.module(id)) }
 
     func show(page: DeckPage? = nil, settings: SettingsSection? = nil) {
+        // 打开 Deck 主窗口时临时升格为常规应用，使其出现在 Dock 和 ⌘Tab 切换器中，方便切走后切回
+        syncActivationPolicy(regular: true)
         if let settings { state.settings = settings }
         let w = window ?? makeWindow()
         window = w
         let wasVisible = w.isVisible
         if let page { state.page = resolve(page) } else { state.page = resolve(state.page) }
         if !wasVisible { moduleFor(state.page)?.pageDidAppear() }
-        // 菜单栏菜单的 action 在菜单收起的瞬间同步执行，此时激活 accessory 应用会被系统吞掉，
-        // 表现为「点设置没反应、要点好几次」。放到下一个 runloop，并在没成功时强制补一次。
+        if w.isMiniaturized { w.deminiaturize(nil) }
+        // 菜单栏菜单的 action 在菜单收起的瞬间同步执行，此时激活刚切入前台的应用容易被系统吞掉，
+        // 放到下一个 runloop 补一次，确保窗口可靠置顶。
         presentWindow(w)
         DispatchQueue.main.async { [weak self, weak w] in
             guard let self, let w else { return }
@@ -102,6 +105,23 @@ final class DeckController: NSObject, NSWindowDelegate {
     private func presentWindow(_ w: NSWindow) {
         NSApp.activateForUI()
         w.makeKeyAndOrderFront(nil)
+    }
+
+    /// 动态切换应用激活策略：Deck 打开（含最小化）期间显示在 Dock 与 ⌘Tab；关闭后切回纯菜单栏常驻。
+    private func syncActivationPolicy(regular: Bool) {
+        if regular {
+            if NSApp.activationPolicy() != .regular {
+                NSApp.setActivationPolicy(.regular)
+            }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let deckAlive = (self.window?.isVisible ?? false) || (self.window?.isMiniaturized ?? false)
+                if !deckAlive, NSApp.activationPolicy() != .accessory {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+            }
+        }
     }
 
     /// 快捷键 ⌃⌥D：打开或关闭
@@ -145,6 +165,7 @@ final class DeckController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         moduleFor(state.page)?.pageDidDisappear()
+        syncActivationPolicy(regular: false)
     }
 
     private func makeWindow() -> NSWindow {
@@ -197,7 +218,7 @@ enum DeckTint {
         "today": IconPalette.green, "clipboard": IconPalette.blue, "agent": IconPalette.indigo,
         "snap": IconPalette.purple, "record": IconPalette.red,
         "monitor": IconPalette.teal, "vps": IconPalette.blue, "clean": IconPalette.sky,
-        "startup": IconPalette.orange, "maintenance": IconPalette.slate,
+        "startup": IconPalette.orange, "maintenance": IconPalette.slate, "maccheck": IconPalette.amber,
         "print": IconPalette.indigo, "tv": IconPalette.pink,
     ]
 

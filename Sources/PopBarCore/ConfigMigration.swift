@@ -14,7 +14,7 @@ public enum ConfigMigration {
     public static let moduleDefaults: [String: Bool] = [
         "today": true, "clipboard": true, "agent": true, "snap": true, "record": true,
         "monitor": true, "clean": true, "vps": true,
-        "startup": false, "maintenance": false, "print": false, "tv": false,
+        "startup": false, "maintenance": false, "maccheck": false, "print": false, "tv": false,
     ]
 
     /// 旧默认 → 新默认
