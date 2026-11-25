@@ -91,8 +91,8 @@ final class ClipboardModule: PopBarModule {
 final class AgentModule: PopBarModule {
     let id = "agent"
     var title: String { L10n.t("Agent 管理", "Agent Manager") }
-    var summary: String { L10n.t("管理 Claude、Codex、Command Code、OpenCode、Pi 与 DeepSeek Harness 的版本、更新、重启与运行进程",
-                                 "Manage Claude, Codex, Command Code, OpenCode, Pi, and DeepSeek Harness versions, updates, restarts, and processes") }
+    var summary: String { L10n.t("管理 Claude、Codex、Command Code、OpenCode、Pi、DeepSeek Harness 与 Antigravity 的版本、更新、重启与运行进程",
+                                 "Manage Claude, Codex, Command Code, OpenCode, Pi, DeepSeek Harness, and Antigravity versions, updates, restarts, and processes") }
     let icon = "bot"
     let group = DeckGroup.work
     let model = AgentManagerModel()

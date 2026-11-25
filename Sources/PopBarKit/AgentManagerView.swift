@@ -52,8 +52,8 @@ struct AgentPage: View {
     var body: some View {
         DSPageShell(
             L10n.t("Agent 管理", "Agent Manager"),
-            subtitle: L10n.t("统一管理 Claude、Codex、Command Code、OpenCode、Pi 与 DeepSeek Harness 的版本、更新、重启与进程",
-                             "Manage Claude, Codex, Command Code, OpenCode, Pi, and DeepSeek Harness versions, updates, restarts, and processes")
+            subtitle: L10n.t("统一管理 Claude、Codex、Command Code、OpenCode、Pi、DeepSeek Harness 与 Antigravity 的版本、更新、重启与进程",
+                             "Manage Claude, Codex, Command Code, OpenCode, Pi, DeepSeek Harness, and Antigravity versions, updates, restarts, and processes")
         ) {
             autoUpdatePill
 
@@ -158,8 +158,8 @@ struct AgentPage: View {
                     DSEmptyState(
                         icon: "terminal",
                         title: L10n.t("当前没有运行中的 Agent 进程", "No running Agent processes"),
-                        message: L10n.t("启动 Claude、Codex、Command Code、OpenCode、Pi 或 DeepSeek Harness 后，这里会自动实时显示进程状态。",
-                                        "Start Claude, Codex, Command Code, OpenCode, Pi, or DeepSeek Harness to see live processes here.")
+                        message: L10n.t("启动 Claude、Codex、Command Code、OpenCode、Pi、DeepSeek Harness 或 Antigravity 后，这里会自动实时显示进程状态。",
+                                        "Start Claude, Codex, Command Code, OpenCode, Pi, DeepSeek Harness, or Antigravity to see live processes here.")
                     )
                     .dsCardBackground()
                 } else if filteredProcesses.isEmpty {
@@ -340,6 +340,7 @@ private struct AgentCLIRow: View {
         case .openCode: return Color(nsColor: IconPalette.teal)
         case .pi: return Color(nsColor: IconPalette.pink)
         case .deepSeekHarness: return Color(nsColor: IconPalette.sky)
+        case .antigravity: return Color(nsColor: IconPalette.amber)
         }
     }
 
@@ -593,6 +594,7 @@ private struct AgentProcessRow: View {
         case .openCode: return Color(nsColor: IconPalette.teal)
         case .pi: return Color(nsColor: IconPalette.pink)
         case .deepSeekHarness: return Color(nsColor: IconPalette.sky)
+        case .antigravity: return Color(nsColor: IconPalette.amber)
         }
     }
 

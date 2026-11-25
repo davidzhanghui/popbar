@@ -217,7 +217,7 @@ final class AgentManagerTests: XCTestCase {
     }
 
     func testNewAgentMetadataAndZshrcProxyMapping() {
-        XCTAssertEqual(AgentKind.allCases.count, 8)
+        XCTAssertEqual(AgentKind.allCases.count, 9)
         XCTAssertEqual(AgentKind.claudeCode.zshrcProxyAlias, "claude-proxy")
         XCTAssertEqual(AgentKind.claudeDesktop.zshrcProxyAlias, "claude-desktop-proxy")
         XCTAssertEqual(AgentKind.codexCLI.zshrcProxyAlias, "codex-proxy")
@@ -229,6 +229,11 @@ final class AgentManagerTests: XCTestCase {
         XCTAssertNil(AgentKind.deepSeekHarness.zshrcProxyAlias)
         XCTAssertFalse(AgentKind.deepSeekHarness.usesProxyLaunch)
         XCTAssertTrue(AgentKind.deepSeekHarness.isDesktopApp)
+        // Antigravity 桌面版走 antigravity-desktop-proxy
+        XCTAssertEqual(AgentKind.antigravity.zshrcProxyAlias, "antigravity-desktop-proxy")
+        XCTAssertTrue(AgentKind.antigravity.usesProxyLaunch)
+        XCTAssertTrue(AgentKind.antigravity.isDesktopApp)
+        XCTAssertEqual(AgentKind.antigravity.bundleIdentifier, "com.google.antigravity")
         XCTAssertTrue(AgentKind.codexDesktop.isDesktopApp)
         XCTAssertFalse(AgentKind.codexCLI.isDesktopApp)
         XCTAssertFalse(AgentKind.pi.isDesktopApp)
@@ -283,7 +288,21 @@ final class AgentManagerTests: XCTestCase {
         XCTAssertEqual(dshRelease.downloadURL?.absoluteString, "https://download.deepseek.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.2.3-alpha.2-mac-arm64.zip")
         XCTAssertTrue(dshRelease.version > SemVer("0.2.2-rc.5")!)
 
-        // 3. OpenAI Codex GitHub release tag（rust-v0.172.0）
+        // 3. Antigravity electron-updater latest-arm64-mac.yml（行内 URL）
+        let agyYAML = Data("""
+        version: 2.35.1
+        files:
+          - url: https://storage.googleapis.com/antigravity-public/antigravity-hub/2.35.1-4615540875067392/darwin-arm/Antigravity.zip
+            sha512: abcdef==
+            size: 216134092
+        path: Antigravity.zip
+        """.utf8)
+        let agyRelease = try XCTUnwrap(AgentVersionParser.parseElectronUpdaterYAML(agyYAML, source: "Google Releases"))
+        XCTAssertEqual(agyRelease.version, SemVer(major: 2, minor: 35, patch: 1))
+        XCTAssertEqual(agyRelease.downloadURL?.absoluteString, "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.35.1-4615540875067392/darwin-arm/Antigravity.zip")
+        XCTAssertEqual(agyRelease.source, "Google Releases")
+
+        // 4. OpenAI Codex GitHub release tag（rust-v0.172.0）
         let codexGH = Data("""
         [
           {"tag_name": "rust-v0.173.0-alpha.1", "draft": false, "prerelease": true},
@@ -331,6 +350,32 @@ final class AgentManagerTests: XCTestCase {
                 argv: ["--type=renderer"]
             ),
             AgentProcessMatcher.Match(kind: .deepSeekHarness, role: .desktopApp, appBundlePath: "/Applications/DeepSeek Harness.app")
+        )
+
+        // 2b. Antigravity 主应用、Electron Helper 与内置 language_server
+        XCTAssertEqual(
+            AgentProcessMatcher.match(
+                processName: "Antigravity",
+                executablePath: "/Applications/Antigravity.app/Contents/MacOS/Antigravity",
+                argv: ["/Applications/Antigravity.app/Contents/MacOS/Antigravity"]
+            ),
+            AgentProcessMatcher.Match(kind: .antigravity, role: .desktopApp, appBundlePath: "/Applications/Antigravity.app")
+        )
+        XCTAssertEqual(
+            AgentProcessMatcher.match(
+                processName: "Antigravity Helper (Renderer)",
+                executablePath: "/Applications/Antigravity.app/Contents/Frameworks/Antigravity Helper (Renderer).app/Contents/MacOS/Antigravity Helper (Renderer)",
+                argv: ["--type=renderer"]
+            ),
+            AgentProcessMatcher.Match(kind: .antigravity, role: .desktopApp, appBundlePath: "/Applications/Antigravity.app")
+        )
+        XCTAssertEqual(
+            AgentProcessMatcher.match(
+                processName: "language_server",
+                executablePath: "/Applications/Antigravity.app/Contents/Resources/bin/language_server",
+                argv: ["/Applications/Antigravity.app/Contents/Resources/bin/language_server", "--override_ide_name", "antigravity"]
+            ),
+            AgentProcessMatcher.Match(kind: .antigravity, role: .desktopApp, appBundlePath: "/Applications/Antigravity.app")
         )
 
         // 3. Codex CLI 与 Codex Desktop 严格区分
@@ -388,6 +433,10 @@ final class AgentManagerTests: XCTestCase {
         XCTAssertEqual(
             AgentLaunchBuilder.restartCommandDisplay(for: .codexDesktop),
             "~/.zshrc → codex-desktop-proxy"
+        )
+        XCTAssertEqual(
+            AgentLaunchBuilder.restartCommandDisplay(for: .antigravity),
+            "~/.zshrc → antigravity-desktop-proxy"
         )
     }
 

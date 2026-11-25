@@ -5,7 +5,7 @@ import PopBarCore
 
 // Agent 管理核心层（无 SwiftUI 依赖，全部可在后台线程运行）：
 // 1. 定义受管 Agent（Claude Code CLI / Claude Desktop / Codex CLI / Codex Desktop /
-//    Command Code / OpenCode / Pi / DeepSeek Harness）；
+//    Command Code / OpenCode / Pi / DeepSeek Harness / Antigravity）；
 // 2. 探测本机安装路径、安装方式与当前版本（CLI 构造完整 PATH；Desktop 读 Info.plist）；
 // 3. 查询远程最新版本并执行更新/安装（全部子进程走 PopBarCore.Shell）；
 // 4. 复用 LibProc 原生扫描运行中的 Agent 进程，严格分离 CLI 与桌面端进程；
@@ -61,12 +61,13 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case openCode = "opencode"
     case pi = "pi"
     case deepSeekHarness = "deepseek-harness"
+    case antigravity = "antigravity"
 
     var id: String { rawValue }
 
     var isDesktopApp: Bool {
         switch self {
-        case .claudeDesktop, .codexDesktop, .deepSeekHarness:
+        case .claudeDesktop, .codexDesktop, .deepSeekHarness, .antigravity:
             return true
         case .claudeCode, .codexCLI, .commandCode, .openCode, .pi:
             return false
@@ -79,6 +80,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .claudeDesktop: return "com.anthropic.claudefordesktop"
         case .codexDesktop: return "com.openai.codex"
         case .deepSeekHarness: return "com.deepseek.dsh"
+        case .antigravity: return "com.google.antigravity"
         default: return nil
         }
     }
@@ -93,6 +95,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCode: return "OpenCode"
         case .pi: return "Pi"
         case .deepSeekHarness: return "DeepSeek Harness"
+        case .antigravity: return "Antigravity"
         }
     }
 
@@ -115,6 +118,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCode: return "opencode"
         case .pi: return "pi"
         case .deepSeekHarness: return "DeepSeek Harness.app"
+        case .antigravity: return "Antigravity.app"
         }
     }
 
@@ -129,6 +133,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCode: return "opencode-proxy"
         case .pi: return "pi-proxy"
         case .deepSeekHarness: return nil
+        case .antigravity: return "antigravity-desktop-proxy"
         }
     }
 
@@ -148,6 +153,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCode: return ["opencode"]
         case .pi: return ["pi"]
         case .deepSeekHarness: return []
+        case .antigravity: return []
         }
     }
 
@@ -161,6 +167,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCode: return "code"
         case .pi: return "cpu"
         case .deepSeekHarness: return "layers"
+        case .antigravity: return "zap"
         }
     }
 
@@ -174,6 +181,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCode: return URL(string: "https://opencode.ai")!
         case .pi: return URL(string: "https://github.com/earendil-works/pi")!
         case .deepSeekHarness: return URL(string: "https://www.deepseek.com")!
+        case .antigravity: return URL(string: "https://antigravity.google/product/antigravity-2")!
         }
     }
 
@@ -195,6 +203,8 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
             return L10n.t("轻量可扩展的终端 AI 编码代理（@earendil-works/pi-coding-agent）", "Extensible terminal AI coding agent (@earendil-works/pi-coding-agent)")
         case .deepSeekHarness:
             return L10n.t("DeepSeek 官方桌面编码代理应用（DeepSeek Harness.app）", "DeepSeek's official desktop coding agent app (DeepSeek Harness.app)")
+        case .antigravity:
+            return L10n.t("Google 官方桌面 AI 代理编排平台（Antigravity.app）", "Google's official desktop AI agent platform (Antigravity.app)")
         }
     }
 
@@ -208,6 +218,7 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         case .openCode: return "@opencode/cli"
         case .pi: return "@earendil-works/pi-coding-agent"
         case .deepSeekHarness: return ""
+        case .antigravity: return ""
         }
     }
 }
@@ -791,6 +802,12 @@ enum AgentProcessMatcher {
             return Match(kind: .deepSeekHarness, role: .desktopApp, appBundlePath: bundle)
         }
 
+        // 3b. Antigravity 桌面应用、Electron Helper 与内置 language_server
+        if let bundle = AppIdentity.bundlePath(forExecutable: exe),
+           URL(fileURLWithPath: bundle).lastPathComponent.lowercased() == "antigravity.app" {
+            return Match(kind: .antigravity, role: .desktopApp, appBundlePath: bundle)
+        }
+
         // 4. Codex Desktop（Codex.app 或 Bundle ID 为 com.openai.codex 的 ChatGPT.app）及其内嵌 codex-cli 子进程
         if let bundle = AppIdentity.bundlePath(forExecutable: exe) {
             let lowerBundle = bundle.lowercased()
@@ -1101,6 +1118,7 @@ enum AgentRuntime {
     static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
     static let codexDesktopBundleID = "com.openai.codex"
     static let deepSeekHarnessBundleID = "com.deepseek.dsh"
+    static let antigravityBundleID = "com.google.antigravity"
 
     /// 探测单个 Agent 的本机安装路径、安装方式与当前版本
     static func inspectLocal(_ kind: AgentKind) -> AgentCLIState {
@@ -1143,6 +1161,7 @@ enum AgentRuntime {
             case .claudeDesktop: return ["claude"]
             case .codexDesktop: return ["chatgpt", "codex-app"]
             case .deepSeekHarness: return ["deepseek-harness"]
+            case .antigravity: return ["antigravity"]
             default: return []
             }
         }()
@@ -1203,6 +1222,11 @@ enum AgentRuntime {
             candidates = [
                 ("/Applications/DeepSeek Harness.app", nil),
                 ("\(home)/Applications/DeepSeek Harness.app", nil),
+            ]
+        case .antigravity:
+            candidates = [
+                ("/Applications/Antigravity.app", nil),
+                ("\(home)/Applications/Antigravity.app", nil),
             ]
         default:
             candidates = []
@@ -1303,6 +1327,19 @@ enum AgentRuntime {
                 return .success(latest)
             }
             return .failure(AgentLookupError.unavailable(L10n.t("无法获取 DeepSeek Harness 最新版本", "Unable to fetch latest DeepSeek Harness version")))
+
+        case .antigravity:
+            let feed = resolveAntigravityFeed()
+            if let data = await httpGetData(feed.yamlURL.absoluteString, accept: "text/yaml, text/plain, */*", useProxy: useProxy),
+               let latest = AgentVersionParser.parseElectronUpdaterYAML(data, baseURL: feed.baseURL, source: "Google Releases") {
+                return .success(latest)
+            }
+            if let data = await httpGetData("https://formulae.brew.sh/api/cask/antigravity.json", useProxy: useProxy),
+               let latest = AgentVersionParser.parseHomebrewCaskJSON(data) {
+                let zipURL = (latest.downloadURL?.pathExtension.lowercased() == "zip") ? latest.downloadURL : nil
+                return .success(AgentLatestVersion(version: latest.version, source: latest.source, downloadURL: zipURL))
+            }
+            return .failure(AgentLookupError.unavailable(L10n.t("无法获取 Antigravity 最新版本", "Unable to fetch latest Antigravity version")))
         }
     }
 
@@ -1337,6 +1374,27 @@ enum AgentRuntime {
         }
         let baseURL = URL(string: baseStr) ?? URL(string: "https://download.deepseek.com/dsh-desk/feeds/\(archDir)/")!
         let yamlURL = baseURL.appendingPathComponent("\(channel)-mac.yml")
+        return (baseURL, yamlURL)
+    }
+
+    /// 读取 Antigravity 内置 `app-update.yml` 确定官方 electron-updater 清单 URL（按架构区分 `latest-arm64-mac.yml` / `latest-x64-mac.yml`）
+    private static func resolveAntigravityFeed(arch: String = AgentVersionParser.currentArchName()) -> (baseURL: URL, yamlURL: URL) {
+        let defaultBase = "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/"
+        var baseStr = defaultBase
+
+        if let appPath = resolveDesktopAppPath(for: .antigravity),
+           let content = try? String(contentsOfFile: "\(appPath)/Contents/Resources/app-update.yml", encoding: .utf8) {
+            for line in content.components(separatedBy: .newlines) {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if t.hasPrefix("url:") {
+                    let v = String(t.dropFirst("url:".count)).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                    if !v.isEmpty { baseStr = v.hasSuffix("/") ? v : v + "/" }
+                }
+            }
+        }
+        let archSuffix = arch.lowercased() == "arm64" ? "arm64" : "x64"
+        let baseURL = URL(string: baseStr) ?? URL(string: defaultBase)!
+        let yamlURL = baseURL.appendingPathComponent("latest-\(archSuffix)-mac.yml")
         return (baseURL, yamlURL)
     }
 
@@ -1417,7 +1475,7 @@ enum AgentRuntime {
                     return runNpmGlobalInstall(package: pkg, nearExecutable: exe, env: env)
                 }
 
-            case .claudeDesktop, .codexDesktop, .deepSeekHarness:
+            case .claudeDesktop, .codexDesktop, .deepSeekHarness, .antigravity:
                 return updateOrInstallDesktopApp(state, env: env)
             }
         } else {
@@ -1436,7 +1494,7 @@ enum AgentRuntime {
                                       env: env, timeout: 300)
             case .pi:
                 return runNpmGlobalInstall(package: kind.npmPackageName, nearExecutable: nil, env: env)
-            case .claudeDesktop, .codexDesktop, .deepSeekHarness:
+            case .claudeDesktop, .codexDesktop, .deepSeekHarness, .antigravity:
                 return updateOrInstallDesktopApp(state, env: env)
             }
         }
@@ -1452,6 +1510,7 @@ enum AgentRuntime {
                 case .claudeDesktop: return "claude"
                 case .codexDesktop: return "chatgpt"
                 case .deepSeekHarness: return "deepseek-harness"
+                case .antigravity: return "antigravity"
                 default: return kind.rawValue
                 }
             }()
@@ -1586,6 +1645,10 @@ enum AgentRuntime {
             let feed = resolveDeepSeekHarnessFeed()
             let probe = Shell.run("/usr/bin/curl", ["-fsSL", "--max-time", "15", feed.yamlURL.absoluteString], environment: env, timeout: 20)
             return probe.ok ? AgentVersionParser.parseElectronUpdaterYAML(probe.stdout, baseURL: feed.baseURL, source: "DeepSeek Releases")?.downloadURL : nil
+        case .antigravity:
+            let feed = resolveAntigravityFeed()
+            let probe = Shell.run("/usr/bin/curl", ["-fsSL", "--max-time", "15", feed.yamlURL.absoluteString], environment: env, timeout: 20)
+            return probe.ok ? AgentVersionParser.parseElectronUpdaterYAML(probe.stdout, baseURL: feed.baseURL, source: "Google Releases")?.downloadURL : nil
         default:
             return nil
         }
@@ -1923,6 +1986,7 @@ enum AgentRuntime {
         if lowerName.contains("claude")
             || lowerName.contains("codex")
             || lowerName.contains("deepseek")
+            || lowerName.contains("antigravity")
             || lowerName.contains("opencode")
             || lowerName.contains("command")
             || lowerName == "pi"
@@ -1936,6 +2000,7 @@ enum AgentRuntime {
             if lowerExe.contains("claude")
                 || lowerExe.contains("codex")
                 || lowerExe.contains("deepseek harness.app")
+                || lowerExe.contains("antigravity.app")
                 || lowerExe.contains("opencode")
                 || lowerExe.contains("command-code")
                 || lowerExe.contains("pi-coding-agent")
