@@ -1,8 +1,9 @@
 #!/bin/bash
 # 构建 PopBar.app 与 dmg：SwiftPM 编译（release），再组装 .app、签名、打 dmg。
+# 只有 release 构建（发版）成功后删除 .build 缓存；--debug 构建保留缓存供 restart.sh 增量编译。
 #
 #   ./build.sh            # release 构建 + dmg
-#   ./build.sh --debug    # debug 构建（增量快，不打 dmg），供 restart.sh 开发用
+#   ./build.sh --debug    # debug 构建（不打 dmg），供 restart.sh 开发用
 #   ARCH=x86_64 ./build.sh     # 为 Intel Mac 交叉编译（默认取本机架构）
 #   ARCH=universal ./build.sh  # arm64 + x86_64 通用包
 set -e
@@ -17,6 +18,14 @@ for arg in "$@"; do
         *) echo "未知参数:$arg(可用:--debug / --no-dmg)" >&2; exit 2 ;;
     esac
 done
+
+# 发版构建成功后清掉 SwiftPM 缓存(.build)：产物已拷进 .app，缓存只是下次增量的加速。
+# debug 构建是 restart.sh 的开发循环，保留缓存才能增量编译。
+clean_build_cache() {
+    [ "$CONFIG" = release ] || return 0
+    rm -rf .build
+    echo "Cleaned .build"
+}
 
 APP=build.noindex/PopBar.app
 arch=${ARCH:-$(uname -m)}
@@ -39,7 +48,7 @@ cp Info.plist "$APP/Contents/Info.plist"
 
 # 签名优先级：
 # 1) 显式指定 CODESIGN_IDENTITY（CI 发版通过临时钥匙串传入 SHA-1 指纹，或本地手动指定）
-# 2) 本地钥匙串中已信任的 "PopBar Release" / "PopBar Dev" 证书（TCC 按证书识别身份，更新不必重新授权）
+# 2) 本地钥匙串中已信任的统一证书 "ShuLan App Signing"
 # 3) 回退 ad-hoc 签名（当 REQUIRE_CODESIGN=1 时禁止回退，防止 CI 静默产出每次掉权限的包）
 CODESIGN_ARGS=(--force)
 [ -n "${CODESIGN_KEYCHAIN:-}" ] && CODESIGN_ARGS+=(--keychain "$CODESIGN_KEYCHAIN")
@@ -49,10 +58,8 @@ if [ -n "${CODESIGN_IDENTITY:-}" ]; then
 elif [ "${REQUIRE_CODESIGN:-0}" = "1" ]; then
     echo "错误: REQUIRE_CODESIGN=1 但未设置 CODESIGN_IDENTITY" >&2
     exit 1
-elif security find-identity -v -p codesigning | grep -q '"PopBar Release"'; then
-    codesign "${CODESIGN_ARGS[@]}" --sign "PopBar Release" "$APP"
-elif security find-identity -v -p codesigning | grep -q '"PopBar Dev"'; then
-    codesign "${CODESIGN_ARGS[@]}" --sign "PopBar Dev" "$APP"
+elif security find-identity -v -p codesigning | grep -q '"ShuLan App Signing"'; then
+    codesign "${CODESIGN_ARGS[@]}" --sign "ShuLan App Signing" "$APP"
 else
     codesign --force --sign - "$APP" 2>/dev/null || true
 fi
@@ -66,7 +73,11 @@ if [ "${REQUIRE_CODESIGN:-0}" = "1" ]; then
 fi
 echo "Built $APP ($CONFIG)"
 
-[ "$DMG" = 1 ] || exit 0
+# 构建成功后清掉 SwiftPM 缓存(仅 release)
+if [ "$DMG" = 0 ]; then
+    clean_build_cache
+    exit 0
+fi
 
 # 每次打包前清空产物目录,build/ 里只留下本次 dmg
 rm -rf build && mkdir -p build
@@ -79,3 +90,5 @@ ln -s /Applications "$stage/Applications"
 hdiutil create -srcfolder "$stage" -volname PopBar -format UDZO "$dmg"
 hdiutil verify "$dmg" >/dev/null
 echo "Built $dmg"
+
+clean_build_cache
