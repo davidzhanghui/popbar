@@ -3,7 +3,7 @@ import Foundation
 import PopBarCore
 import PopBarDesign
 
-/// Agent 管理视图模型：维护三个 Agent CLI 的版本、自动更新调度与实时进程列表。
+/// Agent 管理视图模型：维护各受管 Agent 的版本、自动更新调度、代理重启与实时进程列表。
 @MainActor
 final class AgentManagerModel: ObservableObject {
     static let stateChanged = Notification.Name("PopBarAgentManagerStateChanged")
@@ -16,6 +16,7 @@ final class AgentManagerModel: ObservableObject {
     @Published var lastCheckAt: Date?
     @Published var banner: (text: String, tone: DSTone)?
     @Published var terminatingIDs: Set<String> = []
+    @Published var restartingIDs: Set<String> = []
     @Published var expandedLogKinds: Set<AgentKind> = []
 
     /// 进程采样定时器（仅页面打开时运行）
@@ -346,17 +347,124 @@ final class AgentManagerModel: ObservableObject {
 
     func updateAllAvailable(isAutomatic: Bool = false) {
         var targets = updatableStates.map(\.kind)
-        // 后台自动更新时，如果 Claude Desktop 正在运行则跳过，避免突然关掉用户正在使用的桌面窗口
+        // 后台自动更新时，如果桌面应用正在运行则跳过，避免突然关掉用户正在使用的桌面窗口
         if isAutomatic {
-            let desktopRunning = processes.contains { $0.kind == .claudeDesktop && $0.role == .desktopApp }
-                || !NSRunningApplication.runningApplications(withBundleIdentifier: AgentRuntime.claudeDesktopBundleID).isEmpty
-            if desktopRunning {
-                targets.removeAll { $0 == .claudeDesktop }
+            targets.removeAll { kind in
+                guard kind.isDesktopApp else { return false }
+                let procRunning = processes.contains { $0.kind == kind && $0.role == .desktopApp }
+                let appRunning = kind.bundleIdentifier.map {
+                    !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty
+                } ?? false
+                return procRunning || appRunning
             }
         }
         guard !targets.isEmpty else { return }
         for kind in targets {
             updateOrInstall(kind, isAutomatic: isAutomatic)
+        }
+    }
+
+    // MARK: - 桌面端重启（合并启动与重启）
+
+    /// 重启指定桌面端 Agent：先 kill 已有进程（无则跳过），再按 `~/.zshrc` 代理别名启动（DeepSeek Harness 直接启动不走代理）
+    func restartAgent(_ kind: AgentKind) {
+        guard kind.isDesktopApp,
+              !activeUpdateKinds.contains(kind),
+              let snapshot = states.first(where: { $0.kind == kind }),
+              snapshot.installed else { return }
+        activeUpdateKinds.insert(kind)
+        updateState(kind) {
+            $0.actionState = .restarting
+            $0.latestCheckError = nil
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            let cmdResult = await Task.detached(priority: .userInitiated) {
+                AgentRuntime.restartDesktopApp(kind: kind, appPath: snapshot.executablePath)
+            }.value
+
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            self.activeUpdateKinds.remove(kind)
+
+            let logText: String = {
+                var lines = ["$ \(cmdResult.commandDisplay)"]
+                if !cmdResult.output.isEmpty { lines.append(cmdResult.output) }
+                if let err = cmdResult.errorMessage, !err.isEmpty, !cmdResult.output.contains(err) {
+                    lines.append(err)
+                }
+                return lines.joined(separator: "\n")
+            }()
+
+            self.updateState(kind) { s in
+                s.lastOutput = logText
+                if cmdResult.ok {
+                    s.actionState = .idle
+                } else {
+                    s.actionState = .failed(cmdResult.errorMessage ?? L10n.t("重启失败", "Restart failed"))
+                    self.expandedLogKinds.insert(kind)
+                }
+            }
+
+            if cmdResult.ok {
+                if let alias = kind.zshrcProxyAlias {
+                    self.banner = (
+                        L10n.t("已重启 \(kind.displayName)（使用 ~/.zshrc：\(alias)）",
+                               "Restarted \(kind.displayName) via ~/.zshrc (\(alias))"),
+                        .success
+                    )
+                } else {
+                    self.banner = (
+                        L10n.t("已直接重启 \(kind.displayName)（未使用代理）",
+                               "Restarted \(kind.displayName) directly (no proxy)"),
+                        .success
+                    )
+                }
+            } else {
+                let reason = cmdResult.errorMessage ?? L10n.t("执行失败", "Command failed")
+                self.banner = (L10n.t("\(kind.displayName) 重启失败：\(reason)", "\(kind.displayName) restart failed: \(reason)"), .danger)
+            }
+
+            self.scanProcessesOnce()
+            self.notifyChanged()
+        }
+    }
+
+    /// 重启单个运行中的桌面端进程（先 kill 已有进程再按代理/直连启动）
+    func restartProcess(_ item: AgentProcessItem) {
+        guard item.kind.isDesktopApp, item.role == .desktopApp,
+              !restartingIDs.contains(item.id), !terminatingIDs.contains(item.id) else { return }
+        restartingIDs.insert(item.id)
+        let appPath = states.first(where: { $0.kind == item.kind })?.executablePath ?? item.executablePath
+
+        Task { [weak self] in
+            guard let self else { return }
+            let cmdResult = await Task.detached(priority: .userInitiated) {
+                AgentRuntime.restartDesktopApp(kind: item.kind, appPath: appPath)
+            }.value
+
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            self.restartingIDs.remove(item.id)
+            self.scanProcessesOnce()
+
+            if cmdResult.ok {
+                if let alias = item.kind.zshrcProxyAlias {
+                    self.banner = (
+                        L10n.t("已重启 \(item.kind.displayName)（使用 ~/.zshrc：\(alias)）",
+                               "Restarted \(item.kind.displayName) via ~/.zshrc (\(alias))"),
+                        .success
+                    )
+                } else {
+                    self.banner = (
+                        L10n.t("已直接重启 \(item.kind.displayName)（未使用代理）",
+                               "Restarted \(item.kind.displayName) directly (no proxy)"),
+                        .success
+                    )
+                }
+            } else {
+                let reason = cmdResult.errorMessage ?? L10n.t("执行失败", "Command failed")
+                self.banner = (L10n.t("重启 \(item.kind.displayName) 失败：\(reason)", "Failed to restart \(item.kind.displayName): \(reason)"), .danger)
+            }
         }
     }
 
@@ -447,11 +555,6 @@ final class AgentManagerModel: ObservableObject {
 
     func openHomepage(_ kind: AgentKind) {
         NSWorkspace.shared.open(kind.homepageURL)
-    }
-
-    func launchApp(_ path: String) {
-        guard !path.isEmpty else { return }
-        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: NSWorkspace.OpenConfiguration())
     }
 
     func toggleLog(_ kind: AgentKind) {

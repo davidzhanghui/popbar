@@ -52,8 +52,8 @@ struct AgentPage: View {
     var body: some View {
         DSPageShell(
             L10n.t("Agent 管理", "Agent Manager"),
-            subtitle: L10n.t("分别管理 Claude Code 命令行、Claude Desktop、Command Code 与 OpenCode 的版本、更新与进程",
-                             "Manage Claude Code CLI, Claude Desktop, Command Code, and OpenCode versions, updates, and processes")
+            subtitle: L10n.t("统一管理 Claude、Codex、Command Code、OpenCode、Pi 与 DeepSeek Harness 的版本、更新、重启与进程",
+                             "Manage Claude, Codex, Command Code, OpenCode, Pi, and DeepSeek Harness versions, updates, restarts, and processes")
         ) {
             autoUpdatePill
 
@@ -92,7 +92,7 @@ struct AgentPage: View {
 
             // 区块一：受管 Agent 列表（命令行与桌面端分开展示）
             VStack(alignment: .leading, spacing: 10) {
-                DSSectionHeader(L10n.t("Agent 列表（一期）", "Managed Agents")) {
+                DSSectionHeader(L10n.t("Agent 列表", "Managed Agents")) {
                     if let last = model.lastCheckAt {
                         Text(L10n.t("上次检查：\(relativeTimeText(last))", "Last checked: \(relativeTimeText(last))"))
                             .font(DS.small)
@@ -109,10 +109,8 @@ struct AgentPage: View {
                             logExpanded: model.expandedLogKinds.contains(state.kind),
                             onCheck: { model.checkSingle(state.kind) },
                             onUpdateOrInstall: { model.updateOrInstall(state.kind) },
+                            onRestart: { model.restartAgent(state.kind) },
                             onToggleLog: { model.toggleLog(state.kind) },
-                            onLaunchApp: {
-                                if let path = state.executablePath { model.launchApp(path) }
-                            },
                             onRevealBinary: {
                                 if let path = state.executablePath { model.revealInFinder(path) }
                             },
@@ -160,8 +158,8 @@ struct AgentPage: View {
                     DSEmptyState(
                         icon: "terminal",
                         title: L10n.t("当前没有运行中的 Agent 进程", "No running Agent processes"),
-                        message: L10n.t("启动 Claude Code、Claude Desktop、Command Code 或 OpenCode 后，这里会自动实时显示进程状态。",
-                                        "Start Claude Code, Claude Desktop, Command Code, or OpenCode to see live processes here.")
+                        message: L10n.t("启动 Claude、Codex、Command Code、OpenCode、Pi 或 DeepSeek Harness 后，这里会自动实时显示进程状态。",
+                                        "Start Claude, Codex, Command Code, OpenCode, Pi, or DeepSeek Harness to see live processes here.")
                     )
                     .dsCardBackground()
                 } else if filteredProcesses.isEmpty {
@@ -178,6 +176,7 @@ struct AgentPage: View {
                             AgentProcessRow(
                                 item: proc,
                                 isTerminating: model.terminatingIDs.contains(proc.id),
+                                isRestarting: model.restartingIDs.contains(proc.id),
                                 onRevealCWD: {
                                     if let cwd = proc.cwd {
                                         model.revealInFinder(cwd)
@@ -185,8 +184,8 @@ struct AgentPage: View {
                                         model.revealInFinder(proc.executablePath)
                                     }
                                 },
-                                onCopyCommand: {
-                                    model.copyText(proc.command, notice: L10n.t("已复制命令行（PID \(proc.pid)）", "Copied command (PID \(proc.pid))"))
+                                onRestart: {
+                                    model.restartProcess(proc)
                                 },
                                 onStop: { force in
                                     model.stopProcess(proc, force: force)
@@ -215,8 +214,8 @@ struct AgentPage: View {
         .frame(height: 30)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).fill(DS.surface))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).strokeBorder(DS.borderStrong, lineWidth: 1))
-        .help(L10n.t("开启后将每 6 小时自动检查并更新已安装的 Agent（运行中的桌面端会跳过自动覆盖）",
-                     "Automatically check and update installed Agents every 6 hours (skips running desktop apps)"))
+        .dsFastHelp(L10n.t("开启后将每 6 小时自动检查并更新已安装的 Agent（运行中的桌面端会跳过自动覆盖）",
+                           "Automatically check and update installed Agents every 6 hours (skips running desktop apps)"))
     }
 
     private var overviewStrip: some View {
@@ -321,8 +320,8 @@ private struct AgentCLIRow: View {
     let logExpanded: Bool
     let onCheck: () -> Void
     let onUpdateOrInstall: () -> Void
+    let onRestart: () -> Void
     let onToggleLog: () -> Void
-    let onLaunchApp: () -> Void
     let onRevealBinary: () -> Void
     let onCopyPath: () -> Void
     let onOpenHomepage: () -> Void
@@ -335,8 +334,12 @@ private struct AgentCLIRow: View {
         switch state.kind {
         case .claudeCode: return Color(nsColor: IconPalette.orange)
         case .claudeDesktop: return Color(nsColor: IconPalette.purple)
+        case .codexCLI: return Color(nsColor: IconPalette.green)
+        case .codexDesktop: return Color(nsColor: IconPalette.indigo)
         case .commandCode: return Color(nsColor: IconPalette.blue)
         case .openCode: return Color(nsColor: IconPalette.teal)
+        case .pi: return Color(nsColor: IconPalette.pink)
+        case .deepSeekHarness: return Color(nsColor: IconPalette.sky)
         }
     }
 
@@ -346,26 +349,32 @@ private struct AgentCLIRow: View {
                 DSIconTile(state.kind.iconName, color: accentColor, size: 36, filled: state.installed)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Text(state.kind.displayName)
                             .font(DS.font(14, .semibold))
                             .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         DSChip(state.kind.formTag, tone: state.kind.isDesktopApp ? .accent : .neutral)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         statusChip
+                            .fixedSize(horizontal: true, vertical: false)
 
                         if state.installed {
                             DSChip(state.installMethod.shortBadge, tone: .neutral)
-                                .help(state.installMethod.displayName)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .dsFastHelp(state.installMethod.displayName)
                         }
 
                         if runningCount > 0 {
                             Button(action: onFilterProcesses) {
-                                DSChip(L10n.t("\(runningCount) 个运行中", "\(runningCount) running"), tone: .accent, icon: state.kind.isDesktopApp ? "app-window-mac" : "terminal")
+                                DSChip(L10n.t("\(runningCount) 运行中", "\(runningCount) running"), tone: .accent, icon: state.kind.isDesktopApp ? "app-window-mac" : "terminal")
+                                    .fixedSize(horizontal: true, vertical: false)
                             }
                             .buttonStyle(.plain)
-                            .help(L10n.t("点击筛选该 Agent 的运行进程", "Click to filter processes for this agent"))
+                            .dsFastHelp(L10n.t("点击筛选该 Agent 的运行进程", "Click to filter processes for this agent"))
                         }
                     }
 
@@ -452,11 +461,14 @@ private struct AgentCLIRow: View {
             DSChip(L10n.t("更新中…", "Updating…"), tone: .accent)
         case .installing:
             DSChip(L10n.t("安装中…", "Installing…"), tone: .accent)
+        case .restarting:
+            DSChip(L10n.t("重启中…", "Restarting…"), tone: .accent)
         default:
             if !state.installed {
                 DSChip(L10n.t("未安装", "Not Installed"), tone: .neutral)
             } else if state.hasUpdate, let latest = state.latestVersionText {
-                DSChip(L10n.t("可升级 \(latest)", "Update \(latest)"), tone: .warning, icon: "arrow-up")
+                DSChip(L10n.t("可升级", "Update"), tone: .warning, icon: "arrow-up")
+                    .dsFastHelp(L10n.t("可升级至 \(latest)", "Update available: \(latest)"))
             } else if state.isUpToDate {
                 DSChip(L10n.t("最新", "Latest"), tone: .success, icon: "check")
             } else {
@@ -472,61 +484,80 @@ private struct AgentCLIRow: View {
                     .font(DS.font(12, .medium))
                     .foregroundStyle(DS.text2)
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             if let latest = state.latestVersionText {
                 Text(L10n.t("最新：\(latest)", "Latest: \(latest)"))
                     .font(DS.font(12, .regular))
                     .foregroundStyle(state.hasUpdate ? DS.warning : DS.muted)
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                 if let src = state.latestSource {
                     Text("(\(src))")
                         .font(DS.small)
                         .foregroundStyle(DS.faint)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
         }
     }
 
+    /// 固定列宽对齐的操作区（主按钮 | Play 重启 | 访达 | 复制命令路径 | 打开官网），
+    /// 每一行的按钮与图标数量与位置完全一致，CLI 的 Play 图标置灰不可点击以保持整体视觉整齐。
     private var actionControls: some View {
-        HStack(spacing: 6) {
-            if state.actionState.isBusy {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 24, height: 24)
-            } else {
-                if !state.installed {
+        let iconSize: CGFloat = 26
+        let busy = state.actionState.isBusy
+        let canRestart = state.kind.isDesktopApp && state.installed && !busy
+
+        return HStack(spacing: 4) {
+            // 列 1：主操作按钮（固定 98pt 宽、右对齐，忙碌时原地切为加载指示器不跳动）
+            Group {
+                if busy {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 24, height: 24)
+                } else if !state.installed {
                     DSButton(L10n.t("一键安装", "Install"), icon: "download", kind: .primary, action: onUpdateOrInstall)
+                        .dsFastHelp(L10n.t("安装 \(state.kind.displayName)", "Install \(state.kind.displayName)"))
                 } else if state.hasUpdate {
                     DSButton(L10n.t("立即更新", "Update"), icon: "download", kind: .primary, action: onUpdateOrInstall)
+                        .dsFastHelp(L10n.t("覆盖更新 \(state.kind.displayName) 至最新版本", "Update \(state.kind.displayName) to latest version"))
                 } else {
                     DSButton(L10n.t("检查", "Check"), icon: "refresh-cw", kind: .secondary, action: onCheck)
+                        .dsFastHelp(L10n.t("检查 \(state.kind.displayName) 是否有新版本", "Check for \(state.kind.displayName) updates"))
                 }
-
-                if state.kind.isDesktopApp && state.installed {
-                    DSIconButton("play", help: L10n.t("打开 Claude Desktop", "Launch Claude Desktop"), size: 28, action: onLaunchApp)
-                }
-
-                if !state.lastOutput.isEmpty {
-                    DSIconButton("file-text",
-                                 tint: logExpanded ? DS.accent : nil,
-                                 help: L10n.t("查看更新日志", "Toggle update log"),
-                                 size: 28,
-                                 action: onToggleLog)
-                }
-
-                if state.installed {
-                    DSIconButton("folder-open",
-                                 help: state.kind.isDesktopApp
-                                    ? L10n.t("在访达中显示应用", "Reveal app in Finder")
-                                    : L10n.t("在访达中显示可执行文件", "Reveal binary in Finder"),
-                                 size: 28,
-                                 action: onRevealBinary)
-                    DSIconButton("copy", help: L10n.t("复制路径", "Copy path"), size: 28, action: onCopyPath)
-                }
-
-                DSIconButton("external-link", help: L10n.t("打开官网", "Open website"), size: 28, action: onOpenHomepage)
             }
+            .frame(width: 98, alignment: .trailing)
+            .padding(.trailing, 4)
+
+            // 列 2：重启按钮（Play 图标；桌面端可点击，CLI 或未安装时置灰不可点击保持 UI 一致）
+            let restartHelp: String = {
+                guard state.kind.isDesktopApp else {
+                    return L10n.t("命令行 Agent 请在终端中启动", "Launch CLI agents from your terminal")
+                }
+                guard state.installed else {
+                    return L10n.t("请先安装 \(state.kind.displayName)", "Install \(state.kind.displayName) first")
+                }
+                return L10n.t("重启 \(state.kind.displayName)", "Restart \(state.kind.displayName)")
+            }()
+            DSIconButton("play", help: restartHelp, size: iconSize, action: onRestart)
+                .disabled(!canRestart)
+
+            // 列 3：在访达中显示
+            DSIconButton("folder-open", help: L10n.t("在访达中显示", "Reveal in Finder"), size: iconSize, action: onRevealBinary)
+                .disabled(!state.installed)
+
+            // 列 4：复制命令路径
+            DSIconButton("copy", help: L10n.t("复制命令路径", "Copy command path"), size: iconSize, action: onCopyPath)
+                .disabled(!state.installed)
+
+            // 列 5：打开官网
+            DSIconButton("external-link", help: L10n.t("打开官网", "Open website"), size: iconSize, action: onOpenHomepage)
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func abbreviateHome(_ path: String) -> String {
@@ -543,8 +574,9 @@ private struct AgentCLIRow: View {
 private struct AgentProcessRow: View {
     let item: AgentProcessItem
     let isTerminating: Bool
+    let isRestarting: Bool
     let onRevealCWD: () -> Void
-    let onCopyCommand: () -> Void
+    let onRestart: () -> Void
     let onStop: (_ force: Bool) -> Void
 
     @State private var hovering = false
@@ -555,8 +587,12 @@ private struct AgentProcessRow: View {
         switch item.kind {
         case .claudeCode: return Color(nsColor: IconPalette.orange)
         case .claudeDesktop: return Color(nsColor: IconPalette.purple)
+        case .codexCLI: return Color(nsColor: IconPalette.green)
+        case .codexDesktop: return Color(nsColor: IconPalette.indigo)
         case .commandCode: return Color(nsColor: IconPalette.blue)
         case .openCode: return Color(nsColor: IconPalette.teal)
+        case .pi: return Color(nsColor: IconPalette.pink)
+        case .deepSeekHarness: return Color(nsColor: IconPalette.sky)
         }
     }
 
@@ -598,6 +634,7 @@ private struct AgentProcessRow: View {
                         .lineLimit(1)
                 }
             }
+            .dsFastHelp(item.command)
 
             Spacer(minLength: 10)
 
@@ -608,18 +645,24 @@ private struct AgentProcessRow: View {
             }
 
             HStack(spacing: 4) {
-                if isTerminating {
+                if isTerminating || isRestarting {
                     ProgressView().controlSize(.small).frame(width: 26, height: 26)
                 } else {
                     if item.cwd != nil || item.role == .desktopApp {
                         DSIconButton("folder-open",
-                                     help: item.role == .desktopApp
-                                        ? L10n.t("在访达中显示应用", "Reveal app in Finder")
-                                        : L10n.t("打开工作目录", "Open working directory"),
+                                     help: L10n.t("打开工作区目录", "Open workspace directory"),
                                      size: 26,
                                      action: onRevealCWD)
+                    } else {
+                        Color.clear.frame(width: 26, height: 26)
                     }
-                    DSIconButton("copy", help: L10n.t("复制命令行", "Copy command line"), size: 26, action: onCopyCommand)
+
+                    let canRestartDesktop = item.kind.isDesktopApp && item.role == .desktopApp
+                    let restartHelp = canRestartDesktop
+                        ? L10n.t("重启 \(item.kind.displayName)", "Restart \(item.kind.displayName)")
+                        : L10n.t("命令行 Agent 请在终端中启动", "Launch CLI agents from your terminal")
+                    DSIconButton("play", help: restartHelp, size: 26, action: onRestart)
+                        .disabled(!canRestartDesktop)
 
                     if confirmForce {
                         DSButton(L10n.t("强杀", "Kill"), icon: "square", kind: .danger) {
@@ -649,7 +692,6 @@ private struct AgentProcessRow: View {
         .background(hovering ? DS.hover.opacity(0.6) : .clear)
         .animation(.easeOut(duration: 0.1), value: hovering)
         .onHover { hovering = $0 }
-        .help(item.command)
     }
 
     private func metricColumn(label: String, value: String) -> some View {

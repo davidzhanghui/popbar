@@ -106,6 +106,7 @@ public struct DSIconButton: View {
     let size: CGFloat
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
 
     public init(_ icon: String, tint: Color? = nil, help: String? = nil, size: CGFloat = 28, action: @escaping () -> Void) {
         self.icon = icon
@@ -119,13 +120,221 @@ public struct DSIconButton: View {
         Button(action: action) {
             Icon(icon, size: 16, color: tint ?? DS.muted)
                 .frame(width: size, height: size)
-                .background(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).fill(hovering ? DS.hover : .clear))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).fill(hovering && enabled ? DS.hover : .clear))
                 .contentShape(Rectangle())
+                .opacity(enabled ? 1 : 0.35)
                 .animation(.easeOut(duration: 0.1), value: hovering)
         }
         .buttonStyle(DSPressStyle(scale: 0.92))
         .onHover { hovering = $0 }
-        .help(help ?? "")
+        .dsFastHelp(help)
+    }
+}
+
+// MARK: - 快速悬停提示（~150ms 响应，横向滑过相邻图标 40ms 切换，不被卡片圆角裁剪）
+
+@MainActor
+private final class DSFastTooltipController {
+    static let shared = DSFastTooltipController()
+
+    private var panel: NSPanel?
+    private var label: NSTextField?
+    private var showWorkItem: DispatchWorkItem?
+    private weak var activeOwner: NSView?
+    private var lastHideAt: TimeInterval = 0
+    private var eventMonitor: Any?
+
+    private init() {
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]) { [weak self] event in
+            self?.hide(owner: nil)
+            return event
+        }
+    }
+
+    func scheduleShow(text: String, for owner: NSView) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        showWorkItem?.cancel()
+        activeOwner = owner
+
+        // 若刚隐藏不久（用户正在横向扫过一排图标），缩短延迟到 40ms
+        let now = ProcessInfo.processInfo.systemUptime
+        let delay: TimeInterval = (panel?.isVisible == true || (now - lastHideAt) < 0.3) ? 0.04 : 0.15
+
+        let item = DispatchWorkItem { [weak self, weak owner] in
+            guard let self, let owner, self.activeOwner === owner,
+                  let window = owner.window, window.isVisible else { return }
+            self.present(text: trimmed, anchor: owner, in: window)
+        }
+        showWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    func hide(owner: NSView?) {
+        if let owner, let active = activeOwner, active !== owner {
+            return
+        }
+        showWorkItem?.cancel()
+        showWorkItem = nil
+        activeOwner = nil
+        if let panel, panel.isVisible {
+            panel.orderOut(nil)
+            lastHideAt = ProcessInfo.processInfo.systemUptime
+        }
+    }
+
+    private func present(text: String, anchor: NSView, in window: NSWindow) {
+        let (panel, label) = ensurePanel()
+        let isDark = Theme.isDark(window.effectiveAppearance)
+
+        if let box = panel.contentView {
+            box.wantsLayer = true
+            box.layer?.cornerRadius = 7
+            box.layer?.masksToBounds = true
+            let bgColor = isDark ? Theme.rgb(0x2B2926, 0xF5) : Theme.rgb(0x1C1B19, 0xEB)
+            let borderColor = isDark ? Theme.rgb(0x4E4B45, 0xCC) : Theme.rgb(0x3D3B37, 0x66)
+            box.layer?.backgroundColor = bgColor.cgColor
+            box.layer?.borderColor = borderColor.cgColor
+            box.layer?.borderWidth = 0.75
+        }
+
+        let maxWidth: CGFloat = 340
+        label.stringValue = text
+        label.textColor = isDark ? Theme.rgb(0xF3F1ED, 0xFF) : Theme.rgb(0xFAF9F6, 0xFF)
+        label.preferredMaxLayoutWidth = maxWidth
+
+        // 直接使用 NSTextFieldCell.cellSize(forBounds:) 测算实际绘制尺寸，
+        // 自动包含单元格内边距与 CJK 换行高度，避免最后一个字折行被裁切。
+        let cellBounds = NSRect(x: 0, y: 0, width: maxWidth, height: 400)
+        let fitted = label.cell?.cellSize(forBounds: cellBounds) ?? NSSize(width: 120, height: 16)
+
+        let padH: CGFloat = 9
+        let padV: CGFloat = 5
+        let textW = ceil(min(fitted.width, maxWidth)) + 2
+        let textH = ceil(fitted.height) + 1
+        let panelSize = NSSize(width: textW + padH * 2, height: textH + padV * 2)
+
+        label.frame = NSRect(x: padH, y: padV, width: textW, height: textH)
+
+        let rectInWindow = anchor.convert(anchor.bounds, to: nil)
+        let anchorScreen = window.convertToScreen(rectInWindow)
+        let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+
+        let gap: CGFloat = 6
+        var x = anchorScreen.midX - panelSize.width / 2
+        x = max(visibleFrame.minX + 8, min(x, visibleFrame.maxX - panelSize.width - 8))
+
+        // 优先显示在目标上方，若贴近屏幕顶边则自动翻转到下方
+        var y = anchorScreen.maxY + gap
+        if y + panelSize.height > visibleFrame.maxY - 6 {
+            y = anchorScreen.minY - panelSize.height - gap
+        }
+        y = max(visibleFrame.minY + 6, y)
+
+        panel.setFrame(NSRect(x: round(x), y: round(y), width: panelSize.width, height: panelSize.height), display: true)
+        panel.orderFront(nil)
+    }
+
+    private func ensurePanel() -> (NSPanel, NSTextField) {
+        if let panel, let label { return (panel, label) }
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .popUpMenu
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+
+        let container = NSView(frame: .zero)
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 4
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBezeled = false
+        label.drawsBackground = false
+        container.addSubview(label)
+        panel.contentView = container
+
+        self.panel = panel
+        self.label = label
+        return (panel, label)
+    }
+}
+
+private final class DSFastHelpTrackingView: NSView {
+    var tooltipText: String = ""
+    private var tracking: NSTrackingArea?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        MainActor.assumeIsolated {
+            DSFastTooltipController.shared.scheduleShow(text: tooltipText, for: self)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        MainActor.assumeIsolated {
+            DSFastTooltipController.shared.hide(owner: self)
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil {
+            MainActor.assumeIsolated {
+                DSFastTooltipController.shared.hide(owner: self)
+            }
+        }
+    }
+}
+
+private struct DSFastHelpOverlay: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> DSFastHelpTrackingView {
+        let view = DSFastHelpTrackingView()
+        view.tooltipText = text
+        return view
+    }
+
+    func updateNSView(_ nsView: DSFastHelpTrackingView, context: Context) {
+        nsView.tooltipText = text
+    }
+}
+
+public extension View {
+    /// 快速悬停提示（~150ms 显示，取代系统延迟较长的 `.help()`）
+    @ViewBuilder
+    func dsFastHelp(_ text: String?) -> some View {
+        if let text, !text.isEmpty {
+            self.overlay(DSFastHelpOverlay(text: text))
+        } else {
+            self
+        }
     }
 }
 

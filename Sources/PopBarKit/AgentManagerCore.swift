@@ -4,10 +4,12 @@ import Foundation
 import PopBarCore
 
 // Agent 管理核心层（无 SwiftUI 依赖，全部可在后台线程运行）：
-// 1. 定义受管 Agent（一期：Claude Code 命令行、Claude Desktop 桌面端、Command Code、OpenCode）；
+// 1. 定义受管 Agent（Claude Code CLI / Claude Desktop / Codex CLI / Codex Desktop /
+//    Command Code / OpenCode / Pi / DeepSeek Harness）；
 // 2. 探测本机安装路径、安装方式与当前版本（CLI 构造完整 PATH；Desktop 读 Info.plist）；
 // 3. 查询远程最新版本并执行更新/安装（全部子进程走 PopBarCore.Shell）；
-// 4. 复用 LibProc 原生扫描运行中的 Agent 进程，严格分离 Claude Code CLI 与 Claude Desktop 进程。
+// 4. 复用 LibProc 原生扫描运行中的 Agent 进程，严格分离 CLI 与桌面端进程；
+// 5. 支持按 ~/.zshrc 中的 *-proxy 别名重启各 Agent（DeepSeek Harness 直接启动不走代理）。
 
 // MARK: - 配置
 
@@ -53,31 +55,49 @@ enum AgentUpdatePolicy {
 enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case claudeCode = "claude-code"
     case claudeDesktop = "claude-desktop"
+    case codexCLI = "codex-cli"
+    case codexDesktop = "codex-desktop"
     case commandCode = "command-code"
     case openCode = "opencode"
+    case pi = "pi"
+    case deepSeekHarness = "deepseek-harness"
 
     var id: String { rawValue }
 
     var isDesktopApp: Bool {
-        self == .claudeDesktop
+        switch self {
+        case .claudeDesktop, .codexDesktop, .deepSeekHarness:
+            return true
+        case .claudeCode, .codexCLI, .commandCode, .openCode, .pi:
+            return false
+        }
+    }
+
+    /// 桌面端应用的 Bundle Identifier（用于精确探测、进程归属与温和退出）
+    var bundleIdentifier: String? {
+        switch self {
+        case .claudeDesktop: return "com.anthropic.claudefordesktop"
+        case .codexDesktop: return "com.openai.codex"
+        case .deepSeekHarness: return "com.deepseek.dsh"
+        default: return nil
+        }
     }
 
     var displayName: String {
         switch self {
         case .claudeCode: return "Claude Code"
         case .claudeDesktop: return "Claude Desktop"
+        case .codexCLI: return "Codex CLI"
+        case .codexDesktop: return "Codex Desktop"
         case .commandCode: return "Command Code"
         case .openCode: return "OpenCode"
+        case .pi: return "Pi"
+        case .deepSeekHarness: return "DeepSeek Harness"
         }
     }
 
     var shortName: String {
-        switch self {
-        case .claudeCode: return "Claude Code"
-        case .claudeDesktop: return "Claude Desktop"
-        case .commandCode: return "Command Code"
-        case .openCode: return "OpenCode"
-        }
+        displayName
     }
 
     /// 形态标签（帮助一眼区分 CLI 与桌面应用）
@@ -89,9 +109,32 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .claudeCode: return "claude"
         case .claudeDesktop: return "Claude.app"
+        case .codexCLI: return "codex"
+        case .codexDesktop: return "ChatGPT.app"
         case .commandCode: return "command-code"
         case .openCode: return "opencode"
+        case .pi: return "pi"
+        case .deepSeekHarness: return "DeepSeek Harness.app"
         }
+    }
+
+    /// `~/.zshrc` 中对应的带代理启动别名；`nil` 表示直接启动、不使用代理（如 DeepSeek Harness）
+    var zshrcProxyAlias: String? {
+        switch self {
+        case .claudeCode: return "claude-proxy"
+        case .claudeDesktop: return "claude-desktop-proxy"
+        case .codexCLI: return "codex-proxy"
+        case .codexDesktop: return "codex-desktop-proxy"
+        case .commandCode: return "cmd-proxy"
+        case .openCode: return "opencode-proxy"
+        case .pi: return "pi-proxy"
+        case .deepSeekHarness: return nil
+        }
+    }
+
+    /// 启动 / 重启时是否应走 `~/.zshrc` 代理别名
+    var usesProxyLaunch: Bool {
+        zshrcProxyAlias != nil
     }
 
     /// 本地 CLI 探测时按顺序尝试的可执行文件名（桌面端不走 PATH 查找）
@@ -99,8 +142,12 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .claudeCode: return ["claude"]
         case .claudeDesktop: return []
-        case .commandCode: return ["command-code", "commandcode"]
+        case .codexCLI: return ["codex"]
+        case .codexDesktop: return []
+        case .commandCode: return ["command-code", "commandcode", "cmd"]
         case .openCode: return ["opencode"]
+        case .pi: return ["pi"]
+        case .deepSeekHarness: return []
         }
     }
 
@@ -108,8 +155,12 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .claudeCode: return "sparkles"
         case .claudeDesktop: return "app-window-mac"
+        case .codexCLI: return "terminal"
+        case .codexDesktop: return "app-window"
         case .commandCode: return "command"
         case .openCode: return "code"
+        case .pi: return "cpu"
+        case .deepSeekHarness: return "layers"
         }
     }
 
@@ -117,8 +168,12 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .claudeCode: return URL(string: "https://docs.anthropic.com/en/docs/claude-code")!
         case .claudeDesktop: return URL(string: "https://claude.ai/download")!
+        case .codexCLI: return URL(string: "https://github.com/openai/codex")!
+        case .codexDesktop: return URL(string: "https://openai.com/codex")!
         case .commandCode: return URL(string: "https://commandcode.ai")!
         case .openCode: return URL(string: "https://opencode.ai")!
+        case .pi: return URL(string: "https://github.com/earendil-works/pi")!
+        case .deepSeekHarness: return URL(string: "https://www.deepseek.com")!
         }
     }
 
@@ -128,10 +183,18 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
             return L10n.t("Anthropic 官方终端编码代理（命令行）", "Anthropic's official terminal coding agent (CLI)")
         case .claudeDesktop:
             return L10n.t("Anthropic 官方 macOS 桌面客户端（Claude.app）", "Anthropic's official macOS desktop app (Claude.app)")
+        case .codexCLI:
+            return L10n.t("OpenAI 官方终端编码代理（命令行）", "OpenAI's official terminal coding agent (CLI)")
+        case .codexDesktop:
+            return L10n.t("OpenAI 官方 Codex 桌面客户端（com.openai.codex）", "OpenAI's official Codex desktop app (com.openai.codex)")
         case .commandCode:
             return L10n.t("持续学习代码风格的终端编码代理", "Coding agent that continuously learns your coding taste")
         case .openCode:
             return L10n.t("开源终端 AI 编码代理（SST / Anomaly）", "Open-source terminal AI coding agent")
+        case .pi:
+            return L10n.t("轻量可扩展的终端 AI 编码代理（@earendil-works/pi-coding-agent）", "Extensible terminal AI coding agent (@earendil-works/pi-coding-agent)")
+        case .deepSeekHarness:
+            return L10n.t("DeepSeek 官方桌面编码代理应用（DeepSeek Harness.app）", "DeepSeek's official desktop coding agent app (DeepSeek Harness.app)")
         }
     }
 
@@ -139,8 +202,12 @@ enum AgentKind: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .claudeCode: return "@anthropic-ai/claude-code"
         case .claudeDesktop: return ""
+        case .codexCLI: return "@openai/codex"
+        case .codexDesktop: return ""
         case .commandCode: return "command-code"
         case .openCode: return "@opencode/cli"
+        case .pi: return "@earendil-works/pi-coding-agent"
+        case .deepSeekHarness: return ""
         }
     }
 }
@@ -185,12 +252,13 @@ enum AgentActionState: Equatable, Sendable {
     case checking
     case updating
     case installing
+    case restarting
     case updated(String)
     case failed(String)
 
     var isBusy: Bool {
         switch self {
-        case .checking, .updating, .installing: return true
+        case .checking, .updating, .installing, .restarting: return true
         default: return false
         }
     }
@@ -331,7 +399,7 @@ enum AgentVersionParser {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if let direct = SemVer(trimmed) { return direct }
-        let pattern = #"(?:^|[^0-9A-Za-z._-])v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)"#
+        let pattern = #"(?:\b[vV]|^|[^0-9A-Za-z._-])(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let ns = trimmed as NSString
         let matches = regex.matches(in: trimmed, range: NSRange(location: 0, length: ns.length))
@@ -350,7 +418,7 @@ enum AgentVersionParser {
         return extractSemVer(from: raw)
     }
 
-    /// 解析 GitHub `/releases?per_page=10` 列表，取最高正式版 SemVer
+    /// 解析 GitHub `/releases?per_page=10` 列表，取最高正式版 SemVer（支持 `v2.4.1` 与 `rust-v0.172.0` 等带前缀的 tag）
     static func parseGitHubHighestStableRelease(_ data: Data) -> SemVer? {
         struct RawRelease: Decodable {
             let tag_name: String?
@@ -361,7 +429,7 @@ enum AgentVersionParser {
         var best: SemVer?
         for item in list {
             if item.draft == true || item.prerelease == true { continue }
-            guard let tag = item.tag_name, let v = SemVer(tag) else { continue }
+            guard let tag = item.tag_name, let v = extractSemVer(from: tag), v.prerelease.isEmpty else { continue }
             if let cur = best {
                 if v > cur { best = v }
             } else {
@@ -394,6 +462,185 @@ enum AgentVersionParser {
         return AgentLatestVersion(version: version, source: "Anthropic Releases", downloadURL: url)
     }
 
+    /// 解析 Sparkle `appcast.xml`（如 Codex Desktop `appcast.xml`），按当前 CPU 架构挑选最高版本及完整包下载链接（跳过 `<sparkle:deltas>`）
+    static func parseSparkleAppcastXML(_ data: Data, arch: String = currentArchName(), source: String = "Sparkle") -> AgentLatestVersion? {
+        final class Delegate: NSObject, XMLParserDelegate {
+            struct Item {
+                var shortVersion: String?
+                var hardware: String?
+                var enclosureURL: String?
+            }
+            var items: [Item] = []
+            private var current: Item?
+            private var inDeltas = false
+            private var currentElement = ""
+            private var buffer = ""
+
+            func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+                let name = (qName ?? elementName).lowercased()
+                currentElement = name
+                buffer = ""
+                if name == "item" {
+                    current = Item()
+                    inDeltas = false
+                } else if name == "sparkle:deltas" || name == "deltas" {
+                    inDeltas = true
+                } else if name == "enclosure", !inDeltas, var item = current {
+                    if let url = attributeDict["url"], !url.isEmpty, item.enclosureURL == nil {
+                        item.enclosureURL = url
+                        current = item
+                    }
+                    if let sv = attributeDict["sparkle:shortVersionString"], !sv.isEmpty, item.shortVersion == nil {
+                        item.shortVersion = sv
+                        current = item
+                    }
+                }
+            }
+
+            func parser(_ parser: XMLParser, foundCharacters string: String) {
+                buffer += string
+            }
+
+            func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+                let name = (qName ?? elementName).lowercased()
+                let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                if name == "sparkle:deltas" || name == "deltas" {
+                    inDeltas = false
+                } else if name == "item" {
+                    if let item = current { items.append(item) }
+                    current = nil
+                } else if var item = current, !text.isEmpty {
+                    if name == "sparkle:shortversionstring" || name == "shortversionstring" {
+                        item.shortVersion = text
+                    } else if name == "sparkle:hardwarerequirements" || name == "hardwarerequirements" {
+                        item.hardware = text
+                    } else if name == "title", item.shortVersion == nil {
+                        item.shortVersion = text
+                    }
+                    current = item
+                }
+                buffer = ""
+                currentElement = ""
+            }
+        }
+
+        let delegate = Delegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse() else { return nil }
+
+        let wantedArch = arch.lowercased()
+        let matchesArch: (String?) -> Bool = { hw in
+            guard let hw = hw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !hw.isEmpty else {
+                return true
+            }
+            if wantedArch == "arm64" { return hw.contains("arm64") }
+            return hw.contains("x86_64") || hw.contains("x64") || hw.contains("intel")
+        }
+
+        var best: AgentLatestVersion?
+        for item in delegate.items {
+            guard matchesArch(item.hardware),
+                  let rawVer = item.shortVersion,
+                  let ver = extractSemVer(from: rawVer) else { continue }
+            let url = item.enclosureURL.flatMap(URL.init(string:))
+            if let cur = best {
+                if ver > cur.version {
+                    best = AgentLatestVersion(version: ver, source: source, downloadURL: url)
+                }
+            } else {
+                best = AgentLatestVersion(version: ver, source: source, downloadURL: url)
+            }
+        }
+        return best
+    }
+
+    /// 解析 electron-updater 的 `*-mac.yml`（如 DeepSeek Harness `nightly-mac.yml`），支持行内值与 `>-` 多行折叠值
+    static func parseElectronUpdaterYAML(_ data: Data, baseURL: URL? = nil, source: String = "Releases") -> AgentLatestVersion? {
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        let lines = text.components(separatedBy: .newlines)
+
+        var versionRaw: String?
+        var pathRaw: String?
+        var firstFileURL: String?
+
+        var idx = 0
+        while idx < lines.count {
+            let line = lines[idx]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") {
+                idx += 1
+                continue
+            }
+
+            func readScalarValue(afterColon rawValue: String, keyIndent: Int) -> (value: String, nextIndex: Int) {
+                let v = rawValue.trimmingCharacters(in: .whitespaces)
+                if v == ">-" || v == ">" || v == "|-" || v == "|" {
+                    var parts: [String] = []
+                    var blockIndent: Int?
+                    var j = idx + 1
+                    while j < lines.count {
+                        let nextLine = lines[j]
+                        let nextTrimmed = nextLine.trimmingCharacters(in: .whitespaces)
+                        if nextTrimmed.isEmpty { break }
+                        let nextIndent = nextLine.prefix(while: { $0 == " " || $0 == "\t" }).count
+                        if nextIndent <= keyIndent { break }
+                        if let expected = blockIndent {
+                            if nextIndent < expected { break }
+                        } else {
+                            blockIndent = nextIndent
+                        }
+                        parts.append(nextTrimmed)
+                        j += 1
+                    }
+                    return (parts.joined(separator: ""), j)
+                }
+                let unquoted = v.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                return (unquoted, idx + 1)
+            }
+
+            let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+            if indent == 0, trimmed.hasPrefix("version:") {
+                let rest = String(trimmed.dropFirst("version:".count))
+                let res = readScalarValue(afterColon: rest, keyIndent: indent)
+                versionRaw = res.value
+                idx = res.nextIndex
+                continue
+            }
+            if indent == 0, trimmed.hasPrefix("path:") {
+                let rest = String(trimmed.dropFirst("path:".count))
+                let res = readScalarValue(afterColon: rest, keyIndent: indent)
+                pathRaw = res.value
+                idx = res.nextIndex
+                continue
+            }
+            if firstFileURL == nil, trimmed.hasPrefix("- url:") || trimmed.hasPrefix("url:") {
+                let isListItem = trimmed.hasPrefix("- url:")
+                let prefix = isListItem ? "- url:" : "url:"
+                let keyColumn = isListItem ? indent + 2 : indent
+                let rest = String(trimmed.dropFirst(prefix.count))
+                let res = readScalarValue(afterColon: rest, keyIndent: keyColumn)
+                if !res.value.isEmpty {
+                    firstFileURL = res.value
+                }
+                idx = res.nextIndex
+                continue
+            }
+
+            idx += 1
+        }
+
+        guard let versionRaw, let ver = extractSemVer(from: versionRaw) else { return nil }
+        let rawURL = [firstFileURL, pathRaw].compactMap { $0 }.first { !$0.isEmpty }
+        let downloadURL: URL? = rawURL.flatMap { str in
+            if str.hasPrefix("http://") || str.hasPrefix("https://") {
+                return URL(string: str)
+            }
+            return baseURL?.appendingPathComponent(str)
+        }
+        return AgentLatestVersion(version: ver, source: source, downloadURL: downloadURL)
+    }
+
     /// 解析 Homebrew Cask API (`https://formulae.brew.sh/api/cask/claude.json`)
     /// 版本格式通常为 `"6.28899.6,2f5fc59b..."`，取逗号前半段
     static func parseHomebrewCaskJSON(_ data: Data) -> AgentLatestVersion? {
@@ -407,6 +654,14 @@ enum AgentVersionParser {
         guard let version = extractSemVer(from: mainPart) else { return nil }
         let url = payload.url.flatMap(URL.init(string:))
         return AgentLatestVersion(version: version, source: "Homebrew Cask", downloadURL: url)
+    }
+
+    static func currentArchName() -> String {
+        #if arch(arm64)
+        return "arm64"
+        #else
+        return "x86_64"
+        #endif
     }
 }
 
@@ -482,8 +737,15 @@ enum AgentProcessMatcher {
         }
     }
 
-    /// 精确匹配受管 Agent 进程，严格分离「Claude Code 命令行」与「Claude Desktop 桌面端」
-    static func match(processName: String, executablePath: String?, argv: [String]) -> Match? {
+    /// 精确匹配受管 Agent 进程，严格分离各 CLI 与桌面端进程
+    /// `codexDesktopBundlePaths`：本机已确认 `CFBundleIdentifier == com.openai.codex` 的 `.app` 小写路径集合
+    /// （如 `/applications/chatgpt.app`），避免把非 Codex 版 ChatGPT.app 误判为 Codex Desktop。
+    static func match(
+        processName: String,
+        executablePath: String?,
+        argv: [String],
+        codexDesktopBundlePaths: Set<String> = []
+    ) -> Match? {
         let exe = executablePath ?? ""
         let lowerExe = exe.lowercased()
         let lowerName = processName.lowercased()
@@ -523,7 +785,40 @@ enum AgentProcessMatcher {
             return Match(kind: .claudeCode, role: .cli)
         }
 
-        // 3. Command Code
+        // 3. DeepSeek Harness 桌面应用及其 Electron Helper
+        if let bundle = AppIdentity.bundlePath(forExecutable: exe),
+           URL(fileURLWithPath: bundle).lastPathComponent.lowercased() == "deepseek harness.app" {
+            return Match(kind: .deepSeekHarness, role: .desktopApp, appBundlePath: bundle)
+        }
+
+        // 4. Codex Desktop（Codex.app 或 Bundle ID 为 com.openai.codex 的 ChatGPT.app）及其内嵌 codex-cli 子进程
+        if let bundle = AppIdentity.bundlePath(forExecutable: exe) {
+            let lowerBundle = bundle.lowercased()
+            let bundleName = URL(fileURLWithPath: bundle).lastPathComponent.lowercased()
+            let isCodexDesktopBundle = bundleName == "codex.app" || codexDesktopBundlePaths.contains(lowerBundle)
+            if isCodexDesktopBundle {
+                if lowerExe.contains("/contents/resources/codex-cli/") {
+                    return Match(kind: .codexDesktop, role: .desktopChild)
+                }
+                return Match(kind: .codexDesktop, role: .desktopApp, appBundlePath: bundle)
+            }
+        }
+
+        // 5. Codex CLI（以及 Codex Desktop 拉起的 app-server 子进程）
+        let isCodexBinary = exeBase == "codex" || lowerName == "codex" || argv0Base == "codex"
+        let isCodexNodeScript = isNodeRuntime(exeBase) && argv.dropFirst().contains {
+            let s = $0.lowercased()
+            return s.contains("/@openai/codex/") || s.hasSuffix("/codex") || s.hasSuffix("/codex.js")
+        }
+        if isCodexBinary || isCodexNodeScript {
+            if lowerExe.contains("/contents/resources/codex-cli/") || argv.contains("app-server") {
+                return Match(kind: .codexDesktop, role: .desktopChild)
+            }
+            let isServer = argv.dropFirst().contains { $0 == "mcp-server" || $0 == "serve" || $0 == "acp" }
+            return Match(kind: .codexCLI, role: isServer ? .server : .cli)
+        }
+
+        // 6. Command Code
         let isCommandCodeBinary = exeBase == "command-code"
             || exeBase == "commandcode"
             || lowerName == "command-code"
@@ -539,7 +834,7 @@ enum AgentProcessMatcher {
             return Match(kind: .commandCode, role: isServer ? .server : .cli)
         }
 
-        // 4. OpenCode（排除未来可能存在的桌面端 Helper）
+        // 7. OpenCode（排除未来可能存在的桌面端 Helper）
         if lowerExe.contains("/applications/opencode.app/contents/frameworks/") {
             return nil
         }
@@ -551,6 +846,17 @@ enum AgentProcessMatcher {
         if isOpenCodeBinary || isOpenCodeNodeScript {
             let isServer = argv.dropFirst().contains { $0 == "serve" || $0 == "web" || $0 == "acp" }
             return Match(kind: .openCode, role: isServer ? .server : .cli)
+        }
+
+        // 8. Pi（精确匹配 pi 二进制或 @earendil-works/pi-coding-agent / @mariozechner/pi-coding-agent 脚本）
+        let isPiBinary = exeBase == "pi" || lowerName == "pi" || argv0Base == "pi"
+        let isPiNodeScript = isNodeRuntime(exeBase) && argv.dropFirst().contains {
+            let s = $0.lowercased()
+            return s.contains("pi-coding-agent") || s.hasSuffix("/pi") || s.contains("/@earendil-works/pi")
+        }
+        if isPiBinary || isPiNodeScript {
+            let isServer = argv.dropFirst().contains { $0 == "serve" || $0 == "rpc" || $0 == "acp" }
+            return Match(kind: .pi, role: isServer ? .server : .cli)
         }
 
         return nil
@@ -576,6 +882,106 @@ enum AgentShellEnv {
             env["HOME"] = NSHomeDirectory()
         }
         return env
+    }
+
+    /// 从 `~/.zshrc` 文本中解析 `with-proxy` / `HTTPS_PROXY` / `HTTP_PROXY` 的代理地址（如 `http://127.0.0.1:1087`）
+    static func parseProxyURL(fromZshrc content: String) -> String? {
+        let pattern = #"(?:^|[;\s])(?:export\s+)?(?:HTTPS_PROXY|HTTP_PROXY|https_proxy|http_proxy)\s*=\s*['"]?(https?://[^\s'";#]+)['"]?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        var fallbackHTTP: String?
+        for rawLine in content.components(separatedBy: .newlines) {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            let ns = trimmed as NSString
+            guard let m = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: ns.length)),
+                  m.numberOfRanges >= 2 else { continue }
+            let urlStr = ns.substring(with: m.range(at: 1))
+            if trimmed.contains("HTTPS_PROXY") || trimmed.contains("https_proxy") {
+                return urlStr
+            }
+            if fallbackHTTP == nil {
+                fallbackHTTP = urlStr
+            }
+        }
+        return fallbackHTTP
+    }
+
+    /// 读取本机 `~/.zshrc` 中的代理地址；若为本机回环地址则快速探测端口是否可达，避免代理未开时导致更新失败
+    static func activeZshrcProxyURL(home: String = NSHomeDirectory(), checkReachability: Bool = true) -> String? {
+        let zshrcPath = "\(home)/.zshrc"
+        guard let content = try? String(contentsOfFile: zshrcPath, encoding: .utf8),
+              let urlStr = parseProxyURL(fromZshrc: content) else {
+            return nil
+        }
+        guard checkReachability else { return urlStr }
+        guard let url = URL(string: urlStr),
+              let host = url.host,
+              let port = url.port ?? (url.scheme == "https" ? 443 : 80) as Int? else {
+            return nil
+        }
+        if host == "127.0.0.1" || host == "localhost" {
+            return isLocalPortOpen(host: "127.0.0.1", port: UInt16(clamping: port)) ? urlStr : nil
+        }
+        return urlStr
+    }
+
+    /// 构造用于版本检查 / 下载更新的环境变量：
+    /// - DeepSeek Harness（`usesProxyLaunch == false`）：强制清空代理变量直连
+    /// - 其他海外源 Agent：若检测到 `~/.zshrc` 代理可达，则注入 `HTTP_PROXY`/`HTTPS_PROXY` 并清理 `ALL_PROXY`
+    static func updateEnvironment(for kind: AgentKind, base: [String: String] = enrichedEnvironment(), proxyURL: String? = activeZshrcProxyURL()) -> [String: String] {
+        var env = base
+        for key in ["ALL_PROXY", "all_proxy"] {
+            env.removeValue(forKey: key)
+        }
+        guard kind.usesProxyLaunch else {
+            for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+                env.removeValue(forKey: key)
+            }
+            return env
+        }
+        if let proxyURL, !proxyURL.isEmpty {
+            env["HTTP_PROXY"] = proxyURL
+            env["HTTPS_PROXY"] = proxyURL
+            env["http_proxy"] = proxyURL
+            env["https_proxy"] = proxyURL
+            env["NO_PROXY"] = "localhost,127.0.0.1,::1"
+            env["no_proxy"] = "localhost,127.0.0.1,::1"
+            env["NODE_USE_ENV_PROXY"] = "1"
+        }
+        return env
+    }
+
+    private static func isLocalPortOpen(host: String, port: UInt16) -> Bool {
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+
+        let flags = fcntl(fd, F_GETFL, 0)
+        if flags >= 0 {
+            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        }
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        guard inet_pton(AF_INET, host, &addr.sin_addr) == 1 else { return false }
+
+        let res = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if res == 0 { return true }
+        if errno != EINPROGRESS { return false }
+
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let ready = Darwin.poll(&pfd, 1, 150)
+        guard ready > 0 else { return false }
+        var soError: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len) == 0 else { return false }
+        return soError == 0
     }
 
     static func buildSearchPaths(home: String = NSHomeDirectory()) -> [String] {
@@ -658,15 +1064,48 @@ enum AgentShellEnv {
     }
 }
 
-// MARK: - 运行时操作（探测 / 查最新版本 / 更新安装 / 进程采集与终止）
+// MARK: - 桌面端重启命令构造（纯函数，便于单测）
+
+enum AgentLaunchBuilder {
+    /// 单引号安全转义（POSIX shell）
+    static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// 构造在非交互 zsh 中加载 `~/.zshrc` 并执行指定代理别名的脚本（alias 不存在时走兜底命令）
+    static func buildDesktopProxyScript(aliasName: String, fallbackOpenCommand: String) -> String {
+        """
+        setopt aliases
+        [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" >/dev/null 2>&1
+        if whence -w \(shellQuote(aliasName)) >/dev/null 2>&1; then
+          eval \(shellQuote(aliasName))
+        else
+          \(fallbackOpenCommand)
+        fi
+        """
+    }
+
+    /// 为指定桌面端 Agent 返回重启按钮的展示命令描述（用于日志）
+    static func restartCommandDisplay(for kind: AgentKind, appPath: String? = nil) -> String {
+        if let alias = kind.zshrcProxyAlias {
+            return "~/.zshrc → \(alias)"
+        }
+        let target = appPath ?? "/Applications/\(kind.primaryCommand)"
+        return "open -a \(shellQuote(target))"
+    }
+}
+
+// MARK: - 运行时操作（探测 / 查最新版本 / 更新安装 / 重启 / 进程采集与终止）
 
 enum AgentRuntime {
     static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
+    static let codexDesktopBundleID = "com.openai.codex"
+    static let deepSeekHarnessBundleID = "com.deepseek.dsh"
 
     /// 探测单个 Agent 的本机安装路径、安装方式与当前版本
     static func inspectLocal(_ kind: AgentKind) -> AgentCLIState {
-        if kind == .claudeDesktop {
-            return inspectClaudeDesktopLocal()
+        if kind.isDesktopApp {
+            return inspectDesktopAppLocal(for: kind)
         }
         var state = AgentCLIState(kind: kind)
         guard let exePath = AgentShellEnv.locateExecutable(kind.executableNames) else {
@@ -688,24 +1127,33 @@ enum AgentRuntime {
         return state
     }
 
-    /// 探测 Claude Desktop（`/Applications/Claude.app` 或 `~/Applications/Claude.app`）
-    private static func inspectClaudeDesktopLocal() -> AgentCLIState {
-        var state = AgentCLIState(kind: .claudeDesktop)
-        let fm = FileManager.default
-        let candidates = [
-            "/Applications/Claude.app",
-            "\(NSHomeDirectory())/Applications/Claude.app",
-        ]
-        guard let appPath = candidates.first(where: { fm.fileExists(atPath: "\($0)/Contents/Info.plist") }) else {
+    /// 探测桌面端 `.app`（Claude Desktop / Codex Desktop / DeepSeek Harness）
+    private static func inspectDesktopAppLocal(for kind: AgentKind) -> AgentCLIState {
+        var state = AgentCLIState(kind: kind)
+        guard let appPath = resolveDesktopAppPath(for: kind) else {
             return state
         }
         state.installed = true
         state.executablePath = appPath
         state.resolvedPath = URL(fileURLWithPath: appPath).resolvingSymlinksInPath().path
 
-        let isBrewCask = fm.fileExists(atPath: "/opt/homebrew/Caskroom/claude")
-            || fm.fileExists(atPath: "/usr/local/Caskroom/claude")
-        state.installMethod = isBrewCask ? .homebrew(formula: "claude") : .appBundle
+        let fm = FileManager.default
+        let caskNames: [String] = {
+            switch kind {
+            case .claudeDesktop: return ["claude"]
+            case .codexDesktop: return ["chatgpt", "codex-app"]
+            case .deepSeekHarness: return ["deepseek-harness"]
+            default: return []
+            }
+        }()
+        if let matchedCask = caskNames.first(where: {
+            fm.fileExists(atPath: "/opt/homebrew/Caskroom/\($0)")
+                || fm.fileExists(atPath: "/usr/local/Caskroom/\($0)")
+        }) {
+            state.installMethod = .homebrew(formula: matchedCask)
+        } else {
+            state.installMethod = .appBundle
+        }
 
         let plistPath = "\(appPath)/Contents/Info.plist"
         if let dict = NSDictionary(contentsOfFile: plistPath) {
@@ -720,58 +1168,185 @@ enum AgentRuntime {
         return state
     }
 
-    /// 异步查询远程最新版本
+    /// 解析本机桌面端 `.app` 路径（按 Bundle ID 与标准目录探测，避免误匹配同名不同产品的应用）
+    static func resolveDesktopAppPath(for kind: AgentKind) -> String? {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+
+        func bundleID(at appPath: String) -> String? {
+            let plist = "\(appPath)/Contents/Info.plist"
+            guard let dict = NSDictionary(contentsOfFile: plist) else { return nil }
+            return dict["CFBundleIdentifier"] as? String
+        }
+
+        if let expectedBundleID = kind.bundleIdentifier,
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: expectedBundleID),
+           fm.fileExists(atPath: "\(url.path)/Contents/Info.plist") {
+            return url.path
+        }
+
+        let candidates: [(path: String, requireBundleID: String?)]
+        switch kind {
+        case .claudeDesktop:
+            candidates = [
+                ("/Applications/Claude.app", nil),
+                ("\(home)/Applications/Claude.app", nil),
+            ]
+        case .codexDesktop:
+            candidates = [
+                ("/Applications/Codex.app", nil),
+                ("\(home)/Applications/Codex.app", nil),
+                ("/Applications/ChatGPT.app", codexDesktopBundleID),
+                ("\(home)/Applications/ChatGPT.app", codexDesktopBundleID),
+            ]
+        case .deepSeekHarness:
+            candidates = [
+                ("/Applications/DeepSeek Harness.app", nil),
+                ("\(home)/Applications/DeepSeek Harness.app", nil),
+            ]
+        default:
+            candidates = []
+        }
+
+        for item in candidates {
+            guard fm.fileExists(atPath: "\(item.path)/Contents/Info.plist") else { continue }
+            if let required = item.requireBundleID {
+                guard bundleID(at: item.path) == required else { continue }
+            }
+            return item.path
+        }
+        return nil
+    }
+
+    /// 异步查询远程最新版本（非 DeepSeek 优先复用 `~/.zshrc` 可达代理；DeepSeek Harness 强制直连）
     static func fetchLatestVersion(for kind: AgentKind) async -> Result<AgentLatestVersion, Error> {
+        let useProxy = kind.usesProxyLaunch
         switch kind {
         case .claudeCode:
-            if let text = await httpGetText("https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest"),
+            if let text = await httpGetText("https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest", useProxy: useProxy),
                let v = AgentVersionParser.extractSemVer(from: text) {
                 return .success(AgentLatestVersion(version: v, source: "Anthropic Releases"))
             }
-            if let data = await httpGetData("https://registry.npmjs.org/@anthropic-ai/claude-code/latest"),
+            if let data = await httpGetData("https://registry.npmjs.org/@anthropic-ai/claude-code/latest", useProxy: useProxy),
                let v = AgentVersionParser.parseNpmRegistryLatest(data) {
                 return .success(AgentLatestVersion(version: v, source: "npm"))
             }
             return .failure(AgentLookupError.unavailable(L10n.t("无法获取 Claude Code 最新版本", "Unable to fetch latest Claude Code version")))
 
         case .claudeDesktop:
-            if let data = await httpGetData("https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"),
+            if let data = await httpGetData("https://downloads.claude.ai/releases/darwin/universal/RELEASES.json", useProxy: useProxy),
                let latest = AgentVersionParser.parseClaudeDesktopReleasesJSON(data) {
                 return .success(latest)
             }
-            if let data = await httpGetData("https://formulae.brew.sh/api/cask/claude.json"),
+            if let data = await httpGetData("https://formulae.brew.sh/api/cask/claude.json", useProxy: useProxy),
                let latest = AgentVersionParser.parseHomebrewCaskJSON(data) {
                 return .success(latest)
             }
             return .failure(AgentLookupError.unavailable(L10n.t("无法获取 Claude Desktop 最新版本", "Unable to fetch latest Claude Desktop version")))
 
+        case .codexCLI:
+            if let data = await httpGetData("https://registry.npmjs.org/@openai/codex/latest", useProxy: useProxy),
+               let v = AgentVersionParser.parseNpmRegistryLatest(data) {
+                return .success(AgentLatestVersion(version: v, source: "npm"))
+            }
+            if let data = await httpGetData("https://api.github.com/repos/openai/codex/releases?per_page=10", useProxy: useProxy),
+               let v = AgentVersionParser.parseGitHubHighestStableRelease(data) {
+                return .success(AgentLatestVersion(version: v, source: "GitHub Releases"))
+            }
+            return .failure(AgentLookupError.unavailable(L10n.t("无法获取 Codex CLI 最新版本", "Unable to fetch latest Codex CLI version")))
+
+        case .codexDesktop:
+            if let data = await httpGetData("https://persistent.oaistatic.com/codex-app-prod/appcast.xml", accept: "application/xml, text/xml, */*", useProxy: useProxy),
+               let latest = AgentVersionParser.parseSparkleAppcastXML(data, source: "OpenAI Releases") {
+                return .success(latest)
+            }
+            if let data = await httpGetData("https://formulae.brew.sh/api/cask/chatgpt.json", useProxy: useProxy),
+               let latest = AgentVersionParser.parseHomebrewCaskJSON(data) {
+                return .success(latest)
+            }
+            return .failure(AgentLookupError.unavailable(L10n.t("无法获取 Codex Desktop 最新版本", "Unable to fetch latest Codex Desktop version")))
+
         case .commandCode:
-            if let data = await httpGetData("https://registry.npmjs.org/command-code/latest"),
+            if let data = await httpGetData("https://registry.npmjs.org/command-code/latest", useProxy: useProxy),
                let v = AgentVersionParser.parseNpmRegistryLatest(data) {
                 return .success(AgentLatestVersion(version: v, source: "npm"))
             }
             return .failure(AgentLookupError.unavailable(L10n.t("无法获取 Command Code 最新版本", "Unable to fetch latest Command Code version")))
 
         case .openCode:
-            if let data = await httpGetData("https://registry.npmjs.org/@opencode/cli/latest"),
+            if let data = await httpGetData("https://registry.npmjs.org/@opencode/cli/latest", useProxy: useProxy),
                let v = AgentVersionParser.parseNpmRegistryLatest(data) {
                 return .success(AgentLatestVersion(version: v, source: "npm"))
             }
-            if let data = await httpGetData("https://api.github.com/repos/anomalyco/opencode/releases?per_page=10"),
+            if let data = await httpGetData("https://api.github.com/repos/anomalyco/opencode/releases?per_page=10", useProxy: useProxy),
                let v = AgentVersionParser.parseGitHubHighestStableRelease(data) {
                 return .success(AgentLatestVersion(version: v, source: "GitHub Releases"))
             }
             return .failure(AgentLookupError.unavailable(L10n.t("无法获取 OpenCode 最新版本", "Unable to fetch latest OpenCode version")))
+
+        case .pi:
+            let pkg = resolvePiNpmPackageName()
+            if let data = await httpGetData("https://registry.npmjs.org/\(pkg)/latest", useProxy: useProxy),
+               let v = AgentVersionParser.parseNpmRegistryLatest(data) {
+                return .success(AgentLatestVersion(version: v, source: "npm"))
+            }
+            if let data = await httpGetData("https://api.github.com/repos/earendil-works/pi/releases?per_page=10", useProxy: useProxy),
+               let v = AgentVersionParser.parseGitHubHighestStableRelease(data) {
+                return .success(AgentLatestVersion(version: v, source: "GitHub Releases"))
+            }
+            return .failure(AgentLookupError.unavailable(L10n.t("无法获取 Pi 最新版本", "Unable to fetch latest Pi version")))
+
+        case .deepSeekHarness:
+            let feed = resolveDeepSeekHarnessFeed()
+            if let data = await httpGetData(feed.yamlURL.absoluteString, accept: "text/yaml, text/plain, */*", useProxy: false),
+               let latest = AgentVersionParser.parseElectronUpdaterYAML(data, baseURL: feed.baseURL, source: "DeepSeek Releases") {
+                return .success(latest)
+            }
+            return .failure(AgentLookupError.unavailable(L10n.t("无法获取 DeepSeek Harness 最新版本", "Unable to fetch latest DeepSeek Harness version")))
         }
+    }
+
+    private static func resolvePiNpmPackageName(resolvedPath: String? = nil) -> String {
+        let pathToCheck = resolvedPath
+            ?? AgentShellEnv.locateExecutable(["pi"]).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+            ?? ""
+        if pathToCheck.contains("@mariozechner/pi-coding-agent") {
+            return "@mariozechner/pi-coding-agent"
+        }
+        return "@earendil-works/pi-coding-agent"
+    }
+
+    /// 读取 DeepSeek Harness 内置 `app-update.yml` 确定更新频道与架构 feed URL
+    private static func resolveDeepSeekHarnessFeed() -> (baseURL: URL, yamlURL: URL) {
+        let archDir = AgentVersionParser.currentArchName() == "arm64" ? "mac-arm64" : "mac-x64"
+        var baseStr = "https://download.deepseek.com/dsh-desk/feeds/\(archDir)/"
+        var channel = "nightly"
+
+        if let appPath = resolveDesktopAppPath(for: .deepSeekHarness),
+           let content = try? String(contentsOfFile: "\(appPath)/Contents/Resources/app-update.yml", encoding: .utf8) {
+            for line in content.components(separatedBy: .newlines) {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if t.hasPrefix("url:") {
+                    let v = String(t.dropFirst("url:".count)).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                    if !v.isEmpty { baseStr = v.hasSuffix("/") ? v : v + "/" }
+                } else if t.hasPrefix("channel:") {
+                    let v = String(t.dropFirst("channel:".count)).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                    if !v.isEmpty { channel = v }
+                }
+            }
+        }
+        let baseURL = URL(string: baseStr) ?? URL(string: "https://download.deepseek.com/dsh-desk/feeds/\(archDir)/")!
+        let yamlURL = baseURL.appendingPathComponent("\(channel)-mac.yml")
+        return (baseURL, yamlURL)
     }
 
     /// 执行单个 Agent 的更新或安装（阻塞，在后台线程调用）
     static func updateOrInstall(_ state: AgentCLIState) -> AgentCommandResult {
-        let env = AgentShellEnv.enrichedEnvironment()
         let kind = state.kind
+        let env = AgentShellEnv.updateEnvironment(for: kind)
 
-        if kind == .claudeDesktop {
-            return updateOrInstallClaudeDesktop(state, env: env)
+        if kind.isDesktopApp {
+            return updateOrInstallDesktopApp(state, env: env)
         }
 
         if state.installed, let exe = state.executablePath {
@@ -787,6 +1362,19 @@ enum AgentRuntime {
                     return runBunGlobalInstall(package: kind.npmPackageName, env: env)
                 case .native, .appBundle, .unknown:
                     return runCommand(exe, ["update"], display: "claude update", env: env, timeout: 240)
+                }
+
+            case .codexCLI:
+                switch state.installMethod {
+                case .npm:
+                    return runNpmGlobalInstall(package: kind.npmPackageName, nearExecutable: exe, env: env)
+                case .homebrew(let formula):
+                    let isCask = (state.resolvedPath ?? exe).contains("/Caskroom/")
+                    return runBrewUpgrade(formula: formula ?? "codex", cask: isCask, env: env)
+                case .bun:
+                    return runBunGlobalInstall(package: kind.npmPackageName, env: env)
+                case .native, .appBundle, .unknown:
+                    return runNpmGlobalInstall(package: kind.npmPackageName, nearExecutable: exe, env: env)
                 }
 
             case .commandCode:
@@ -816,8 +1404,21 @@ enum AgentRuntime {
                     return runCommand(exe, ["upgrade"], display: "opencode upgrade", env: env, timeout: 240)
                 }
 
-            case .claudeDesktop:
-                return updateOrInstallClaudeDesktop(state, env: env)
+            case .pi:
+                let pkg = resolvePiNpmPackageName(resolvedPath: state.resolvedPath)
+                switch state.installMethod {
+                case .npm:
+                    return runNpmGlobalInstall(package: pkg, nearExecutable: exe, env: env)
+                case .bun:
+                    return runBunGlobalInstall(package: pkg, env: env)
+                case .homebrew(let formula):
+                    return runBrewUpgrade(formula: formula ?? "pi", cask: false, env: env)
+                case .native, .appBundle, .unknown:
+                    return runNpmGlobalInstall(package: pkg, nearExecutable: exe, env: env)
+                }
+
+            case .claudeDesktop, .codexDesktop, .deepSeekHarness:
+                return updateOrInstallDesktopApp(state, env: env)
             }
         } else {
             switch kind {
@@ -825,49 +1426,61 @@ enum AgentRuntime {
                 return runShellScript("curl -fsSL https://claude.ai/install.sh | bash",
                                       display: "curl -fsSL https://claude.ai/install.sh | bash",
                                       env: env, timeout: 300)
+            case .codexCLI:
+                return runNpmGlobalInstall(package: kind.npmPackageName, nearExecutable: nil, env: env)
             case .commandCode:
                 return runNpmGlobalInstall(package: kind.npmPackageName, nearExecutable: nil, env: env)
             case .openCode:
                 return runShellScript("curl -fsSL https://opencode.ai/v2/install | bash",
                                       display: "curl -fsSL https://opencode.ai/v2/install | bash",
                                       env: env, timeout: 300)
-            case .claudeDesktop:
-                return updateOrInstallClaudeDesktop(state, env: env)
+            case .pi:
+                return runNpmGlobalInstall(package: kind.npmPackageName, nearExecutable: nil, env: env)
+            case .claudeDesktop, .codexDesktop, .deepSeekHarness:
+                return updateOrInstallDesktopApp(state, env: env)
             }
         }
     }
 
-    /// 更新或安装 Claude Desktop：Homebrew Cask 走 `brew upgrade --cask claude`，否则下载官方 zip 安全替换 `.app`
-    private static func updateOrInstallClaudeDesktop(_ state: AgentCLIState, env: [String: String]) -> AgentCommandResult {
-        if case .homebrew = state.installMethod, state.installed {
-            return runBrewUpgrade(formula: "claude", cask: true, env: env)
+    /// 通用桌面应用更新或安装（Claude Desktop / Codex Desktop / DeepSeek Harness）：
+    /// Homebrew Cask 走 `brew upgrade --cask`，否则下载官方 zip 原子替换 `.app`
+    private static func updateOrInstallDesktopApp(_ state: AgentCLIState, env: [String: String]) -> AgentCommandResult {
+        let kind = state.kind
+        if case .homebrew(let formula) = state.installMethod, state.installed {
+            let cask = formula ?? {
+                switch kind {
+                case .claudeDesktop: return "claude"
+                case .codexDesktop: return "chatgpt"
+                case .deepSeekHarness: return "deepseek-harness"
+                default: return kind.rawValue
+                }
+            }()
+            return runBrewUpgrade(formula: cask, cask: true, env: env)
         }
 
         // 获取最新官方下载地址（若状态中尚未缓存，则实时拉取一次）
         var zipURL = state.latestDownloadURL
         if zipURL == nil {
-            let probe = Shell.run("/usr/bin/curl", ["-fsSL", "--max-time", "15", "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"], environment: env, timeout: 20)
-            if probe.ok, let parsed = AgentVersionParser.parseClaudeDesktopReleasesJSON(probe.stdout) {
-                zipURL = parsed.downloadURL
-            }
+            zipURL = probeDesktopDownloadURLSync(for: kind, env: env)
         }
         guard let downloadURL = zipURL else {
             return AgentCommandResult(
                 ok: false,
-                commandDisplay: "Claude Desktop update",
+                commandDisplay: "\(kind.displayName) update",
                 output: "",
-                errorMessage: L10n.t("未获取到 Claude Desktop 官方下载链接，请先点击检查更新或前往官网下载。",
-                                     "Could not resolve Claude Desktop download URL. Check for updates again or download from the website.")
+                errorMessage: L10n.t("未获取到 \(kind.displayName) 官方下载链接，请先点击检查更新或前往官网下载。",
+                                     "Could not resolve \(kind.displayName) download URL. Check for updates again or download from the website.")
             )
         }
 
-        let targetApp = state.executablePath ?? "/Applications/Claude.app"
+        let targetApp = state.executablePath ?? "/Applications/\(kind.primaryCommand)"
         let display = "curl -fL \(downloadURL.absoluteString) -> \(targetApp)"
-        let wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: claudeDesktopBundleID).isEmpty
+        let bundleID = kind.bundleIdentifier
+        let wasRunning = bundleID.map { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty } ?? false
 
         let fm = FileManager.default
-        let workDir = fm.temporaryDirectory.appendingPathComponent("popbar-claude-desktop-\(UUID().uuidString)")
-        let zipFile = workDir.appendingPathComponent("Claude.zip")
+        let workDir = fm.temporaryDirectory.appendingPathComponent("popbar-\(kind.rawValue)-\(UUID().uuidString)")
+        let zipFile = workDir.appendingPathComponent("release.zip")
         let unpackDir = workDir.appendingPathComponent("unpack")
         defer { try? fm.removeItem(at: workDir) }
 
@@ -878,6 +1491,11 @@ enum AgentRuntime {
         }
 
         var logs: [String] = []
+        if let proxy = env["HTTPS_PROXY"] ?? env["HTTP_PROXY"] {
+            logs.append("Proxy: \(proxy)")
+        } else {
+            logs.append("Proxy: direct (no proxy)")
+        }
         logs.append("Downloading \(downloadURL.lastPathComponent)…")
         let dl = Shell.run("/usr/bin/curl", ["-fL", "--retry", "2", "-o", zipFile.path, downloadURL.absoluteString], environment: env, timeout: 600)
         guard dl.ok else {
@@ -890,37 +1508,33 @@ enum AgentRuntime {
             return AgentCommandResult(ok: false, commandDisplay: display, output: logs.joined(separator: "\n"), errorMessage: unzip.error)
         }
 
-        let extractedApp = unpackDir.appendingPathComponent("Claude.app")
-        guard fm.fileExists(atPath: extractedApp.appendingPathComponent("Contents/Info.plist").path) else {
+        // 在解压目录中找到有效的 .app（优先匹配同 Bundle ID）
+        let unpackedApps = (try? fm.contentsOfDirectory(at: unpackDir, includingPropertiesForKeys: nil))?
+            .filter { $0.pathExtension.lowercased() == "app" && fm.fileExists(atPath: $0.appendingPathComponent("Contents/Info.plist").path) } ?? []
+        let extractedApp = unpackedApps.first(where: { appURL in
+            guard let expected = bundleID,
+                  let dict = NSDictionary(contentsOfFile: appURL.appendingPathComponent("Contents/Info.plist").path) else { return false }
+            return (dict["CFBundleIdentifier"] as? String) == expected
+        }) ?? unpackedApps.first
+
+        guard let extractedApp else {
             return AgentCommandResult(
                 ok: false,
                 commandDisplay: display,
                 output: logs.joined(separator: "\n"),
-                errorMessage: L10n.t("下载包中未找到有效的 Claude.app", "Valid Claude.app not found in downloaded archive")
+                errorMessage: L10n.t("下载包中未找到有效的 .app 应用包", "Valid .app bundle not found in downloaded archive")
             )
         }
 
-        // 若 Claude Desktop 正在运行，先温和退出以便替换应用包
+        // 若桌面应用正在运行，先结束已有进程以便替换应用包
         if wasRunning {
-            logs.append("Quitting running Claude Desktop…")
-            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: claudeDesktopBundleID)
-            for app in apps { app.terminate() }
-            let deadline = Date().addingTimeInterval(8)
-            while Date() < deadline {
-                if NSRunningApplication.runningApplications(withBundleIdentifier: claudeDesktopBundleID).allSatisfy(\.isTerminated) {
-                    break
-                }
-                Thread.sleep(forTimeInterval: 0.2)
-            }
-            for app in NSRunningApplication.runningApplications(withBundleIdentifier: claudeDesktopBundleID) where !app.isTerminated {
-                app.forceTerminate()
-            }
-            Thread.sleep(forTimeInterval: 0.3)
+            logs.append("Quitting running \(kind.displayName)…")
+            terminateDesktopAppIfRunning(bundleID: bundleID, appPath: targetApp, waitSeconds: 8)
         }
 
         let targetURL = URL(fileURLWithPath: targetApp)
         let parentDir = targetURL.deletingLastPathComponent()
-        let backupURL = parentDir.appendingPathComponent("Claude.app.popbar-backup")
+        let backupURL = parentDir.appendingPathComponent("\(targetURL.lastPathComponent).popbar-backup")
 
         do {
             if fm.fileExists(atPath: backupURL.path) {
@@ -953,11 +1567,144 @@ enum AgentRuntime {
         logs.append("Installed \(targetURL.path)")
 
         if wasRunning {
-            logs.append("Relaunching Claude Desktop…")
-            _ = Shell.run("/usr/bin/open", ["-a", targetURL.path], environment: env, timeout: 10)
+            logs.append("Relaunching \(kind.displayName)…")
+            _ = launchDesktopApp(kind: kind, appPath: targetURL.path, env: env)
         }
 
         return AgentCommandResult(ok: true, commandDisplay: display, output: logs.joined(separator: "\n"), errorMessage: nil)
+    }
+
+    private static func probeDesktopDownloadURLSync(for kind: AgentKind, env: [String: String]) -> URL? {
+        switch kind {
+        case .claudeDesktop:
+            let probe = Shell.run("/usr/bin/curl", ["-fsSL", "--max-time", "15", "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"], environment: env, timeout: 20)
+            return probe.ok ? AgentVersionParser.parseClaudeDesktopReleasesJSON(probe.stdout)?.downloadURL : nil
+        case .codexDesktop:
+            let probe = Shell.run("/usr/bin/curl", ["-fsSL", "--max-time", "15", "https://persistent.oaistatic.com/codex-app-prod/appcast.xml"], environment: env, timeout: 20)
+            return probe.ok ? AgentVersionParser.parseSparkleAppcastXML(probe.stdout, source: "OpenAI Releases")?.downloadURL : nil
+        case .deepSeekHarness:
+            let feed = resolveDeepSeekHarnessFeed()
+            let probe = Shell.run("/usr/bin/curl", ["-fsSL", "--max-time", "15", feed.yamlURL.absoluteString], environment: env, timeout: 20)
+            return probe.ok ? AgentVersionParser.parseElectronUpdaterYAML(probe.stdout, baseURL: feed.baseURL, source: "DeepSeek Releases")?.downloadURL : nil
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - 桌面端统一重启（先 kill 已有进程，无则跳过，再按 ~/.zshrc 代理别名或直连启动）
+
+    /// 启动桌面端应用：带代理别名的走 `~/.zshrc` 中的 `*-proxy`，DeepSeek Harness 直接启动不走代理
+    static func launchDesktopApp(kind: AgentKind, appPath: String?, env: [String: String] = AgentShellEnv.enrichedEnvironment()) -> AgentCommandResult {
+        let resolvedPath = appPath ?? resolveDesktopAppPath(for: kind) ?? "/Applications/\(kind.primaryCommand)"
+        let display = AgentLaunchBuilder.restartCommandDisplay(for: kind, appPath: resolvedPath)
+
+        // DeepSeek Harness（无代理别名）：清理可能残留的代理环境变量，直接启动
+        guard let aliasName = kind.zshrcProxyAlias else {
+            var cleanEnv = env
+            for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] {
+                cleanEnv.removeValue(forKey: key)
+            }
+            let out = Shell.run("/usr/bin/open", ["-a", resolvedPath], environment: cleanEnv, timeout: 15)
+            return makeResult(out, display: display)
+        }
+
+        // 其他桌面端（Claude Desktop / Codex Desktop）：加载 ~/.zshrc 并执行对应的 *-proxy 别名
+        let fallbackOpen: String = {
+            if let bid = kind.bundleIdentifier {
+                return "open -b \(AgentLaunchBuilder.shellQuote(bid))"
+            }
+            return "open -a \(AgentLaunchBuilder.shellQuote(resolvedPath))"
+        }()
+        let script = AgentLaunchBuilder.buildDesktopProxyScript(aliasName: aliasName, fallbackOpenCommand: fallbackOpen)
+        let out = Shell.run("/bin/zsh", ["-c", script], environment: env, timeout: 25)
+        return makeResult(out, display: display)
+    }
+
+    /// 桌面端统一重启：先检查并结束已有进程（含同应用包下的所有 Helper）；若未运行则直接跳过 kill，然后启动应用
+    static func restartDesktopApp(kind: AgentKind, appPath: String?) -> AgentCommandResult {
+        guard kind.isDesktopApp else {
+            return AgentCommandResult(
+                ok: false,
+                commandDisplay: kind.displayName,
+                output: "",
+                errorMessage: L10n.t("仅桌面端应用支持重启操作", "Restart is only supported for desktop apps")
+            )
+        }
+        let env = AgentShellEnv.enrichedEnvironment()
+        let resolvedPath = appPath ?? resolveDesktopAppPath(for: kind) ?? "/Applications/\(kind.primaryCommand)"
+        terminateDesktopAppIfRunning(bundleID: kind.bundleIdentifier, appPath: resolvedPath, waitSeconds: 4)
+        return launchDesktopApp(kind: kind, appPath: resolvedPath, env: env)
+    }
+
+    /// 结束指定桌面端应用的所有已有进程；若当前没有运行中的进程则立即跳过返回
+    private static func terminateDesktopAppIfRunning(bundleID: String?, appPath: String?, waitSeconds: TimeInterval) {
+        let runningApps = bundleID.map { NSRunningApplication.runningApplications(withBundleIdentifier: $0) } ?? []
+        let bundlePIDs = appPath.map { findRunningPIDs(inAppBundle: $0) } ?? []
+
+        guard !runningApps.isEmpty || !bundlePIDs.isEmpty else {
+            return
+        }
+
+        // 1. 先温和退出（NSRunningApplication.terminate + SIGTERM）
+        for app in runningApps { app.terminate() }
+        for pid in bundlePIDs { _ = Darwin.kill(Int32(pid), SIGTERM) }
+
+        let deadline = Date().addingTimeInterval(waitSeconds)
+        while Date() < deadline {
+            let appsAlive = bundleID.map {
+                !NSRunningApplication.runningApplications(withBundleIdentifier: $0).allSatisfy(\.isTerminated)
+            } ?? false
+            let pidsAlive = appPath.map { !findRunningPIDs(inAppBundle: $0).isEmpty } ?? false
+            if !appsAlive && !pidsAlive {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.15)
+        }
+
+        // 2. 若仍有残留进程则强杀（forceTerminate + SIGKILL）
+        if let bundleID {
+            for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) where !app.isTerminated {
+                app.forceTerminate()
+            }
+        }
+        if let appPath {
+            let survivors = findRunningPIDs(inAppBundle: appPath)
+            if !survivors.isEmpty {
+                for pid in survivors { _ = Darwin.kill(Int32(pid), SIGKILL) }
+                let killDeadline = Date().addingTimeInterval(1.0)
+                while Date() < killDeadline {
+                    if findRunningPIDs(inAppBundle: appPath).isEmpty { break }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+    }
+
+    /// 扫描当前运行中属于指定 `.app` 包路径下的所有 PID（主进程 + Electron Helpers）
+    private static func findRunningPIDs(inAppBundle appPath: String) -> [Int] {
+        guard !appPath.isEmpty else { return [] }
+        let prefix = appPath.hasSuffix("/") ? appPath.lowercased() : (appPath + "/").lowercased()
+        let resolved = URL(fileURLWithPath: appPath).resolvingSymlinksInPath().path
+        let resolvedPrefix = resolved.hasSuffix("/") ? resolved.lowercased() : (resolved + "/").lowercased()
+
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [Int32](repeating: 0, count: Int(count) + 64)
+        let got = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<Int32>.size))
+        guard got > 0 else { return [] }
+
+        let myPID = Int(getpid())
+        var result: [Int] = []
+        for rawPID in pids.prefix(Int(got)) {
+            let pid = Int(rawPID)
+            if pid <= 1 || pid == myPID { continue }
+            guard let exe = LibProc.path(pid)?.lowercased() else { continue }
+            if exe.hasPrefix(prefix) || exe.hasPrefix(resolvedPrefix) {
+                result.append(pid)
+            }
+        }
+        return result
     }
 
     // MARK: - 进程扫描与安全终止
@@ -990,15 +1737,25 @@ enum AgentRuntime {
         let dtNS: Double = cpuState.prevSampleAt > 0 ? max(0.1, nowUptime - cpuState.prevSampleAt) * 1_000_000_000 : 0
         var nextCPUMap: [String: UInt64] = [:]
 
+        let codexDesktopBundlePaths: Set<String> = {
+            var set = Set<String>()
+            if let path = resolveDesktopAppPath(for: .codexDesktop) {
+                set.insert(path.lowercased())
+                let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path.lowercased()
+                set.insert(resolved)
+            }
+            return set
+        }()
+
         var matched: [MatchedRaw] = []
         for rawPID in pids.prefix(Int(got)) {
             let pid = Int(rawPID)
             if pid <= 1 || pid == myPID { continue }
             let name = LibProc.name(pid)
             let exe = LibProc.path(pid)
-            if !isCandidate(name: name, exe: exe) { continue }
+            if !isCandidate(name: name, exe: exe, codexDesktopBundlePaths: codexDesktopBundlePaths) { continue }
             let argv = LibProc.args(pid)?.argv ?? []
-            if let m = AgentProcessMatcher.match(processName: name, executablePath: exe, argv: argv) {
+            if let m = AgentProcessMatcher.match(processName: name, executablePath: exe, argv: argv, codexDesktopBundlePaths: codexDesktopBundlePaths) {
                 matched.append(MatchedRaw(pid: pid, match: m, name: name, exe: exe ?? "", argv: argv))
             }
         }
@@ -1161,16 +1918,33 @@ enum AgentRuntime {
         )
     }
 
-    private static func isCandidate(name: String, exe: String?) -> Bool {
+    private static func isCandidate(name: String, exe: String?, codexDesktopBundlePaths: Set<String>) -> Bool {
         let lowerName = name.lowercased()
-        if lowerName.contains("claude") || lowerName.contains("opencode") || lowerName.contains("command")
-            || lowerName == "node" || lowerName == "bun" || lowerName == "deno" {
+        if lowerName.contains("claude")
+            || lowerName.contains("codex")
+            || lowerName.contains("deepseek")
+            || lowerName.contains("opencode")
+            || lowerName.contains("command")
+            || lowerName == "pi"
+            || lowerName == "node"
+            || lowerName == "bun"
+            || lowerName == "deno" {
             return true
         }
         if let exe {
             let lowerExe = exe.lowercased()
-            if lowerExe.contains("claude") || lowerExe.contains("opencode") || lowerExe.contains("command-code")
-                || lowerExe.hasSuffix("/node") || lowerExe.hasSuffix("/bun") {
+            if lowerExe.contains("claude")
+                || lowerExe.contains("codex")
+                || lowerExe.contains("deepseek harness.app")
+                || lowerExe.contains("opencode")
+                || lowerExe.contains("command-code")
+                || lowerExe.contains("pi-coding-agent")
+                || lowerExe.hasSuffix("/pi")
+                || lowerExe.hasSuffix("/node")
+                || lowerExe.hasSuffix("/bun") {
+                return true
+            }
+            for bundlePath in codexDesktopBundlePaths where lowerExe.hasPrefix(bundlePath + "/") {
                 return true
             }
         }
@@ -1289,13 +2063,44 @@ enum AgentRuntime {
         )
     }
 
-    private static func httpGetData(_ urlString: String) async -> Data? {
+    private static func httpGetData(_ urlString: String, accept: String = "application/json", useProxy: Bool = true) async -> Data? {
         guard let url = URL(string: urlString) else { return nil }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
         req.setValue("PopBar-AgentManager", forHTTPHeaderField: "User-Agent")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(accept, forHTTPHeaderField: "Accept")
+
+        let session: URLSession
+        var needsInvalidate = false
+        if !useProxy {
+            let cfg = URLSessionConfiguration.ephemeral
+            cfg.connectionProxyDictionary = [:]
+            session = URLSession(configuration: cfg)
+            needsInvalidate = true
+        } else if let proxyStr = AgentShellEnv.activeZshrcProxyURL(),
+                  let proxyURL = URL(string: proxyStr),
+                  let host = proxyURL.host,
+                  let port = proxyURL.port {
+            let cfg = URLSessionConfiguration.ephemeral
+            cfg.connectionProxyDictionary = [
+                "HTTPEnable": 1,
+                "HTTPProxy": host,
+                "HTTPPort": port,
+                "HTTPSEnable": 1,
+                "HTTPSProxy": host,
+                "HTTPSPort": port,
+                "ExceptionsList": ["localhost", "127.0.0.1", "::1"],
+            ]
+            session = URLSession(configuration: cfg)
+            needsInvalidate = true
+        } else {
+            session = .shared
+        }
+        defer {
+            if needsInvalidate { session.finishTasksAndInvalidate() }
+        }
+
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return nil }
             return data
         } catch {
@@ -1303,8 +2108,8 @@ enum AgentRuntime {
         }
     }
 
-    private static func httpGetText(_ urlString: String) async -> String? {
-        guard let data = await httpGetData(urlString) else { return nil }
+    private static func httpGetText(_ urlString: String, useProxy: Bool = true) async -> String? {
+        guard let data = await httpGetData(urlString, useProxy: useProxy) else { return nil }
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
