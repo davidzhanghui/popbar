@@ -62,6 +62,85 @@ public enum ScreenPlacement {
             ?? NSScreen.screens.min { distance($0.frame, point) < distance($1.frame, point) }
     }
 
+    /// 将普通窗口的 frame 钳制到所在屏幕的 `visibleFrame` 内，避开程序坞与菜单栏。
+    ///
+    /// - 选屏：优先取与窗口交集面积最大的屏幕；完全离屏时优先用 `fallbackVisible`，再退回最近屏幕。
+    /// - 尺寸：宽/高不超过目标屏 `visibleFrame`（在不超出 `visibleFrame` 的前提下尽量尊重 `minSize`）。
+    /// - 位置：仍在屏幕内时优先保住原顶边（`maxY`）再夹入 `visibleFrame`；完全离屏时在 `visibleFrame` 内居中。
+    /// - 稳定：若原 frame 已完整落在目标屏 `visibleFrame` 内且尺寸合规，则原样返回避免抖动。
+    public static func fitWindow(
+        _ frame: CGRect,
+        minSize: CGSize = .zero,
+        screens: [(frame: CGRect, visible: CGRect)],
+        fallbackVisible: CGRect? = nil
+    ) -> CGRect {
+        guard !screens.isEmpty else { return frame }
+        let finite = frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.width.isFinite && frame.height.isFinite
+        let center = finite ? CGPoint(x: frame.midX, y: frame.midY) : .zero
+
+        let intersecting: (frame: CGRect, visible: CGRect)? = finite ? screens
+            .map { screen -> ((frame: CGRect, visible: CGRect), CGFloat) in
+                let inter = screen.frame.intersection(frame)
+                let area = inter.isNull ? 0 : inter.width * inter.height
+                return (screen, area)
+            }
+            .filter { $0.1 > 0 }
+            .max { $0.1 < $1.1 }?
+            .0 : nil
+
+        let offscreen = (intersecting == nil)
+        let vf: CGRect = {
+            if let screen = intersecting { return screen.visible }
+            if let fallbackVisible, fallbackVisible.width > 0, fallbackVisible.height > 0 { return fallbackVisible }
+            return screens.min { distance($0.frame, center) < distance($1.frame, center) }!.visible
+        }()
+        guard vf.width > 0, vf.height > 0 else { return frame }
+
+        let minX = ceil(vf.minX)
+        let minY = ceil(vf.minY)
+        let maxX = floor(vf.maxX)
+        let maxY = floor(vf.maxY)
+        let maxW = max(1, maxX - minX)
+        let maxH = max(1, maxY - minY)
+
+        let effMinW = min(max(0, minSize.width), maxW)
+        let effMinH = min(max(0, minSize.height), maxH)
+
+        let rawW = finite ? frame.width : effMinW
+        let rawH = finite ? frame.height : effMinH
+        let width = min(max(rawW, effMinW), maxW).rounded(.down)
+        let height = min(max(rawH, effMinH), maxH).rounded(.down)
+
+        let alreadyInside = finite
+            && frame.minX >= vf.minX && frame.maxX <= vf.maxX
+            && frame.minY >= vf.minY && frame.maxY <= vf.maxY
+            && frame.width >= effMinW && frame.height >= effMinH
+        if alreadyInside { return frame }
+
+        let x: CGFloat
+        let y: CGFloat
+        if offscreen {
+            x = minX + ((maxW - width) / 2).rounded()
+            y = minY + ((maxH - height) / 2).rounded()
+        } else {
+            x = min(max(frame.minX.rounded(), minX), maxX - width)
+            y = min(max((frame.maxY - height).rounded(), minY), maxY - height)
+        }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// 按当前屏幕列表将窗口 frame 钳制到 `visibleFrame` 内（Cocoa 坐标）
+    public static func fitWindow(_ frame: CGRect, minSize: CGSize = .zero, fallbackScreen: NSScreen? = nil) -> CGRect {
+        let fallback = (fallbackScreen ?? screen(containing: NSEvent.mouseLocation) ?? NSScreen.main)?.visibleFrame
+        return fitWindow(
+            frame,
+            minSize: minSize,
+            screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) },
+            fallbackVisible: fallback
+        )
+    }
+
     static func distance(_ r: CGRect, _ p: CGPoint) -> CGFloat {
         let dx = max(r.minX - p.x, 0, p.x - r.maxX)
         let dy = max(r.minY - p.y, 0, p.y - r.maxY)

@@ -37,6 +37,67 @@ final class ScreenPlacementTests: XCTestCase {
         let r = ScreenPlacement.frame(size: size, anchor: CGRect(x: 500, y: 400, width: 100, height: 20), prefer: .below, gap: 8, screens: screens)
         XCTAssertEqual(r.maxY, 392)
     }
+
+    func testFitWindowShrinksTallWindowAboveBottomDock() {
+        // 复现内置屏（1470×956，底部程序坞高 65，顶部菜单栏高 34）上 984 高度窗口底边跌入程序坞的场景
+        let laptop: [(frame: CGRect, visible: CGRect)] = [
+            (CGRect(x: 0, y: 0, width: 1470, height: 956), CGRect(x: 0, y: 65, width: 1470, height: 857)),
+        ]
+        let saved = CGRect(x: 238, y: -62, width: 1071, height: 984)
+        let fitted = ScreenPlacement.fitWindow(saved, minSize: CGSize(width: 820, height: 520), screens: laptop)
+        XCTAssertEqual(fitted, CGRect(x: 238, y: 65, width: 1071, height: 857))
+    }
+
+    func testFitWindowLiftsBottomEdgeAboveDock() {
+        let laptop: [(frame: CGRect, visible: CGRect)] = [
+            (CGRect(x: 0, y: 0, width: 1470, height: 956), CGRect(x: 0, y: 65, width: 1470, height: 857)),
+        ]
+        let overlappingDock = CGRect(x: 200, y: 12, width: 980, height: 660)
+        let fitted = ScreenPlacement.fitWindow(overlappingDock, minSize: CGSize(width: 820, height: 520), screens: laptop)
+        XCTAssertEqual(fitted, CGRect(x: 200, y: 65, width: 980, height: 660))
+    }
+
+    func testFitWindowRespectsSideDock() {
+        let leftDock: [(frame: CGRect, visible: CGRect)] = [
+            (CGRect(x: 0, y: 0, width: 1470, height: 956), CGRect(x: 72, y: 0, width: 1398, height: 922)),
+        ]
+        let fitted = ScreenPlacement.fitWindow(CGRect(x: 10, y: 120, width: 980, height: 660),
+                                               minSize: CGSize(width: 820, height: 520), screens: leftDock)
+        XCTAssertEqual(fitted, CGRect(x: 72, y: 120, width: 980, height: 660))
+    }
+
+    func testFitWindowPreservesValidFrameUnchanged() {
+        let laptop: [(frame: CGRect, visible: CGRect)] = [
+            (CGRect(x: 0, y: 0, width: 1470, height: 956), CGRect(x: 0, y: 65, width: 1470, height: 857)),
+        ]
+        let valid = CGRect(x: 245, y: 160, width: 980, height: 660)
+        let fitted = ScreenPlacement.fitWindow(valid, minSize: CGSize(width: 820, height: 520), screens: laptop)
+        XCTAssertEqual(fitted, valid)
+    }
+
+    func testFitWindowRecoversOffscreenWindowCentered() {
+        let laptop: [(frame: CGRect, visible: CGRect)] = [
+            (CGRect(x: 0, y: 0, width: 1470, height: 956), CGRect(x: 0, y: 65, width: 1470, height: 857)),
+        ]
+        // 曾经停在已拔掉的外接屏上
+        let disconnected = CGRect(x: 2600, y: 120, width: 1200, height: 960)
+        let fitted = ScreenPlacement.fitWindow(disconnected, minSize: CGSize(width: 820, height: 520), screens: laptop)
+        XCTAssertGreaterThanOrEqual(fitted.minX, 0)
+        XCTAssertLessThanOrEqual(fitted.maxX, 1470)
+        XCTAssertGreaterThanOrEqual(fitted.minY, 65)
+        XCTAssertLessThanOrEqual(fitted.maxY, 922)
+        XCTAssertEqual(fitted.height, 857)
+        XCTAssertEqual(fitted.width, 1200)
+    }
+
+    func testFitWindowHandlesScreenSmallerThanMinSize() {
+        let tiny: [(frame: CGRect, visible: CGRect)] = [
+            (CGRect(x: 0, y: 0, width: 800, height: 600), CGRect(x: 0, y: 60, width: 800, height: 500)),
+        ]
+        let fitted = ScreenPlacement.fitWindow(CGRect(x: 0, y: 0, width: 980, height: 660),
+                                               minSize: CGSize(width: 820, height: 520), screens: tiny)
+        XCTAssertEqual(fitted, CGRect(x: 0, y: 60, width: 800, height: 500))
+    }
 }
 
 final class PasteboardSnapshotTests: XCTestCase {

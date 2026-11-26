@@ -56,6 +56,7 @@ final class DeckState: ObservableObject {
 @MainActor
 final class DeckController: NSObject, NSWindowDelegate {
     static let shared = DeckController()
+    private static let frameAutosaveName = "PopBarDeck"
 
     let state = DeckState()
     let badges = DeckBadges()
@@ -85,11 +86,13 @@ final class DeckController: NSObject, NSWindowDelegate {
         if let page { state.page = resolve(page) } else { state.page = resolve(state.page) }
         if !wasVisible { moduleFor(state.page)?.pageDidAppear() }
         if w.isMiniaturized { w.deminiaturize(nil) }
+        clampWindowToVisibleFrame(w, persist: true)
         // 菜单栏菜单的 action 在菜单收起的瞬间同步执行，此时激活刚切入前台的应用容易被系统吞掉，
         // 放到下一个 runloop 补一次，确保窗口可靠置顶。
         presentWindow(w)
         DispatchQueue.main.async { [weak self, weak w] in
             guard let self, let w else { return }
+            self.clampWindowToVisibleFrame(w, persist: true)
             self.presentWindow(w)
             if !NSApp.isActive || !w.isKeyWindow {
                 NSApp.activate(ignoringOtherApps: true)
@@ -168,6 +171,23 @@ final class DeckController: NSObject, NSWindowDelegate {
         syncActivationPolicy(regular: false)
     }
 
+    func windowDidDeminiaturize(_ notification: Notification) {
+        guard let w = notification.object as? NSWindow else { return }
+        clampWindowToVisibleFrame(w, persist: true)
+    }
+
+    /// 确保主窗口完整落在所在屏幕的 visibleFrame 内（避开程序坞与菜单栏）。
+    /// 当恢复的历史 frame 来自大屏或屏幕/程序坞参数变化导致越界时，自动收敛并持久化。
+    private func clampWindowToVisibleFrame(_ w: NSWindow, persist: Bool) {
+        guard !w.styleMask.contains(.fullScreen), !w.isMiniaturized else { return }
+        let fitted = ScreenPlacement.fitWindow(w.frame, minSize: w.minSize, fallbackScreen: w.screen)
+        guard fitted != w.frame else { return }
+        w.setFrame(fitted, display: w.isVisible)
+        if persist {
+            w.saveFrame(usingName: Self.frameAutosaveName)
+        }
+    }
+
     private func makeWindow() -> NSWindow {
         let w = EscClosableWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 660),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -181,9 +201,13 @@ final class DeckController: NSObject, NSWindowDelegate {
         w.title = "PopBar"
         w.delegate = self
         badges.refresh()
-        w.contentView = NSHostingView(rootView: DeckRootView(state: state, registry: ModuleRegistry.shared, badges: badges))
+        let host = NSHostingView(rootView: DeckRootView(state: state, registry: ModuleRegistry.shared, badges: badges))
+        // 最小尺寸由 NSWindow.minSize 控制，禁用 SwiftUI 自动把窗口撑出屏幕可见区（例如被程序坞遮挡）
+        host.sizingOptions = []
+        w.contentView = host
         w.center()
-        w.setFrameAutosaveName("PopBarDeck")
+        w.setFrameAutosaveName(Self.frameAutosaveName)
+        clampWindowToVisibleFrame(w, persist: true)
         // 侧栏角标（待办数、剪贴板条数、新版本提醒）随数据变化刷新
         let nc = NotificationCenter.default
         for name in [TodoStore.changed, Notification.Name("PopBarClipboardHistoryChanged"), UpdateManager.stateChanged, AgentManagerModel.stateChanged] {
@@ -191,6 +215,12 @@ final class DeckController: NSObject, NSWindowDelegate {
                 MainActor.assumeIsolated { self?.badges.refresh() }
             })
         }
+        observers.append(nc.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let w = self.window, w.isVisible else { return }
+                self.clampWindowToVisibleFrame(w, persist: true)
+            }
+        })
         observers.append(nc.addObserver(forName: ConfigStore.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
