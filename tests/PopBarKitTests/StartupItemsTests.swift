@@ -248,20 +248,203 @@ final class StartupItemsTests: XCTestCase {
         XCTAssertTrue(uuAgent.btmDisallowed)
         XCTAssertFalse(uuAgent.effectiveEnabled)
 
-        // 启用的 App 登录项应被补全，禁用的 App（Cursor/Docker 本体）不应作为已启用的登录项出现
-        XCTAssertNotNil(merged.first { $0.label == "com.quark.clouddrive.desktop" && $0.kind == .loginItem })
+        // 启用的 App 登录项应被补全且允许直接操作，禁用的 App（Cursor/Docker 本体）不应作为已启用的登录项出现
+        let quark = try XCTUnwrap(merged.first { $0.label == "com.quark.clouddrive.desktop" })
+        XCTAssertEqual(quark.kind, .loginItem)
+        XCTAssertTrue(quark.canToggle, "登录时打开的 App 应允许直接开关（通过 System Events 管理）")
         XCTAssertNil(merged.first { $0.label == "com.todesktop.230313mzl4w4u92" })
 
-        // 应用内嵌服务和 LoginItem Helper 应被补全，且 Name 为 "true" 时回退到父应用名 Cursor
+        // 应用内嵌服务和 LoginItem Helper 应归入后台服务分类（对应系统设置「App 后台活动」），不混入「登录项」
         let embeddedAgent = try XCTUnwrap(merged.first { $0.label == "com.todesktop.230313mzl4w4u92.BackgroundActivityCheck" })
         XCTAssertEqual(embeddedAgent.kind, .appAgent)
         XCTAssertEqual(embeddedAgent.displayName, "Cursor")
         XCTAssertEqual(embeddedAgent.runningPID, 999)
 
         let dockerHelper = try XCTUnwrap(merged.first { $0.label == "com.docker.helper" })
-        XCTAssertEqual(dockerHelper.kind, .loginItem)
+        XCTAssertEqual(dockerHelper.kind, .appLoginHelper)
+        XCTAssertTrue(dockerHelper.kind.isService, "应用内嵌 LoginItem Helper 应归入后台服务，避免与系统设置「登录时打开」数量不一致")
         XCTAssertTrue(dockerHelper.btmDisallowed)
         XCTAssertFalse(dockerHelper.effectiveEnabled)
+        XCTAssertFalse(dockerHelper.canToggle)
+    }
+
+    func testLoginItemPathNormalizationAndPermissionDetection() {
+        XCTAssertEqual(StartupItems.normalizedLoginItemPath("/Applications/QuarkCloudDrive.app/"), "/Applications/QuarkCloudDrive.app")
+        XCTAssertEqual(StartupItems.normalizedLoginItemPath("/Applications/QuarkCloudDrive.app///"), "/Applications/QuarkCloudDrive.app")
+        XCTAssertEqual(StartupItems.normalizedLoginItemPath("/"), "/")
+
+        XCTAssertTrue(StartupItems.isAutomationPermissionDenied("execution error: Not authorized to send Apple events to System Events. (-1743)"))
+        XCTAssertTrue(StartupItems.isAutomationPermissionDenied("some error (-1743)"))
+        XCTAssertFalse(StartupItems.isAutomationPermissionDenied("execution error: User canceled. (-128)"))
+
+        XCTAssertTrue(StartupItems.isSelfApp(label: "dev.popbar.app", path: "/Applications/Other.app", currentBundleID: "dev.popbar.app", currentBundlePath: "/Applications/PopBar.app"))
+        XCTAssertTrue(StartupItems.isSelfApp(label: "other.id", path: "/Applications/PopBar.app/", currentBundleID: "dev.popbar.app", currentBundlePath: "/Applications/PopBar.app"))
+        XCTAssertFalse(StartupItems.isSelfApp(label: "com.quark.clouddrive.desktop", path: "/Applications/QuarkCloudDrive.app", currentBundleID: "dev.popbar.app", currentBundlePath: "/Applications/PopBar.app"))
+
+        // 提权 launchctl 的 label 安全校验
+        XCTAssertTrue(StartupItems.isSafeLaunchdLabel("yanue.v2rayu.tun-helper"))
+        XCTAssertTrue(StartupItems.isSafeLaunchdLabel("homebrew.mxcl.postgresql@17"))
+        XCTAssertFalse(StartupItems.isSafeLaunchdLabel(""))
+        XCTAssertFalse(StartupItems.isSafeLaunchdLabel("bad; rm -rf /"))
+        XCTAssertFalse(StartupItems.isSafeLaunchdLabel("bad/label"))
+    }
+
+    func testGroupingAlignsWithMacOSBackgroundActivityCountAndNaming() throws {
+        let btmSample = """
+        ========================
+         Records for UID -2 : FFFFEEEE-DDDD-CCCC-BBBB-AAAAFFFFFFFE
+        ========================
+
+         Items:
+
+         #1:
+                         UUID: A1
+                         Name: sing-box-arm64
+               Developer Name: (null)
+                         Type: legacy daemon (0x10010)
+                  Disposition: [enabled, allowed, notified] (0xb)
+                   Identifier: 16.yanue.v2rayu.tun-helper
+                          URL: file:///Library/LaunchDaemons/yanue.v2rayu.tun-helper.plist
+              Executable Path: /usr/local/v2rayu/bin/sing-box/sing-box-arm64
+            Parent Identifier: Unknown Developer
+
+         #2:
+                         UUID: A2
+                         Name: Docker
+               Developer Name: Docker
+                         Type: developer (0x20)
+                  Disposition: [disabled, allowed, not notified] (0x2)
+                   Identifier: Docker
+                          URL: (null)
+
+         #3:
+                         UUID: A3
+                         Name: com.docker.vmnetd
+               Developer Name: Docker
+                         Type: legacy daemon (0x10010)
+                  Disposition: [enabled, disallowed, notified] (0x9)
+                   Identifier: 16.com.docker.vmnetd
+                          URL: file:///Library/LaunchDaemons/com.docker.vmnetd.plist
+            Assoc. Bundle IDs: [ com.docker.docker ]
+            Parent Identifier: Docker
+
+         #4:
+                         UUID: A4
+                         Name: Docker
+               Developer Name: (null)
+                         Type: app (0x2)
+                  Disposition: [disabled, allowed, not notified] (0x2)
+                   Identifier: 2.com.docker.docker
+                          URL: file:///Applications/Docker.app/
+
+         #5:
+                         UUID: A5
+                         Name: com.docker.socket
+               Developer Name: Docker Inc
+                         Type: legacy daemon (0x10010)
+                  Disposition: [enabled, disallowed, notified] (0x9)
+                   Identifier: 16.com.docker.socket
+                          URL: file:///Library/LaunchDaemons/com.docker.socket.plist
+            Parent Identifier: 2.com.docker.docker
+
+         #6:
+                         UUID: A6
+                         Name: UU远程
+               Developer Name: (null)
+                         Type: app (0x2)
+                  Disposition: [disabled, allowed, not notified] (0x2)
+                   Identifier: 2.com.netease.uuremote
+                          URL: file:///Applications/UURemote.app/
+
+         #7:
+                         UUID: A7
+                         Name: UU远程
+               Developer Name: Hangzhou Bobo
+                         Type: legacy daemon (0x10010)
+                  Disposition: [enabled, disallowed, notified] (0x9)
+                   Identifier: 16.com.netease.uuremote.daemon
+                          URL: file:///Library/LaunchDaemons/com.netease.uuremote.daemon.plist
+            Parent Identifier: 2.com.netease.uuremote
+
+        ========================
+         Records for UID 501 : E6176039-DE82-4216-B54E-A3F08BBC9D4B
+        ========================
+
+         Items:
+
+         #1:
+                         UUID: B1
+                         Name: DockerHelper
+               Developer Name: Docker Inc
+                         Type: login item (0x4)
+                  Disposition: [enabled, disallowed, notified] (0x9)
+                   Identifier: 4.com.docker.helper
+                          URL: Contents/Library/LoginItems/DockerHelper.app
+            Parent Identifier: 2.com.docker.docker
+
+         #2:
+                         UUID: B2
+                         Name: UU远程
+               Developer Name: Hangzhou Bobo
+                         Type: legacy agent (0x10008)
+                  Disposition: [enabled, disallowed, notified] (0x9)
+                   Identifier: 8.com.netease.uuremote.agent
+                          URL: file:///Library/LaunchAgents/com.netease.uuremote.agent.plist
+            Parent Identifier: 2.com.netease.uuremote
+
+         #3:
+                         UUID: B3
+                         Name: Ollama
+               Developer Name: Infra Technologies, Inc
+                         Type: app (0x2)
+                  Disposition: [disabled, allowed, not notified] (0x2)
+                   Identifier: 2.com.electron.ollama
+                          URL: file:///Applications/Ollama.app/
+
+         #4:
+                         UUID: B4
+                         Name: Squirrel
+               Developer Name: (null)
+                         Type: agent (0x8)
+                  Disposition: [enabled, allowed, notified] (0xb)
+                   Identifier: 8.com.ollama.ollama
+                          URL: Contents/Library/LaunchAgents/com.ollama.ollama.plist
+            Parent Identifier: 2.com.electron.ollama
+        """
+
+        let snap = StartupItems.parseBTM(btmSample, uid: 501)
+        let baseItems = [
+            StartupItem(id: "/Library/LaunchDaemons/yanue.v2rayu.tun-helper.plist", label: "yanue.v2rayu.tun-helper", displayName: "yanue.v2rayu.tun-helper", kind: .launchDaemon, path: "/Library/LaunchDaemons/yanue.v2rayu.tun-helper.plist", enabled: true, btmDisallowed: false, systemLevel: true, managedBySystemSettings: false, targetsBackgroundSession: false, program: "/usr/local/v2rayu/bin/sing-box/sing-box-arm64", sourceAppName: nil, sourceAppPath: nil, developerName: nil, trigger: .onDemand, runningPID: nil, broken: false),
+            StartupItem(id: "/Library/LaunchDaemons/com.docker.vmnetd.plist", label: "com.docker.vmnetd", displayName: "com.docker.vmnetd", kind: .launchDaemon, path: "/Library/LaunchDaemons/com.docker.vmnetd.plist", enabled: true, btmDisallowed: false, systemLevel: true, managedBySystemSettings: false, targetsBackgroundSession: false, program: "/Library/PrivilegedHelperTools/com.docker.vmnetd", sourceAppName: nil, sourceAppPath: nil, developerName: nil, trigger: .atLogin, runningPID: nil, broken: false),
+            StartupItem(id: "/Library/LaunchDaemons/com.docker.socket.plist", label: "com.docker.socket", displayName: "com.docker.socket", kind: .launchDaemon, path: "/Library/LaunchDaemons/com.docker.socket.plist", enabled: true, btmDisallowed: false, systemLevel: true, managedBySystemSettings: false, targetsBackgroundSession: false, program: "/Library/PrivilegedHelperTools/com.docker.socket", sourceAppName: "Docker", sourceAppPath: "/Applications/Docker.app", developerName: nil, trigger: .atLogin, runningPID: nil, broken: false),
+            StartupItem(id: "/Library/LaunchDaemons/com.netease.uuremote.daemon.plist", label: "com.netease.uuremote.daemon", displayName: "com.netease.uuremote.daemon", kind: .launchDaemon, path: "/Library/LaunchDaemons/com.netease.uuremote.daemon.plist", enabled: true, btmDisallowed: false, systemLevel: true, managedBySystemSettings: false, targetsBackgroundSession: false, program: "/Applications/UURemote.app/Contents/MacOS/UURemoteDaemon", sourceAppName: "UURemote", sourceAppPath: "/Applications/UURemote.app", developerName: nil, trigger: .atLogin, runningPID: nil, broken: false),
+            StartupItem(id: "/Library/LaunchAgents/com.netease.uuremote.agent.plist", label: "com.netease.uuremote.agent", displayName: "com.netease.uuremote.agent", kind: .launchAgent, path: "/Library/LaunchAgents/com.netease.uuremote.agent.plist", enabled: true, btmDisallowed: false, systemLevel: true, managedBySystemSettings: false, targetsBackgroundSession: false, program: "/Applications/UURemote.app/Contents/MacOS/UURemoteService", sourceAppName: "UURemote", sourceAppPath: "/Applications/UURemote.app", developerName: nil, trigger: .atLogin, runningPID: nil, broken: false)
+        ]
+
+        let merged = StartupItems.mergeBTM(baseItems, snap, fileExists: { _ in true }, isInstalled: { _ in true })
+        XCTAssertEqual(merged.count, 7, "合并前共 7 条原始后台服务")
+
+        let groups = StartupItems.groupItems(merged)
+        // 聚合后应正好为 5 组：Docker(1: vmnetd)、Docker(2: socket+DockerHelper)、Ollama(1)、sing-box-arm64(1)、UU远程(2)
+        XCTAssertEqual(groups.count, 5, "按 BTM Parent Identifier 聚合后应与 macOS App 后台活动行数一致")
+
+        let uuGroup = try XCTUnwrap(groups.first { $0.title == "UU远程" })
+        XCTAssertEqual(uuGroup.items.count, 2)
+        XCTAssertTrue(uuGroup.isExpandable)
+        XCTAssertTrue(uuGroup.allBtmDisallowed)
+
+        let dockerGroups = groups.filter { $0.title == "Docker" }
+        XCTAssertEqual(dockerGroups.count, 2)
+        XCTAssertEqual(dockerGroups.map(\.items.count), [1, 2])
+
+        let ollamaGroup = try XCTUnwrap(groups.first { $0.title == "Ollama" })
+        XCTAssertEqual(ollamaGroup.items.count, 1)
+        XCTAssertEqual(ollamaGroup.primaryItem.displayName, "Ollama", "Ollama 内嵌服务不应显示成内部更新器名 Squirrel")
+
+        let tunGroup = try XCTUnwrap(groups.first { $0.primaryItem.label == "yanue.v2rayu.tun-helper" })
+        XCTAssertEqual(tunGroup.title, "sing-box-arm64")
+        XCTAssertTrue(tunGroup.canToggleGroup, "未被 BTM 禁用的传统 LaunchDaemon 应支持管理员提权开关")
+        XCTAssertTrue(tunGroup.requiresAdmin)
     }
 
     @MainActor
@@ -315,12 +498,31 @@ final class StartupItemsTests: XCTestCase {
                 enabled: true,
                 btmDisallowed: false,
                 systemLevel: false,
-                managedBySystemSettings: true,
+                managedBySystemSettings: false,
                 targetsBackgroundSession: false,
                 program: nil,
                 sourceAppName: "Quark",
                 sourceAppPath: "/Applications/Quark.app",
                 developerName: nil,
+                trigger: .atLogin,
+                runningPID: nil,
+                broken: false
+            ),
+            StartupItem(
+                id: "btm:loginItem:com.docker.helper",
+                label: "com.docker.helper",
+                displayName: "DockerHelper",
+                kind: .appLoginHelper,
+                path: "/Applications/Docker.app/Contents/Library/LoginItems/DockerHelper.app",
+                enabled: true,
+                btmDisallowed: true,
+                systemLevel: false,
+                managedBySystemSettings: true,
+                targetsBackgroundSession: false,
+                program: nil,
+                sourceAppName: "Docker",
+                sourceAppPath: "/Applications/Docker.app",
+                developerName: "Docker Inc",
                 trigger: .atLogin,
                 runningPID: nil,
                 broken: false
@@ -331,15 +533,19 @@ final class StartupItemsTests: XCTestCase {
         vm.applyEnabled(false, forLabel: "com.dup.agent")
         XCTAssertEqual(vm.items.filter { $0.label == "com.dup.agent" }.map(\.enabled), [false, false])
 
-        // 筛选：已停用 / 异常 / 登录项 / 搜索来源应用
+        // 筛选：已停用 / 异常 / 登录项 / 后台服务 / 搜索来源应用
         vm.filter = .disabled
-        XCTAssertEqual(vm.filtered.count, 2)
+        XCTAssertEqual(vm.filtered.count, 3)
 
         vm.filter = .broken
         XCTAssertEqual(vm.filtered.count, 1)
 
         vm.filter = .loginItems
         XCTAssertEqual(vm.filtered.map(\.label), ["com.app.login"])
+
+        vm.filter = .services
+        XCTAssertTrue(vm.filtered.contains { $0.label == "com.docker.helper" })
+        XCTAssertFalse(vm.filtered.contains { $0.label == "com.app.login" })
 
         vm.filter = .all
         vm.query = "MyApp"

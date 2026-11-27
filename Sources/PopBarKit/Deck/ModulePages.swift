@@ -615,8 +615,11 @@ struct CleanPage: View {
 struct StartupPage: View {
     @ObservedObject var model: StartupViewModel
     var body: some View {
-        DSPageShell(L10n.t("启动项", "Startup"), subtitle: L10n.t("登录项与后台服务；用户级 LaunchAgent 可开关（重新登录生效），系统设置项可直接跳转管理。", "Login items and background services; user LaunchAgents can be toggled (after re-login), and system-managed items open System Settings."),
+        DSPageShell(L10n.t("启动项", "Startup"), subtitle: L10n.t("登录项与后台服务（按应用归属与系统设置对齐）；登录项与传统服务可直接开关，系统受保护项可一键直达系统设置。", "Login items and background services grouped like System Settings; toggle login items and launch services directly, or jump to System Settings for protected items."),
                     scrolls: false) {
+            DSButton(L10n.t("添加登录项", "Add Login Item"), icon: "plus", kind: .secondary) {
+                model.pickAndAddLoginItem()
+            }
             DSButton(L10n.t("系统设置", "System Settings"), icon: "external-link", kind: .ghost) {
                 model.openSystemLoginItemsSettings()
             }

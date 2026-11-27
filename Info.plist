@@ -30,7 +30,7 @@
 		<true/>
 	</dict>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>PopBar uses automation to read the browser's current URL for clipping, to create Calendar events, and to ask Finder to move protected leftover folders (such as app containers) to the Trash in Disk Cleanup.</string>
+	<string>PopBar uses automation to read the browser's current URL for clipping, to create Calendar events, to manage your Login Items via System Events, and to ask Finder to move protected leftover folders (such as app containers) to the Trash in Disk Cleanup.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>PopBar adds an event to the "PopBar" calendar for each completed Pomodoro focus round when you turn this on.</string>
 	<key>NSCameraUsageDescription</key>
