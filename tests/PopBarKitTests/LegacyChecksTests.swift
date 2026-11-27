@@ -16,7 +16,6 @@ final class LegacyChecksTests: XCTestCase {
     func testLegacyChecks() async throws {
         try await runLegacyMainChecks()
         await runExportPipelineTests()
-        await runCleanTests()
         await runPrintTests()
         await runTVTests()
         print("\n========== 合计 \(checks) 项检查，\(failures) 项失败 ==========")

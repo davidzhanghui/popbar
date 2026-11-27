@@ -602,16 +602,6 @@ struct MonitorPage: View {
     }
 }
 
-struct CleanPage: View {
-    let module: CleanModule
-    var body: some View {
-        DSPageShell(L10n.t("清理", "Cleanup"), subtitle: L10n.t("勾选后移入废纸篓，可以随时从废纸篓恢复", "Selected items go to the Trash and can be restored"),
-                    scrolls: false) {
-            CleanView(vm: module.model)
-        }
-    }
-}
-
 struct StartupPage: View {
     @ObservedObject var model: StartupViewModel
     var body: some View {

@@ -247,7 +247,7 @@ enum DeckTint {
     private static let modules: [String: NSColor] = [
         "today": IconPalette.green, "clipboard": IconPalette.blue, "agent": IconPalette.indigo,
         "snap": IconPalette.purple, "record": IconPalette.red,
-        "monitor": IconPalette.teal, "vps": IconPalette.blue, "clean": IconPalette.sky,
+        "monitor": IconPalette.teal, "vps": IconPalette.blue,
         "startup": IconPalette.orange, "maintenance": IconPalette.slate, "maccheck": IconPalette.amber,
         "print": IconPalette.indigo, "tv": IconPalette.pink,
     ]

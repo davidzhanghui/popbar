@@ -207,21 +207,6 @@ final class VPSModule: PopBarModule {
 }
 
 @MainActor
-final class CleanModule: PopBarModule {
-    let id = "clean"
-    var title: String { L10n.t("清理", "Cleanup") }
-    var summary: String { L10n.t("扫描缓存、日志、构建产物与卸载残留，勾选后移入废纸篓", "Scan caches, logs, build output and leftovers; move to Trash") }
-    let icon = "sparkles"
-    let group = DeckGroup.system
-    var model = CleanViewModel()
-
-    func page() -> AnyView { AnyView(CleanPage(module: self)) }
-    func pageDidAppear() { if !model.hasScanned && !model.isScanning { model.scan() } }
-    func pageDidDisappear() { if model.isScanning { model.cancel() } }
-    func stop() { model.cancel() }
-}
-
-@MainActor
 final class StartupModule: PopBarModule {
     let id = "startup"
     var title: String { L10n.t("启动项", "Startup") }

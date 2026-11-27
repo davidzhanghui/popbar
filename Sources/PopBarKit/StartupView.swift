@@ -365,7 +365,7 @@ final class StartupViewModel: ObservableObject {
         Task {
             let r = await Task.detached(priority: .userInitiated) { () -> Result<URL?, Error> in
                 StartupItems.bootout(item)
-                return CleanTrash.trash(URL(fileURLWithPath: item.path))
+                return StartupItems.trashFile(URL(fileURLWithPath: item.path))
             }.value
             self.pendingLabels.remove(item.label)
             switch r {
@@ -373,7 +373,7 @@ final class StartupViewModel: ObservableObject {
                 self.items.removeAll { $0.id == item.id }
                 self.message = (L10n.t("已移除损坏的启动代理 \(item.label)", "Removed broken launch agent \(item.label)"), .success)
             case .failure(let e):
-                self.message = (L10n.t("移除失败：", "Remove failed: ") + CleanTrash.reason(for: e), .danger)
+                self.message = (L10n.t("移除失败：", "Remove failed: ") + StartupItems.trashErrorReason(for: e), .danger)
             }
         }
     }

@@ -82,7 +82,7 @@ public enum PopBarShots {
         ClipboardHistory.shared.applyConfig()
         ClipboardHistory.shared.suspend()
 
-        for name in ["deck-monitor", "translate-result", "bar-more", "deck-clean"] {
+        for name in ["deck-monitor", "translate-result", "bar-more"] {
             if let img = NSImage(contentsOfFile: "docs/screenshots/\(name).png"),
                let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                 SnapHistory.add(cg, scale: 2)
@@ -173,7 +173,7 @@ public enum PopBarShots {
         list.append(Shot(name: "deck-clipboard", make: deck(.module("clipboard"))))
         list.append(Shot(name: "deck-snap", make: deck(.module("snap"))))
         list.append(Shot(name: "deck-record", make: deck(.module("record"))))
-        // 需要先加载数据的模块页：触发 pageDidAppear（监控采样、清理扫描、读启动项…），多等一会再截
+        // 需要先加载数据的模块页：触发 pageDidAppear（监控采样、读启动项…），多等一会再截
         func live(_ id: String) -> () -> NSView {
             let make = deck(.module(id))
             return {
@@ -183,7 +183,6 @@ public enum PopBarShots {
             }
         }
         list.append(Shot(name: "deck-monitor", make: live("monitor"), settle: 4))
-        list.append(Shot(name: "deck-clean", make: live("clean"), settle: 25))
         list.append(Shot(name: "deck-maintenance", make: live("maintenance"), settle: 2))
         // 启动项、打印两页展示的是本机真实的登录项与打印记录，不进文档截图
         list.append(Shot(name: "settings-general", make: deck(.settings, .general)))

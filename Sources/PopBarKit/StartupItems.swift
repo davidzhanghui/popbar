@@ -1063,6 +1063,26 @@ enum StartupItems {
         _ = ShellRun.run("/bin/launchctl", ["bootout", "\(domain)/\(item.label)"], timeout: 10)
     }
 
+    /// 将损坏的用户级启动代理 plist 移入废纸篓（可恢复）。
+    static func trashFile(_ url: URL) -> Result<URL?, Error> {
+        do {
+            var result: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &result)
+            return .success(result as URL?)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    static func trashErrorReason(for error: Error) -> String {
+        let e = error as NSError
+        let denied = (e.domain == NSCocoaErrorDomain && [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains(e.code))
+            || (e.domain == NSPOSIXErrorDomain && [Int(EPERM), Int(EACCES)].contains(e.code))
+        return denied
+            ? L10n.t("macOS 拒绝访问该文件", "macOS denied access to this file")
+            : error.localizedDescription
+    }
+
     // MARK: - 辅助
 
     static func sortItems(_ items: [StartupItem]) -> [StartupItem] {

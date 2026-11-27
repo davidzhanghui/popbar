@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PopBar — 选中文字，事就办了</title>
-<meta name="description" content="PopBar 是 macOS 划词工具条：选中文字，浮动工具条出现在选区上方。智能胶囊、多模型 AI 翻译、隐私脱敏；3.0 把截屏、录屏、监控、清理等十个工具收进一个 Deck 窗口。Swift 原生，开源。">
+<meta name="description" content="PopBar 是 macOS 划词工具条：选中文字，浮动工具条出现在选区上方。智能胶囊、多模型 AI 翻译、隐私脱敏；3.0 把截屏、录屏、监控、启动项等工具收进一个 Deck 窗口。Swift 原生，开源。">
 <meta property="og:title" content="PopBar 3.0 — 选中文字，事就办了">
-<meta property="og:description" content="macOS 划词工具条 · 智能胶囊 · 多模型 AI 翻译 · 隐私脱敏 · Deck：今日、剪贴板、截屏、录屏、监控、清理……">
+<meta property="og:description" content="macOS 划词工具条 · 智能胶囊 · 多模型 AI 翻译 · 隐私脱敏 · Deck：今日、剪贴板、截屏、录屏、监控……">
 <meta property="og:image" content="https://raw.githubusercontent.com/davidzhanghui/popbar/main/docs/popbar-og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="popbar-icon.png">
@@ -157,7 +157,7 @@
     <div>
       <div class="eyebrow">macOS 划词工具条 · 3.0</div>
       <h1>选中文字，<br>事就办了</h1>
-      <p class="sub">拖选或双击一段文字，浮动工具条就出现在选区正上方：复制、翻译、搜索、朗读、加入待办，不用切换应用。3.0 再把截屏、录屏、监控、清理等十个工具收进一个 Deck 窗口。</p>
+      <p class="sub">拖选或双击一段文字，浮动工具条就出现在选区正上方：复制、翻译、搜索、朗读、加入待办，不用切换应用。3.0 再把截屏、录屏、监控、启动项等工具收进一个 Deck 窗口。</p>
       <div class="badges">
         <span class="badge">开源</span>
         <span class="badge en">Swift 原生</span>
@@ -233,7 +233,7 @@
     <div class="head reveal">
       <div class="eyebrow en">New in 3.0 · Deck</div>
       <h2>一个 Deck，装下十个工具</h2>
-      <p><b>⌃⌥D</b> 打开。今日、剪贴板、截屏、录屏、监控、清理、启动项、维护、打印、电视，按「工作 / 媒体 / 系统 / 设备」分组，原来的十几个浮窗和两个设置窗口都合并进来。</p>
+      <p><b>⌃⌥D</b> 打开。今日、剪贴板、截屏、录屏、监控、启动项、维护、打印、电视，按「工作 / 媒体 / 系统 / 设备」分组，原来的十几个浮窗和两个设置窗口都合并进来。</p>
     </div>
     <div class="deck reveal">
       <div class="tabs" role="tablist" aria-label="Deck 页面">
@@ -242,7 +242,7 @@
         <button role="tab" aria-selected="false" data-shot="deck-snap" data-cap="⌃⌥P 微信式截屏：冻结画面、识别窗口、标注、马赛克、贴图、文字识别、长截图。">截屏<small>标注 · 贴图 · OCR</small></button>
         <button role="tab" aria-selected="false" data-shot="deck-record" data-cap="⌃⌥R 选区 / 窗口 / 整屏录制：点击涟漪、摄像头画中画、水印、裁剪压缩、导出 GIF。">录屏<small>涟漪 · 画中画 · GIF</small></button>
         <button role="tab" aria-selected="false" data-shot="deck-monitor" data-cap="健康评分、CPU / GPU / 内存 / 电池 / 磁盘 / 网络 / 温度，按应用分组的进程表；只在这一页打开时采样。">监控<small>按应用分组的进程</small></button>
-        <button role="tab" aria-selected="false" data-shot="deck-clean" data-cap="扫描 App 缓存、开发工具、AI 工具缓存与卸载残留，一律移入废纸篓，随时能放回。">清理<small>一律移入废纸篓</small></button>
+        <button role="tab" aria-selected="false" data-shot="deck-maintenance" data-cap="刷新 DNS、精简 Time Machine 本地快照、重建 Spotlight 等，只做确有效果的维护。">维护<small>系统维护</small></button>
       </div>
       <div>
         <div class="view"><picture><source id="deck-dark" srcset="screenshots/deck-today-dark.png" media="(prefers-color-scheme: dark)"><img id="deck-img" src="screenshots/deck-today.png" alt="Deck 主窗口 · 今日"></picture></div>

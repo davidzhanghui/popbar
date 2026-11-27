@@ -8,6 +8,10 @@ import PopBarDesign
 /// 配色与 PopBar 其它面板一致:卡片底/描边取自 PanelTheme,文字用系统语义色,
 /// 明暗外观自动适配;各指标的点缀色只用于小圆点、进度条和曲线。
 
+extension PanelTheme {
+    static var brandColor: Color { Color(nsColor: PanelTheme.brand) }
+}
+
 enum SysTheme {
     /// 与 RecordPanelKit.dyn 同一思路:随外观动态取色,不用在建面板时固化
     static func dyn(_ light: NSColor, _ dark: NSColor) -> Color {

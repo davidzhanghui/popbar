@@ -55,13 +55,13 @@
 | 欢迎与权限页：首次启动或缺辅助功能权限时自动打开 | `deck-welcome`；手动：删 `onboarded` 后启动 | ☐ |
 | ToolPanel / SettingsWindow / PreferencesWindow 已删除 | `git status` | ✅ |
 | 今日页可钉成小窗，位置记忆、重启恢复 | 手动 | ☐ |
-| 页面生命周期：离开监控页停止采样、离开清理页取消扫描、打印 / 电视切走停止轮询 | 手动：活动监视器看 PopBar CPU | ☐ |
+| 页面生命周期：离开监控页停止采样、打印 / 电视切走停止轮询 | 手动：活动监视器看 PopBar CPU | ☐ |
 
 ## P4 模块与配置
 
 | 项 | 验证方式 | 状态 |
 |---|---|---|
-| 模块开关：默认开 今日 / 剪贴板 / 截屏 / 录屏 / 监控 / 清理；默认关 启动项 / 维护 / 打印 / 电视 | 自动：ConfigMigrationTests；截图 `settings-modules` | ✅ |
+| 模块开关：默认开 今日 / 剪贴板 / 截屏 / 录屏 / 监控；默认关 启动项 / 维护 / 打印 / 电视 | 自动：ConfigMigrationTests；截图 `settings-modules` | ✅ |
 | 关闭模块后：侧栏、浮动条、菜单都不出现，快捷键不注册 | 自动：ActionRegistry「模块关闭」用例；手动关「截屏」后按 `⌃⌥P` | ☐ |
 | 菜单栏菜单不超过 10 项 | 手动：录制中右键菜单栏图标数一下 | ☐ |
 | 配置迁移：写入 `schemaVersion`，原文件备份为 `config.v2.json` | 自动：ConfigMigrationTests；手动：用 2.x 配置启动 | ☐ |
