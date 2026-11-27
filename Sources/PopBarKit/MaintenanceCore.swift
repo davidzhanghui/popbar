@@ -34,6 +34,7 @@ struct MaintenanceTask: Identifiable, Hashable {
 struct MaintenanceExecutor {
     var run: (String, [String], TimeInterval) -> ShellRun.Result
     var runAsAdmin: (String, String?, TimeInterval) -> AdminRunResult
+    var currentUser: String = NSUserName()
 
     static let live = MaintenanceExecutor(
         run: { path, args, timeout in ShellRun.run(path, args, timeout: timeout) },
@@ -77,8 +78,8 @@ enum Maintenance {
                   needsAdmin: true, icon: "history", confirmKind: .destructive),
             .init(id: .reindexSpotlight,
                   title: L10n.t("重建 Spotlight 索引", "Rebuild Spotlight Index"),
-                  detail: L10n.t("搜索结果缺失或异常时使用。重建期间搜索暂时不可用，CPU 占用会升高一段时间。",
-                                 "For missing or odd search results. Search is unavailable and CPU usage rises while it rebuilds."),
+                  detail: L10n.t("搜索结果缺失或异常时使用（仅重建系统启动卷）。重建期间搜索暂时不可用，CPU 占用会升高一段时间。",
+                                 "For missing or odd search results (startup volume only). Search is unavailable and CPU usage rises while it rebuilds."),
                   needsAdmin: true, icon: "search", confirmKind: .destructive),
             .init(id: .rebuildLaunchServices,
                   title: L10n.t("整理「打开方式」数据库", "Tidy the “Open With” Database"),
@@ -92,14 +93,14 @@ enum Maintenance {
                   needsAdmin: false, icon: "eye", confirmKind: .none),
             .init(id: .restartFinderAndDock,
                   title: L10n.t("重启访达与程序坞", "Restart Finder & Dock"),
-                  detail: L10n.t("访达假死、右键菜单未刷新或程序坞动画卡顿时使用，当前打开的访达窗口会重新打开。",
-                                 "Fixes unresponsive Finder, stale context menus or Dock glitches. Open Finder windows will reopen."),
+                  detail: L10n.t("访达假死、右键菜单未刷新或程序坞动画卡顿时使用。请先确认没有正在进行的文件拷贝或移动，访达窗口会尝试重新打开。",
+                                 "Fixes unresponsive Finder, stale context menus or Dock glitches. Make sure no file copies or moves are in progress; Finder windows will attempt to reopen."),
                   needsAdmin: false, icon: "app-window-mac", confirmKind: .standard),
             .init(id: .restartAudio,
                   title: L10n.t("重启系统音频服务", "Restart Audio Service"),
-                  detail: L10n.t("外接显示器、蓝牙耳机或休眠唤醒后无声/声道异常时使用，系统会自动拉起 coreaudiod。",
-                                 "Fixes missing audio or routing glitches after sleep or switching devices; launchd restarts coreaudiod automatically."),
-                  needsAdmin: true, icon: "volume-2", confirmKind: .none),
+                  detail: L10n.t("外接显示器、蓝牙耳机或休眠唤醒后无声/声道异常时使用。会中断当前音频播放、通话或录音，系统会自动拉起 coreaudiod。",
+                                 "Fixes missing audio or routing glitches after sleep or switching devices. Interrupts active playback, calls or recordings; launchd restarts coreaudiod automatically."),
+                  needsAdmin: true, icon: "volume-2", confirmKind: .standard),
             .init(id: .clearFontCache,
                   title: L10n.t("清理用户字体缓存", "Clear User Font Cache"),
                   detail: L10n.t("系统或办公软件出现字体乱码、缺失或排版错位时使用（建议注销或重启生效）。",
@@ -113,7 +114,7 @@ enum Maintenance {
     /// 解析 `tmutil listlocalsnapshots /` 输出：仅统计 Time Machine 快照，跳过系统更新快照，并提取最新时间戳。
     static func parseLocalSnapshots(_ output: String) -> (count: Int, latestDate: String?) {
         let lines = output
-            .split(separator: "\n")
+            .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { $0.contains("com.apple.TimeMachine") }
         guard !lines.isEmpty else { return (0, nil) }
@@ -139,18 +140,31 @@ enum Maintenance {
     }
 
     /// 解析 `tmutil thinlocalsnapshots` 的 stdout 中被删除的快照数量。
+    /// 同时兼容 `\r`/`\n` 分隔以及完整快照名（`com.apple.TimeMachine.…`）或纯时间戳行（`YYYY-MM-DD-HHMMSS`）。
     static func parseThinnedSnapshotCount(_ output: String) -> Int {
         output
-            .split(separator: "\n")
+            .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.contains("com.apple.TimeMachine") }
+            .filter { line in
+                line.contains("com.apple.TimeMachine")
+                    || line.range(of: #"^\d{4}-\d{2}-\d{2}-\d{6}$"#, options: .regularExpression) != nil
+            }
             .count
     }
 
-    /// 解析 `mdutil -s /` 或 `mdutil -E /` 的索引开关状态。
+    /// 解析 `mdutil -s /`、`mdutil -i on /` 或 `mdutil -E /` 的索引开关状态。
+    /// 逆序取最后一条明确的状态行，并同时识别 `Indexing disabled` 与 `Indexing and searching disabled`（含 `.metadata_never_index`）。
     static func parseSpotlightEnabled(_ output: String) -> Bool? {
-        if output.localizedCaseInsensitiveContains("Indexing enabled") { return true }
-        if output.localizedCaseInsensitiveContains("Indexing disabled") { return false }
+        for rawLine in output.split(whereSeparator: \.isNewline).reversed() {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.localizedCaseInsensitiveContains("Indexing and searching disabled")
+                || line.localizedCaseInsensitiveContains("Indexing disabled") {
+                return false
+            }
+            if line.localizedCaseInsensitiveContains("Indexing enabled") {
+                return true
+            }
+        }
         return nil
     }
 
@@ -215,10 +229,18 @@ enum Maintenance {
                     if case .loaded(let c, _) = afterState { return c }
                     return nil
                 }()
-                let removed = parsedRemoved > 0
-                    ? parsedRemoved
-                    : max(0, before - (afterCount ?? before))
+                let diffRemoved = afterCount.map { max(0, before - $0) }
+                let removed = parsedRemoved > 0 ? parsedRemoved : (diffRemoved ?? 0)
                 if let afterCount {
+                    if removed == 0 {
+                        if afterCount > 0 {
+                            return L10n.t(
+                                "未释放任何快照（剩余 \(afterCount) 个，可能正被 Time Machine 备份或系统占用）",
+                                "No snapshots freed (\(afterCount) remaining; may be in use by Time Machine or macOS)"
+                            )
+                        }
+                        return L10n.t("当前没有可清理的本地快照", "No local snapshots to remove")
+                    }
                     return L10n.t(
                         "已清理 \(removed) 个本地快照（剩余 \(afterCount) 个）",
                         "Removed \(removed) local \(removed == 1 ? "snapshot" : "snapshots") (\(afterCount) remaining)"
@@ -250,11 +272,27 @@ enum Maintenance {
             case .failure(let msg):
                 return .failure(msg)
             case .success(let output):
-                if !enableSpotlightIfDisabled, parseSpotlightEnabled(output) == false {
+                let finalState = parseSpotlightEnabled(output)
+                if finalState == false {
+                    if output.localizedCaseInsensitiveContains(".metadata_never_index") {
+                        return .failure(L10n.t(
+                            "根目录存在 .metadata_never_index 文件，Spotlight 索引被锁定为禁用，未触发重建",
+                            "Found .metadata_never_index at volume root; Spotlight indexing stays disabled and rebuild was not triggered."
+                        ))
+                    }
+                    if enableSpotlightIfDisabled {
+                        return .failure(L10n.t(
+                            "未能开启系统卷 Spotlight 索引，未触发重建",
+                            "Failed to enable Spotlight indexing on /; rebuild was not triggered."
+                        ))
+                    }
                     return .failure(L10n.t(
                         "当前系统卷已关闭 Spotlight 索引，未触发重建",
                         "Spotlight indexing is disabled on /; rebuild was not triggered."
                     ))
+                }
+                if finalState != true, let errorLine = firstSpotlightErrorLine(in: output) {
+                    return .failure(errorLine)
                 }
                 return .success(detail: L10n.t(
                     "已开始后台重建（可能需要数分钟至数小时）",
@@ -268,8 +306,8 @@ enum Maintenance {
             let rescan = executor.run(lsregister, ["-apps", "u,l,s"], 300)
             if let err = failureMessage(rescan) { return .failure(err) }
             return .success(detail: L10n.t(
-                "已完成整理；如右键「打开方式」仍显示旧项，可运行「重启访达与程序坞」或重新登录",
-                "Database tidied; if “Open With” still shows old entries, run “Restart Finder & Dock” or log out and back in"
+                "已完成整理；如右键「打开方式」仍显示旧项，可运行「重启访达与程序坞」、重新登录或检查下载与构建目录中是否仍有应用副本",
+                "Database tidied; if “Open With” still shows old entries, run “Restart Finder & Dock”, log out, or check Downloads/build folders for duplicate app copies"
             ))
 
         case .resetQuickLook:
@@ -277,24 +315,28 @@ enum Maintenance {
             if let err = failureMessage(reload) { return .failure(err) }
             let clearCache = executor.run("/usr/bin/qlmanage", ["-r", "cache"], 60)
             if let err = failureMessage(clearCache) { return .failure(err) }
+            // macOS 15+ 缩略图与预览由 ThumbnailsAgent 接管，按需重启当前用户实例（未运行时静默忽略）。
+            _ = executor.run("/usr/bin/killall", killallArgs(user: executor.currentUser, process: "com.apple.quicklook.ThumbnailsAgent"), 15)
             return .success(detail: L10n.t(
                 "已重载快速查看生成器并清空缩略图缓存",
                 "Quick Look generators reloaded and thumbnail cache cleared"
             ))
 
         case .restartFinderAndDock:
-            let finder = executor.run("/usr/bin/killall", ["Finder"], 15)
+            let finder = executor.run("/usr/bin/killall", killallArgs(user: executor.currentUser, process: "Finder"), 15)
             if finder.status != 0, !finder.err.localizedCaseInsensitiveContains("No matching processes") {
                 if let err = failureMessage(finder) { return .failure(err) }
             }
-            let dock = executor.run("/usr/bin/killall", ["Dock"], 15)
+            let dock = executor.run("/usr/bin/killall", killallArgs(user: executor.currentUser, process: "Dock"), 15)
             if dock.status != 0, !dock.err.localizedCaseInsensitiveContains("No matching processes") {
                 if let err = failureMessage(dock) { return .failure(err) }
             }
             return .success(detail: L10n.t("已重新启动访达与程序坞", "Finder and Dock relaunched"))
 
         case .restartAudio:
-            return mapAdmin(executor.runAsAdmin("/usr/bin/killall coreaudiod", adminPrompt(for: id), 900)) { _ in
+            return mapAdmin(
+                executor.runAsAdmin("/bin/launchctl kickstart -kp system/com.apple.audio.coreaudiod", adminPrompt(for: id), 900)
+            ) { _ in
                 L10n.t("已重启音频守护进程（系统会自动重新连接输出设备）",
                        "Audio daemon restarted (output devices will reconnect automatically)")
             }
@@ -307,6 +349,18 @@ enum Maintenance {
                 "User font cache cleared; log out or restart to fully apply"
             ))
         }
+    }
+
+    private static func killallArgs(user: String, process: String) -> [String] {
+        let trimmed = user.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? [process] : ["-u", trimmed, process]
+    }
+
+    private static func firstSpotlightErrorLine(in output: String) -> String? {
+        output
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { $0.localizedCaseInsensitiveContains("error:") }
     }
 
     private static func mapAdmin(_ result: AdminRunResult, detail: (String) -> String?) -> MaintenanceRunResult {

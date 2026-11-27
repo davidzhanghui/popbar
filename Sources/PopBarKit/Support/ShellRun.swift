@@ -49,18 +49,20 @@ enum ShellRun {
     }
 
     /// 构造带管理员权限提示的 AppleScript；拒绝包含换行符的多行命令输入。
+    /// 附带 `without altering line endings` 防止 AppleScript 默认把 stdout 中的 `\n` 转成 `\r`。
     static func buildAdminScript(shell: String, prompt: String?) -> String? {
         guard !shell.contains("\n"), !shell.contains("\r") else { return nil }
         let escapedShell = escapeAppleScriptString(shell)
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let cleanPrompt = prompt.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
-            return "do shell script \"\(escapedShell)\" with prompt \"\(escapeAppleScriptString(cleanPrompt))\" with administrator privileges"
+            return "do shell script \"\(escapedShell)\" with prompt \"\(escapeAppleScriptString(cleanPrompt))\" with administrator privileges without altering line endings"
         }
-        return "do shell script \"\(escapedShell)\" with administrator privileges"
+        return "do shell script \"\(escapedShell)\" with administrator privileges without altering line endings"
     }
 
     /// 以管理员权限运行固定的 shell 命令（系统弹出密码框），返回结构化结果。
     /// 只允许传入代码内的常量命令，不要拼接任何外部输入。
+    /// 注意：超时仅能终止 `osascript` 客户端进程，已由系统授权启动的 root 子进程不受普通用户信号控制。
     static func runAsAdminResult(_ shell: String, prompt: String? = nil, timeout: TimeInterval = 900) -> AdminRunResult {
         guard let script = buildAdminScript(shell: shell, prompt: prompt) else {
             return .failure(L10n.t("无效的管理员命令", "Invalid administrator command"))

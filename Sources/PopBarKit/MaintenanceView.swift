@@ -30,12 +30,16 @@ final class MaintenanceViewModel: ObservableObject {
         isRefreshing = true
         let exec = executor
         loadTask = Task {
-            let (snaps, spot) = await Task.detached(priority: .utility) {
-                (Maintenance.localSnapshotState(executor: exec), Maintenance.spotlightState(executor: exec))
+            async let snaps = Task.detached(priority: .utility) {
+                Maintenance.localSnapshotState(executor: exec)
             }.value
+            async let spot = Task.detached(priority: .utility) {
+                Maintenance.spotlightState(executor: exec)
+            }.value
+            let (s, sp) = await (snaps, spot)
             guard !Task.isCancelled else { return }
-            self.snapshotState = snaps
-            self.spotlightState = spot
+            self.snapshotState = s
+            self.spotlightState = sp
             self.isRefreshing = false
         }
     }
@@ -54,15 +58,10 @@ final class MaintenanceViewModel: ObservableObject {
         running = task.id
         results[task.id] = nil
         let exec = executor
-        let beforeCount: Int? = {
-            if case .loaded(let c, _) = snapshotState { return c }
-            return nil
-        }()
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 Maintenance.run(task.id,
                                 enableSpotlightIfDisabled: enableSpotlightIfDisabled,
-                                beforeSnapshotCount: beforeCount,
                                 executor: exec)
             }.value
             self.running = nil
@@ -74,7 +73,7 @@ final class MaintenanceViewModel: ObservableObject {
             case .failure(let msg):
                 self.results[task.id] = .failure(msg)
             }
-            if task.id == .thinSnapshots || task.id == .reindexSpotlight {
+            if result != .cancelled, task.id == .thinSnapshots || task.id == .reindexSpotlight {
                 self.load()
             }
         }
@@ -121,16 +120,15 @@ struct MaintenanceView: View {
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(task.title)
-                        .font(DS.font(13, .semibold))
-                        .foregroundStyle(DS.text)
-                    if task.needsAdmin {
-                        Icon("lock", size: 11, color: DS.faint)
-                            .help(L10n.t("需要管理员权限", "Needs admin rights"))
-                            .accessibilityLabel(L10n.t("需要管理员权限", "Requires administrator privileges"))
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        titleRow(task)
+                        statusBadge(for: task)
                     }
-                    statusBadge(for: task)
+                    VStack(alignment: .leading, spacing: 4) {
+                        titleRow(task)
+                        statusBadge(for: task)
+                    }
                 }
 
                 Text(task.detail)
@@ -163,6 +161,21 @@ struct MaintenanceView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .dsCardBackground()
+    }
+
+    @ViewBuilder
+    private func titleRow(_ task: MaintenanceTask) -> some View {
+        HStack(spacing: 6) {
+            Text(task.title)
+                .font(DS.font(13, .semibold))
+                .foregroundStyle(DS.text)
+                .fixedSize(horizontal: true, vertical: false)
+            if task.needsAdmin {
+                Icon("lock", size: 11, color: DS.faint)
+                    .help(L10n.t("需要管理员权限", "Needs admin rights"))
+                    .accessibilityLabel(L10n.t("需要管理员权限", "Requires administrator privileges"))
+            }
+        }
     }
 
     @ViewBuilder
@@ -205,7 +218,9 @@ struct MaintenanceView: View {
         let (text, color): (String, Color) = {
             switch outcome {
             case .success(let at, let detail):
-                let time = at.formatted(date: .omitted, time: .shortened)
+                let time = Calendar.current.isDateInToday(at)
+                    ? at.formatted(date: .omitted, time: .shortened)
+                    : at.formatted(date: .abbreviated, time: .shortened)
                 let prefix = L10n.t("已完成 · \(time)", "Done · \(time)")
                 if let detail, !detail.isEmpty {
                     return ("\(prefix) — \(detail)", DS.success)
@@ -246,10 +261,22 @@ struct MaintenanceView: View {
 
     private func isDisabled(_ task: MaintenanceTask) -> Bool {
         if vm.running != nil { return true }
-        if task.id == .thinSnapshots, case .loaded(let count, _) = vm.snapshotState, count == 0 {
-            return true
+        switch task.id {
+        case .thinSnapshots:
+            switch vm.snapshotState {
+            case .loading:
+                return true
+            case .loaded(let count, _) where count == 0:
+                return true
+            default:
+                return false
+            }
+        case .reindexSpotlight:
+            if case .loading = vm.spotlightState { return true }
+            return false
+        default:
+            return false
         }
-        return false
     }
 
     private func tileColor(for task: MaintenanceTask) -> Color {
